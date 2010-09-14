@@ -1,5 +1,5 @@
 /*
- * Description: DeckLink test app - iterate cards and print some info
+ * Description: DeckLink test app - iterate cards and print some info.
  * Author     : Ryan Dalzell
  * Copyright  : (c) 2010 4i2i Communications Ltd.
  */
@@ -11,7 +11,7 @@
 
 const char *appname = "dltest";
 
-int main(int argc, int *argv[])
+int main(int argc, char *argv[])
 {
     /* create an object to enumerate all cards in the system */
     IDeckLinkIterator *iterator = CreateDeckLinkIteratorInstance();
