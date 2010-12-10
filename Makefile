@@ -6,7 +6,7 @@ BINDIR = /usr/local/bin
 SDKDIR = /usr/local/decklink/include
 
 # Targets
-APPS = dlskel dltest
+APPS = dlskel dltest dlplay
 
 # Common files
 OBJS = dlutil.o DeckLinkAPIDispatch.o
