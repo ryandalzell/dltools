@@ -1,4 +1,6 @@
 dlskel
 dltest
+dlplay
 *.o
-
+.vimrc
+.gdb_history
