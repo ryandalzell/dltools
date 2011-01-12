@@ -204,6 +204,8 @@ void convert_i420_uyvy_lumaonly(const unsigned char *i420, unsigned char *uyvy, 
 
 void *display_status(void *arg)
 {
+    IDeckLinkOutput *output = (IDeckLinkOutput *)arg;
+
     sleep(1);
 
     unsigned int framerate = completed;
@@ -213,8 +215,12 @@ void *display_status(void *arg)
         char string[256];
         int len = 0;
 
+        /* get buffer depth */
+        uint32_t buffered;
+        output->GetBufferedVideoFrameCount(&buffered);
+
         /* display status output */
-        len += snprintf(string+len, sizeof(string)-len, "%dfps ", completed-framerate);
+        len += snprintf(string+len, sizeof(string)-len, "%dfps buffer %d", completed-framerate, buffered);
         framerate = completed;
         if (late!=latecount) {
             len += snprintf(string+len, sizeof(string)-len, "late %d frame%s ", late-latecount, late-latecount>1? "s" : "");
@@ -487,7 +493,7 @@ int main(int argc, char *argv[])
 
     /* start the status thread */
     pthread_t status_thread;
-    if (pthread_create(&status_thread, NULL, display_status, NULL)<0)
+    if (pthread_create(&status_thread, NULL, display_status, output)<0)
         dlerror("failed to create status thread");
 
     /* start the video output */
