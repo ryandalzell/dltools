@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <pthread.h>
+#include <math.h>
 
 #include "DeckLinkAPI.h"
 
@@ -105,6 +106,10 @@ void usage(int exitcode)
 {
     fprintf(stderr, "%s: play raw video files\n", appname);
     fprintf(stderr, "usage: %s [options] <file> [<file>...]\n", appname);
+    fprintf(stderr, "  -a, --firstframe    : index of first frame in input to display (default: 0)\n");
+    fprintf(stderr, "  -n, --numframes     : number of frames in input to display (default: all)\n");
+    fprintf(stderr, "  -m, --ntscmode      : use proper ntsc framerate, e.g. 29.97 instead of 30fps (default: on)\n");
+    fprintf(stderr, "  -l, --luma          : display luma plane only (default: luma and chroma)\n");
     fprintf(stderr, "  -q, --quiet         : decrease verbosity, can be used multiple times\n");
     fprintf(stderr, "  -v, --verbose       : increase verbosity, can be used multiple times\n");
     fprintf(stderr, "  --                  : disable argument processing\n");
@@ -112,37 +117,44 @@ void usage(int exitcode)
     exit(exitcode);
 }
 
-int divine_video_format(const char *filename, int *width, int *height, bool *interlaced, int *framerate)
+int divine_video_format(const char *filename, int *width, int *height, bool *interlaced, float *framerate, chromaformat_t *chromaformat)
 {
     struct format_t {
         const char *name;
         int width;
         int height;
         bool interlaced;
-        int framerate;
+        float framerate;
     };
 
     const struct format_t formats[] = {
-        { "1080p24",    1920, 1080, false, 24 },
-        { "1080p25",    1920, 1080, false, 25 },
-        { "1080p30",    1920, 1080, false, 30 },
-        { "1080i50",    1920, 1080, true,  25 },
-        { "1080i59.94", 1920, 1080, true,  30 },
-        { "1080i5994",  1920, 1080, true,  30 },
-        { "1080i60",    1920, 1080, true,  30 },
-        { "1080i",      1920, 1080, true,  30 },
-        { "720p50",     1280, 720,  false, 60 },
-        { "720p60",     1280, 720,  false, 60 },
-        { "720p",       1280, 720,  false, 60 },
-        { "576i50",     720,  576,  true,  25 },
-        { "576i",       720,  576,  true,  25 },
-        { "pal",        720,  576,  true,  25 },
-        { "480i60",     720,  480,  true,  30 },
-        { "480i59.94",  720,  480,  true,  30 },
-        { "480i5994",   720,  480,  true,  30 },
-        { "480i",       720,  480,  true,  30 },
-        { "ntsc",       720,  480,  true,  30 },
+        { "1080p24",    1920, 1080, false, 24.0 },
+        { "1080p25",    1920, 1080, false, 25.0 },
+        { "1080p30",    1920, 1080, false, 30.0 },
+        { "1080i50",    1920, 1080, true,  25.0 },
+        { "1080i59.94", 1920, 1080, true,  30000.0/1001.0 },
+        { "1080i5994",  1920, 1080, true,  30000.0/1001.0 },
+        { "1080i60",    1920, 1080, true,  30.0 },
+        { "1080i",      1920, 1080, true,  30000.0/1001.0 },
+        { "720p50",     1280, 720,  false, 50.0 },
+        { "720p60",     1280, 720,  false, 60.0 },
+        { "720p59.94",  1280, 720,  false, 60000.0/1001.0 },
+        { "720p5994",   1280, 720,  false, 60000.0/1001.0 },
+        { "720p",       1280, 720,  false, 60000.0/1001.0 },
+        { "576i50",     720,  576,  true,  25.0 },
+        { "576i",       720,  576,  true,  25.0 },
+        { "pal",        720,  576,  true,  25.0 },
+        { "480i60",     720,  480,  true,  30.0 },
+        { "480i59.94",  720,  480,  true,  30000.0/1001.0 },
+        { "480i5994",   720,  480,  true,  30000.0/1001.0 },
+        { "480i",       720,  480,  true,  30000.0/1001.0 },
+        { "ntsc",       720,  480,  true,  30000.0/1001.0 },
     };
+
+    if (strstr(filename, "422")!=NULL)
+        *chromaformat = YUV422;
+    else
+        *chromaformat = YUV420;
 
     for (unsigned i=0; i<sizeof(formats)/sizeof(struct format_t); i++) {
         struct format_t f = formats[i];
@@ -158,17 +170,34 @@ int divine_video_format(const char *filename, int *width, int *height, bool *int
     return -1;
 }
 
-void convert_i420_uyvy(const unsigned char *i420, unsigned char *uyvy, int width, int height)
+void convert_i420_uyvy(const unsigned char *i420, unsigned char *uyvy, int width, int height, chromaformat_t chromaformat)
 {
     const unsigned char *yuv[3] = {i420};
     for (int y=0; y<height; y++) {
-        yuv[1] = i420 + width*height + (width/2)*(y/2);
-        yuv[2] = i420 + width*height*5/4 + (width/2)*(y/2);
+        if (chromaformat==YUV422) {
+            yuv[1] = i420 + width*height + (width/2)*y;
+            yuv[2] = i420 + width*height*6/4 + (width/2)*y;
+        } else {
+            yuv[1] = i420 + width*height + (width/2)*(y/2);
+            yuv[2] = i420 + width*height*5/4 + (width/2)*(y/2);
+        }
         for (int x=0; x<width/2; x++) {
             *(uyvy++) = *(yuv[1]++);
             *(uyvy++) = *(yuv[0]++);
             *(uyvy++) = *(yuv[2]++);
             *(uyvy++) = *(yuv[0]++);
+        }
+    }
+}
+
+void convert_i420_uyvy_lumaonly(const unsigned char *i420, unsigned char *uyvy, int width, int height)
+{
+    for (int y=0; y<height; y++) {
+        for (int x=0; x<width/2; x++) {
+            *(uyvy++) = 0x80;
+            *(uyvy++) = *(i420++);
+            *(uyvy++) = 0x80;
+            *(uyvy++) = *(i420++);
         }
     }
 }
@@ -217,10 +246,12 @@ int main(int argc, char *argv[])
     int width = 0;
     int height = 0;
     bool interlaced = 0;
-    int framerate = 0;
+    float framerate = 0.0;
+    chromaformat_t chromaformat;
     int ntscmode = 1;   /* use e.g. 29.97 instead of 30fps */
     int firstframe = 0;
     int numframes = -1;
+    int lumaonly = 0;
     int use_mmap = 0;
     int verbose = 0;
 
@@ -234,6 +265,8 @@ int main(int argc, char *argv[])
         static struct option long_options[] = {
             {"firstframe",1, NULL, 'a'},
             {"numframes", 1, NULL, 'n'},
+            {"ntscmode",  1, NULL, 'm'},
+            {"luma",      0, NULL, 'l'},
             {"quiet",     0, NULL, 'q'},
             {"verbose",   0, NULL, 'v'},
             {"usage",     0, NULL, 'u'},
@@ -241,7 +274,7 @@ int main(int argc, char *argv[])
             {NULL,        0, NULL,  0 }
         };
 
-        int optchar = getopt_long(argc, argv, "a:n:qvu", long_options, NULL);
+        int optchar = getopt_long(argc, argv, "a:n:m:lqvu", long_options, NULL);
         if (optchar==-1)
             break;
 
@@ -256,6 +289,16 @@ int main(int argc, char *argv[])
                 numframes = atoi(optarg);
                 if (numframes<1)
                     dlexit("invalid value for number of frames: %d", numframes);
+                break;
+
+            case 'm':
+                ntscmode = atoi(optarg);
+                if (ntscmode<0 || ntscmode>1)
+                    dlexit("invalid value for ntsc mode: %d", ntscmode);
+                break;
+
+            case 'l':
+                lumaonly = 1;
                 break;
 
             case 'q':
@@ -318,9 +361,25 @@ int main(int argc, char *argv[])
     /* create callback object */
     class callback the_callback(output);
 
-    /* TODO figure out the mode to set */
-    if (divine_video_format(filename[0], &width, &height, &interlaced, &framerate)<0)
+    /* figure out the mode to set */
+    if (divine_video_format(filename[0], &width, &height, &interlaced, &framerate, &chromaformat)<0)
         dlexit("failed to determine output video format from filename: %s", filename[0]);
+    if (verbose>=1)
+        dlmessage("input file is %dx%d%c%.2f %s", width, height, interlaced? 'i' : 'p', framerate, chromaformatname[chromaformat]);
+
+    /* override the framerate with ntscmode */
+    if (framerate>29.9 && framerate<=30.0) {
+        if (ntscmode)
+            framerate = 30000.0/1001.0;
+        else
+            framerate = 30.0;
+    }
+    if (framerate>59.9 && framerate<=60.0) {
+        if (ntscmode)
+            framerate = 60000.0/1001.0;
+        else
+            framerate = 60.0;
+    }
 
     /* calculate the number of frames in the input file */
     int maxframes = stat.st_size / (width*height*3/2);
@@ -336,21 +395,22 @@ int main(int argc, char *argv[])
 
         /* find mode for given width and height */
         while (iterator->Next(&mode) == S_OK) {
-            if (mode->GetWidth()==width && (mode->GetHeight()==height || (mode->GetHeight()==486 && height==480)))
+            mode->GetFrameRate(&framerate_duration, &framerate_scale);
+            fprintf(stderr, "%ldx%ld%c%lld/%lld\n", mode->GetWidth(), mode->GetHeight(), mode->GetFieldDominance()!=bmdProgressiveFrame? 'i' : 'p', framerate_duration, framerate_scale);
+            if (mode->GetWidth()==width && (mode->GetHeight()==height || (mode->GetHeight()==486 && height==480))) {
                 if (mode->GetFieldDominance()==bmdProgressiveFrame ^ interlaced) {
-                    /* calculate the number of frames per second, rounded up to the nearest integer */
                     mode->GetFrameRate(&framerate_duration, &framerate_scale);
-                    if (((framerate_scale + (framerate_duration-1)) / framerate_duration)==framerate)
+                    /* look for an integer frame rate match */
+                    if ((framerate_scale / framerate_duration)==(int)floor(framerate))
                         break;
                 }
-            mode->GetFrameRate(&framerate_duration, &framerate_scale);
-            fprintf(stderr, "%dx%d%c%d/%d\n", mode->GetWidth(), mode->GetHeight(), mode->GetFieldDominance()!=bmdProgressiveFrame? 'i' : 'p', framerate_duration, framerate_scale);
+            }
         }
         iterator->Release();
     }
 
     if (mode==NULL)
-        dlexit("error: failed to find mode for %dx%d%c%d", width, height, interlaced? 'i' : 'p', framerate);
+        dlexit("error: failed to find mode for %dx%d%c%.2f", width, height, interlaced? 'i' : 'p', framerate);
 
     /* display mode name */
     const char *name;
@@ -369,7 +429,7 @@ int main(int argc, char *argv[])
     }
 
     /* allocate the read buffer */
-    size_t size = width*height*3/2;
+    size_t size = chromaformat==YUV422? width*height*2 : width*height*3/2;
     unsigned char *data = (unsigned char *) malloc(size);
 
     /* skip to the first frame */
@@ -404,7 +464,10 @@ int main(int argc, char *argv[])
 
         unsigned char *uyvy;
         frame->GetBytes((void**)&uyvy);
-        convert_i420_uyvy(data, uyvy, width, height);
+        if (!lumaonly)
+            convert_i420_uyvy(data, uyvy, width, height, chromaformat);
+        else
+            convert_i420_uyvy_lumaonly(data, uyvy, width, height);
 
         result = output->ScheduleVideoFrame(frame, framenum*framerate_duration, framerate_duration, framerate_scale);
         if (result != S_OK) {
@@ -412,7 +475,6 @@ int main(int argc, char *argv[])
                 case E_ACCESSDENIED : fprintf(stderr, "%s: error: frame %d: video output disabled when queueing video frame\n", appname, framenum); break;
                 case E_OUTOFMEMORY  : fprintf(stderr, "%s: error: frame %d: too many frames are scheduled when queueing video frame\n", appname, framenum); break;
                 case E_INVALIDARG   : fprintf(stderr, "%s: error: frame %d: frame attributes are invalid when queueing video frame\n", appname, framenum); break;
-                default             : fprintf(stderr, "%s: error: frame %d: failed to queue video frame\n", appname, framenum); break;
             }
             /* preroll complete */
             break;
@@ -480,7 +542,10 @@ int main(int argc, char *argv[])
 
         unsigned char *uyvy;
         frame->GetBytes((void**)&uyvy);
-        convert_i420_uyvy(data+offset, uyvy, width, height);
+        if (!lumaonly)
+            convert_i420_uyvy(data, uyvy, width, height, chromaformat);
+        else
+            convert_i420_uyvy_lumaonly(data, uyvy, width, height);
 
         if (use_mmap)
             munmap(data, size+pagesize);
