@@ -439,6 +439,8 @@ int main(int argc, char *argv[])
             dlerror("failed to seek in input file");
     }
 
+    dlmessage("press return to exit...");
+
     /* carry the last frame from the preroll to the main loop */
     IDeckLinkMutableVideoFrame *frame;
 
@@ -514,6 +516,17 @@ int main(int argc, char *argv[])
         index++;
         framenum++;
 
+        /* check for user input */
+        {
+            fd_set fds;
+            FD_ZERO(&fds);
+            FD_SET(fileno(stdin), &fds);
+            struct timeval tv = {0, 0};
+            select(fileno(stdin)+1, &fds, NULL, NULL, &tv);
+            if (FD_ISSET(fileno(stdin), &fds))
+                break;
+        }
+
         /* loop input file */
         if (index==maxframes) {
             index = firstframe;
@@ -550,10 +563,6 @@ int main(int argc, char *argv[])
         if (use_mmap)
             munmap(data, size+pagesize);
     }
-
-    /* wait for user to interrupt */
-    dlmessage("press return to exit...\n");
-    getchar();
 
     /* stop the video output */
     output->StopScheduledPlayback(0, NULL, 0);
