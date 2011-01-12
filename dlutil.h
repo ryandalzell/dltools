@@ -1,19 +1,15 @@
 #ifndef DLUTIL_H
 #define DLUTIL_H
 
-/* chroma formats */
+/* pixel formats */
 typedef enum {
     UNKNOWN = 0,
-    LUMA,
-    YUV420,
-    YUV420mpeg,
-    YUV420jpeg,
-    YUV420dv,
-    YUV422,
-    YUV444,
-} chromaformat_t;
+    I420,
+    I422,
+    UYVY
+} pixelformat_t;
 
-extern const char *chromaformatname[];
+extern const char *pixelformatname[];
 
 void dlerror(const char *format, ...);
 void dlexit(const char *format, ...);

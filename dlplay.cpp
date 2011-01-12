@@ -117,7 +117,7 @@ void usage(int exitcode)
     exit(exitcode);
 }
 
-int divine_video_format(const char *filename, int *width, int *height, bool *interlaced, float *framerate, chromaformat_t *chromaformat)
+int divine_video_format(const char *filename, int *width, int *height, bool *interlaced, float *framerate, pixelformat_t *pixelformat)
 {
     struct format_t {
         const char *name;
@@ -151,10 +151,12 @@ int divine_video_format(const char *filename, int *width, int *height, bool *int
         { "ntsc",       720,  480,  true,  30000.0/1001.0 },
     };
 
-    if (strstr(filename, "422")!=NULL)
-        *chromaformat = YUV422;
+    if (strstr(filename, "uyvy")!=NULL || strstr(filename, "UYVY")!=NULL)
+        *pixelformat = UYVY;
+    else if (strstr(filename, "422")!=NULL)
+        *pixelformat = I422;
     else
-        *chromaformat = YUV420;
+        *pixelformat = I420;
 
     for (unsigned i=0; i<sizeof(formats)/sizeof(struct format_t); i++) {
         struct format_t f = formats[i];
@@ -170,11 +172,11 @@ int divine_video_format(const char *filename, int *width, int *height, bool *int
     return -1;
 }
 
-void convert_i420_uyvy(const unsigned char *i420, unsigned char *uyvy, int width, int height, chromaformat_t chromaformat)
+void convert_i420_uyvy(const unsigned char *i420, unsigned char *uyvy, int width, int height, pixelformat_t pixelformat)
 {
     const unsigned char *yuv[3] = {i420};
     for (int y=0; y<height; y++) {
-        if (chromaformat==YUV422) {
+        if (pixelformat==I422) {
             yuv[1] = i420 + width*height + (width/2)*y;
             yuv[2] = i420 + width*height*6/4 + (width/2)*y;
         } else {
@@ -223,11 +225,11 @@ void *display_status(void *arg)
         len += snprintf(string+len, sizeof(string)-len, "%dfps buffer %d", completed-framerate, buffered);
         framerate = completed;
         if (late!=latecount) {
-            len += snprintf(string+len, sizeof(string)-len, "late %d frame%s ", late-latecount, late-latecount>1? "s" : "");
+            len += snprintf(string+len, sizeof(string)-len, " late %d frame%s", late-latecount, late-latecount>1? "s" : "");
             latecount = late;
         }
         if (dropped!=dropcount) {
-            len += snprintf(string+len, sizeof(string)-len, "dropped %d frame%s ", dropped-dropcount, dropped-dropcount>1? "s" : "");
+            len += snprintf(string+len, sizeof(string)-len, " dropped %d frame%s", dropped-dropcount, dropped-dropcount>1? "s" : "");
             dropcount = dropped;
         }
         fprintf(stdout, "\rperformance: %s", string);
@@ -253,7 +255,7 @@ int main(int argc, char *argv[])
     int height = 0;
     bool interlaced = 0;
     float framerate = 0.0;
-    chromaformat_t chromaformat;
+    pixelformat_t pixelformat;
     int ntscmode = 1;   /* use e.g. 29.97 instead of 30fps */
     int firstframe = 0;
     int numframes = -1;
@@ -368,10 +370,10 @@ int main(int argc, char *argv[])
     class callback the_callback(output);
 
     /* figure out the mode to set */
-    if (divine_video_format(filename[0], &width, &height, &interlaced, &framerate, &chromaformat)<0)
+    if (divine_video_format(filename[0], &width, &height, &interlaced, &framerate, &pixelformat)<0)
         dlexit("failed to determine output video format from filename: %s", filename[0]);
     if (verbose>=1)
-        dlmessage("input file is %dx%d%c%.2f %s", width, height, interlaced? 'i' : 'p', framerate, chromaformatname[chromaformat]);
+        dlmessage("input file is %dx%d%c%.2f %s", width, height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);
 
     /* override the framerate with ntscmode */
     if (framerate>29.9 && framerate<=30.0) {
@@ -388,7 +390,7 @@ int main(int argc, char *argv[])
     }
 
     /* calculate the number of frames in the input file */
-    int maxframes = stat.st_size / (width*height*3/2);
+    int maxframes = pixelformat==I420? stat.st_size / (width*height*3/2) : stat.st_size / (width*height*2);
 
     /* get display mode iterator */
     IDeckLinkDisplayMode *mode;
@@ -435,7 +437,7 @@ int main(int argc, char *argv[])
     }
 
     /* allocate the read buffer */
-    size_t size = chromaformat==YUV422? width*height*2 : width*height*3/2;
+    size_t size = pixelformat==I422? width*height*2 : width*height*3/2;
     unsigned char *data = (unsigned char *) malloc(size);
 
     /* skip to the first frame */
@@ -462,20 +464,27 @@ int main(int argc, char *argv[])
                 dlerror("failed to seek in input file");
         }
 
-        /* read frame from file */
-        if (fread(data, size, 1, filein)!=1)
-            dlerror("failed to read frame from input file");
-
         /* allocate a new frame object */
         if (output->CreateVideoFrame(width, height, width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
             dlexit("error: failed to create video frame\n");
 
         unsigned char *uyvy;
         frame->GetBytes((void**)&uyvy);
-        if (!lumaonly)
-            convert_i420_uyvy(data, uyvy, width, height, chromaformat);
-        else
-            convert_i420_uyvy_lumaonly(data, uyvy, width, height);
+        if (pixelformat==UYVY) {
+            /* read directly into frame */
+            if (fread(uyvy, width*height*2, 1, filein)!=1)
+                dlerror("failed to read frame from input file");
+        } else {
+            /* read frame from file */
+            if (fread(data, size, 1, filein)!=1)
+                dlerror("failed to read frame from input file");
+
+            /* convert to uyvy */
+            if (!lumaonly)
+                convert_i420_uyvy(data, uyvy, width, height, pixelformat);
+            else
+                convert_i420_uyvy_lumaonly(data, uyvy, width, height);
+        }
 
         result = output->ScheduleVideoFrame(frame, framenum*framerate_duration, framerate_duration, framerate_scale);
         if (result != S_OK) {
@@ -541,30 +550,37 @@ int main(int argc, char *argv[])
                 dlerror("failed to seek in input file");
         }
 
-        if (use_mmap) {
-            /* align address to page size */
-            pageindex = (index*size) / pagesize;
-            offset = (index*size) - (pageindex*pagesize);
-
-            /* memory map next frame from file */
-            if ((data = (unsigned char *) mmap(NULL, size+pagesize, PROT_READ, MAP_PRIVATE, fileno(filein), pageindex*pagesize))==MAP_FAILED)
-                dlerror("failed to map frame from input file");
-        } else {
-            /* read next frame from file */
-            if (fread(data, size, 1, filein)!=1)
-                dlerror("failed to read frame from input file");
-        }
-
         /* allocate a new frame object */
         if (output->CreateVideoFrame(width, height, width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
             dlexit("error: failed to create video frame\n");
 
         unsigned char *uyvy;
         frame->GetBytes((void**)&uyvy);
-        if (!lumaonly)
-            convert_i420_uyvy(data, uyvy, width, height, chromaformat);
-        else
-            convert_i420_uyvy_lumaonly(data, uyvy, width, height);
+        if (pixelformat==UYVY) {
+            /* read directly into frame */
+            if (fread(uyvy, width*height*2, 1, filein)!=1)
+                dlerror("failed to read frame from input file");
+        } else {
+            if (use_mmap) {
+                /* align address to page size */
+                pageindex = (index*size) / pagesize;
+                offset = (index*size) - (pageindex*pagesize);
+
+                /* memory map next frame from file */
+                if ((data = (unsigned char *) mmap(NULL, size+pagesize, PROT_READ, MAP_PRIVATE, fileno(filein), pageindex*pagesize))==MAP_FAILED)
+                    dlerror("failed to map frame from input file");
+            } else {
+                /* read next frame from file */
+                if (fread(data, size, 1, filein)!=1)
+                    dlerror("failed to read frame from input file");
+            }
+
+            /* convert to uyvy */
+            if (!lumaonly)
+                convert_i420_uyvy(data, uyvy, width, height, pixelformat);
+            else
+                convert_i420_uyvy_lumaonly(data, uyvy, width, height);
+        }
 
         if (use_mmap)
             munmap(data, size+pagesize);

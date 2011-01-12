@@ -79,14 +79,10 @@ void dlabort(const char *format, ...)
     abort();
 }
 
-/* chroma format strings */
-const char *chromaformatname[] = {
+/* pixel format strings */
+const char *pixelformatname[] = {
     "",
-    "lum",
-    "420",
-    "420mpeg",
-    "420jpeg",
-    "420dv",
-    "422",
-    "444"
+    "I420",
+    "I422",
+    "UYVY"
 };
