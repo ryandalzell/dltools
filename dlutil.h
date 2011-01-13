@@ -1,6 +1,17 @@
 #ifndef DLUTIL_H
 #define DLUTIL_H
 
+/* file types */
+typedef enum {
+    OTHER,
+    YUV,
+    YUV4MPEG,
+    TS,
+    PS,
+    PES,
+    M2V,
+} filetype_t;
+
 /* pixel formats */
 typedef enum {
     UNKNOWN = 0,

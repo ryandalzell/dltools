@@ -12,7 +12,7 @@ APPS = dlskel dltest dlplay
 OBJS = dlutil.o DeckLinkAPIDispatch.o
 
 # Flags
-CXXFLAGS = -Wall -D_FILE_OFFSET_BITS=64 -g -I $(SDKDIR)
+CXXFLAGS = -O2 -Wall -D_FILE_OFFSET_BITS=64 -g -I $(SDKDIR)
 LFLAGS = -lm -ldl -lpthread
 
 # Targets
@@ -31,3 +31,5 @@ DeckLinkAPIDispatch.o: $(SDKDIR)/DeckLinkAPIDispatch.cpp
 %.o: %.cpp
 	$(CXX) -c -o $@ $(CXXFLAGS) $<
 
+dlplay: dlplay.o $(OBJS)
+	$(CXX) -o $@ $^ $(LFLAGS) -lmpeg2 -lmpeg2convert

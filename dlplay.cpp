@@ -14,6 +14,12 @@
 #include <sys/stat.h>
 #include <pthread.h>
 #include <math.h>
+#include <inttypes.h>
+
+extern "C" {
+    #include <mpeg2dec/mpeg2.h>
+    #include <mpeg2dec/mpeg2convert.h>
+}
 
 #include "DeckLinkAPI.h"
 
@@ -192,6 +198,26 @@ void convert_i420_uyvy(const unsigned char *i420, unsigned char *uyvy, int width
     }
 }
 
+void convert_yuv_uyvy(const unsigned char *yuv[3], unsigned char *uyvy, int width, int height, pixelformat_t pixelformat)
+{
+    const unsigned char *ptr[3] = {yuv[0]};
+    for (int y=0; y<height; y++) {
+        if (pixelformat==I422) {
+            ptr[1] = yuv[1] + (width/2)*y;
+            ptr[2] = yuv[2] + (width/2)*y;
+        } else {
+            ptr[1] = yuv[1] + (width/2)*(y/2);
+            ptr[2] = yuv[2] + (width/2)*(y/2);
+        }
+        for (int x=0; x<width/2; x++) {
+            *(uyvy++) = *(ptr[1]++);
+            *(uyvy++) = *(ptr[0]++);
+            *(uyvy++) = *(ptr[2]++);
+            *(uyvy++) = *(ptr[0]++);
+        }
+    }
+}
+
 void convert_i420_uyvy_lumaonly(const unsigned char *i420, unsigned char *uyvy, int width, int height)
 {
     for (int y=0; y<height; y++) {
@@ -249,6 +275,7 @@ int main(int argc, char *argv[])
     FILE *filein = stdin;
     char *filename[16] = {0};
     unsigned int numfiles = 0;
+    filetype_t filetype = OTHER;
 
     /* command line defaults */
     int width = 0;
@@ -267,6 +294,16 @@ int main(int argc, char *argv[])
     off_t pagesize = sysconf(_SC_PAGE_SIZE);
     off_t pageindex;
     off_t offset = 0;
+
+    /* buffer variables */
+    size_t size = 0;
+    unsigned char *data = NULL;
+    size_t read = 0;
+    int maxframes = 0;
+
+    /* libmpeg2 variables */
+    mpeg2dec_t *mpeg2dec = NULL;
+    const mpeg2_info_t *info = NULL;
 
     /* parse command line for options */
     while (1) {
@@ -339,6 +376,12 @@ int main(int argc, char *argv[])
     if (numfiles<1)
         usage(1);
 
+    /* determine the file type */
+    if (strstr(filename[0], "m2v")!=NULL || strstr(filename[0], "M2V")!=NULL)
+        filetype = M2V;
+    else
+        filetype = YUV;
+
     /* open the first input file */
     filein = fopen(filename[0], "rb");
     if (!filein)
@@ -370,10 +413,75 @@ int main(int argc, char *argv[])
     class callback the_callback(output);
 
     /* figure out the mode to set */
-    if (divine_video_format(filename[0], &width, &height, &interlaced, &framerate, &pixelformat)<0)
-        dlexit("failed to determine output video format from filename: %s", filename[0]);
-    if (verbose>=1)
-        dlmessage("input file is %dx%d%c%.2f %s", width, height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);
+    switch (filetype) {
+        case YUV:
+            if (divine_video_format(filename[0], &width, &height, &interlaced, &framerate, &pixelformat)<0)
+                dlexit("failed to determine output video format from filename: %s", filename[0]);
+            if (verbose>=1)
+                dlmessage("input file is %dx%d%c%.2f %s", width, height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);
+
+            /* allocate the read buffer */
+            size = pixelformat==I422? width*height*2 : width*height*3/2;
+            data = (unsigned char *) malloc(size);
+
+            /* skip to the first frame */
+            if (firstframe) {
+                off_t skip = firstframe * size;
+                if (fseeko(filein, skip, SEEK_SET)<0)
+                    dlerror("failed to seek in input file");
+            }
+
+            /* calculate the number of frames in the input file */
+            maxframes = pixelformat==I420? stat.st_size / (width*height*3/2) : stat.st_size / (width*height*2);
+
+            break;
+
+        case M2V:
+            /* initialise the mpeg2 decoder */
+            mpeg2dec = mpeg2_init();
+            if (mpeg2dec==NULL)
+                dlexit("failed to initialise libmpeg2");
+            info = mpeg2_info(mpeg2dec);
+            //mpeg2_convert(mpeg2dec, mpeg2convert_rgb32, NULL);
+            mpeg2_accel(MPEG2_ACCEL_DETECT);
+
+            /* allocate the read buffer */
+            size = 32*1024;
+            data = (unsigned char *) malloc(size);
+
+            /* find the sequence header */
+            {
+                int seq_found = 0;
+
+                do {
+                    mpeg2_state_t state = mpeg2_parse(mpeg2dec);
+                    switch (state) {
+                        case STATE_BUFFER:
+                            read = fread(data, 1, size, filein);
+                            mpeg2_buffer(mpeg2dec, data, data+read);
+                            break;
+
+                        case STATE_SEQUENCE:
+                            width = info->sequence->width;
+                            height = info->sequence->height;
+                            interlaced = 1;
+                            framerate = 27000000.0/info->sequence->frame_period;
+                            pixelformat = info->sequence->height==info->sequence->chroma_height? I422 : I420;
+                            if (verbose>=1)
+                                dlmessage("input file is %dx%d%c%.2f %s", width, height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);
+                            seq_found = 1;
+                            break;
+
+                        default:
+                            break;
+                    }
+                } while(read && !seq_found);
+            }
+            break;
+
+        default:
+            dlexit("unknown input file type");
+    }
 
     /* override the framerate with ntscmode */
     if (framerate>29.9 && framerate<=30.0) {
@@ -389,9 +497,6 @@ int main(int argc, char *argv[])
             framerate = 60.0;
     }
 
-    /* calculate the number of frames in the input file */
-    int maxframes = pixelformat==I420? stat.st_size / (width*height*3/2) : stat.st_size / (width*height*2);
-
     /* get display mode iterator */
     IDeckLinkDisplayMode *mode;
     BMDTimeValue framerate_duration;
@@ -405,7 +510,7 @@ int main(int argc, char *argv[])
         while (iterator->Next(&mode) == S_OK) {
             mode->GetFrameRate(&framerate_duration, &framerate_scale);
             fprintf(stderr, "%ldx%ld%c%lld/%lld\n", mode->GetWidth(), mode->GetHeight(), mode->GetFieldDominance()!=bmdProgressiveFrame? 'i' : 'p', framerate_duration, framerate_scale);
-            if (mode->GetWidth()==width && (mode->GetHeight()==height || (mode->GetHeight()==486 && height==480))) {
+            if (mode->GetWidth()==width && (mode->GetHeight()==height || (mode->GetHeight()==486 && height==480) || (mode->GetHeight()==1080 && height==1088))) {
                 if (mode->GetFieldDominance()==bmdProgressiveFrame ^ interlaced) {
                     mode->GetFrameRate(&framerate_duration, &framerate_scale);
                     /* look for an integer frame rate match */
@@ -436,17 +541,6 @@ int main(int argc, char *argv[])
         return 2;
     }
 
-    /* allocate the read buffer */
-    size_t size = pixelformat==I422? width*height*2 : width*height*3/2;
-    unsigned char *data = (unsigned char *) malloc(size);
-
-    /* skip to the first frame */
-    if (firstframe) {
-        off_t skip = firstframe * size;
-        if (fseeko(filein, skip, SEEK_SET)<0)
-            dlerror("failed to seek in input file");
-    }
-
     dlmessage("press return to exit...");
 
     /* carry the last frame from the preroll to the main loop */
@@ -455,35 +549,82 @@ int main(int argc, char *argv[])
     /* preroll as many frames as possible */
     int index = 0;
     int framenum = 0;
+    int frame_done;
     while (!feof(filein) && (framenum<numframes || numframes<0)) {
-        /* loop input file */
-        if (index==maxframes) {
-            index = firstframe;
-            off_t skip = index * size;
-            if (fseeko(filein, skip, SEEK_SET)<0)
-                dlerror("failed to seek in input file");
-        }
 
-        /* allocate a new frame object */
-        if (output->CreateVideoFrame(width, height, width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
-            dlexit("error: failed to create video frame\n");
+        switch (filetype) {
+            case YUV:
+                /* loop input file */
+                if (index==maxframes) {
+                    index = firstframe;
+                    off_t skip = index * size;
+                    if (fseeko(filein, skip, SEEK_SET)<0)
+                        dlerror("failed to seek in input file");
+                }
 
-        unsigned char *uyvy;
-        frame->GetBytes((void**)&uyvy);
-        if (pixelformat==UYVY) {
-            /* read directly into frame */
-            if (fread(uyvy, width*height*2, 1, filein)!=1)
-                dlerror("failed to read frame from input file");
-        } else {
-            /* read frame from file */
-            if (fread(data, size, 1, filein)!=1)
-                dlerror("failed to read frame from input file");
+                /* allocate a new frame object */
+                if (output->CreateVideoFrame(width, height, width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
+                    dlexit("error: failed to create video frame\n");
 
-            /* convert to uyvy */
-            if (!lumaonly)
-                convert_i420_uyvy(data, uyvy, width, height, pixelformat);
-            else
-                convert_i420_uyvy_lumaonly(data, uyvy, width, height);
+                unsigned char *uyvy;
+                frame->GetBytes((void**)&uyvy);
+                if (pixelformat==UYVY) {
+                    /* read directly into frame */
+                    if (fread(uyvy, width*height*2, 1, filein)!=1)
+                        dlerror("failed to read frame from input file");
+                } else {
+                    /* read frame from file */
+                    if (fread(data, size, 1, filein)!=1)
+                        dlerror("failed to read frame from input file");
+
+                    /* convert to uyvy */
+                    if (!lumaonly)
+                        convert_i420_uyvy(data, uyvy, width, height, pixelformat);
+                    else
+                        convert_i420_uyvy_lumaonly(data, uyvy, width, height);
+                }
+                break;
+
+            case M2V:
+                frame_done = 0;
+                do {
+                    mpeg2_state_t state = mpeg2_parse(mpeg2dec);
+                    switch (state) {
+                        case STATE_BUFFER:
+                            read = fread(data, 1, size, filein);
+                            mpeg2_buffer(mpeg2dec, data, data+read);
+                            break;
+
+                        case STATE_SLICE:
+                        case STATE_END:
+                            if (info->display_fbuf) {
+                                /* allocate a new frame object */
+#if 0
+                                if (output->CreateVideoFrame(width, height, width*4, bmdFormat8BitBGRA, bmdFrameFlagDefault, &frame)!=S_OK)
+                                    dlexit("error: failed to create video frame\n");
+                                unsigned char *uyvy;
+                                frame->GetBytes((void**)&uyvy);
+                                memcpy(uyvy, info->display_fbuf->buf[0], width*height*4);
+#else
+                                if (output->CreateVideoFrame(width, height, width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
+                                    dlexit("error: failed to create video frame\n");
+                                unsigned char *uyvy;
+                                frame->GetBytes((void**)&uyvy);
+                                const unsigned char *yuv[3] = {info->display_fbuf->buf[0], info->display_fbuf->buf[1], info->display_fbuf->buf[2]};
+                                convert_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
+#endif
+                                frame_done = 1;
+                            }
+                            break;
+
+                        default:
+                            break;
+                    }
+                } while(read && !frame_done);
+                break;
+
+            default:
+                dlexit("unknown input file type");
         }
 
         result = output->ScheduleVideoFrame(frame, framenum*framerate_duration, framerate_duration, framerate_scale);
@@ -542,48 +683,97 @@ int main(int argc, char *argv[])
                 break;
         }
 
-        /* loop input file */
-        if (index==maxframes) {
-            index = firstframe;
-            off_t skip = index * size;
-            if (fseeko(filein, skip, SEEK_SET)<0)
-                dlerror("failed to seek in input file");
+        switch (filetype) {
+            case YUV:
+                /* loop input file */
+                if (index==maxframes) {
+                    index = firstframe;
+                    off_t skip = index * size;
+                    if (fseeko(filein, skip, SEEK_SET)<0)
+                        dlerror("failed to seek in input file");
+                }
+
+                /* allocate a new frame object */
+                if (output->CreateVideoFrame(width, height, width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
+                    dlexit("error: failed to create video frame\n");
+
+                unsigned char *uyvy;
+                frame->GetBytes((void**)&uyvy);
+                if (pixelformat==UYVY) {
+                    /* read directly into frame */
+                    if (fread(uyvy, width*height*2, 1, filein)!=1)
+                        dlerror("failed to read frame from input file");
+                } else {
+                    if (use_mmap) {
+                        /* align address to page size */
+                        pageindex = (index*size) / pagesize;
+                        offset = (index*size) - (pageindex*pagesize);
+
+                        /* memory map next frame from file */
+                        if ((data = (unsigned char *) mmap(NULL, size+pagesize, PROT_READ, MAP_PRIVATE, fileno(filein), pageindex*pagesize))==MAP_FAILED)
+                            dlerror("failed to map frame from input file");
+                    } else {
+                        /* read next frame from file */
+                        if (fread(data, size, 1, filein)!=1)
+                            dlerror("failed to read frame from input file");
+                    }
+
+                    /* convert to uyvy */
+                    if (!lumaonly)
+                        convert_i420_uyvy(data, uyvy, width, height, pixelformat);
+                    else
+                        convert_i420_uyvy_lumaonly(data, uyvy, width, height);
+                }
+
+                if (use_mmap)
+                    munmap(data, size+pagesize);
+                break;
+
+            case M2V:
+                frame_done = 0;
+                do {
+                    mpeg2_state_t state = mpeg2_parse(mpeg2dec);
+                    switch (state) {
+                        case STATE_BUFFER:
+                            read = fread(data, 1, size, filein);
+                            if (feof(filein) && !ferror(filein)) {
+                                fseek(filein, 0, SEEK_SET);
+                                read = fread(data, 1, size, filein);
+                            }
+                            mpeg2_buffer(mpeg2dec, data, data+read);
+                            break;
+
+                        case STATE_SLICE:
+                        case STATE_END:
+                            if (info->display_fbuf) {
+                                /* allocate a new frame object */
+#if 0
+                                if (output->CreateVideoFrame(width, height, width*4, bmdFormat8BitBGRA, bmdFrameFlagDefault, &frame)!=S_OK)
+                                    dlexit("error: failed to create video frame\n");
+                                unsigned char *uyvy;
+                                frame->GetBytes((void**)&uyvy);
+                                memcpy(uyvy, info->display_fbuf->buf[0], width*height*4);
+#else
+                                if (output->CreateVideoFrame(width, height, width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
+                                    dlexit("error: failed to create video frame\n");
+                                const unsigned char *yuv[3] = {info->display_fbuf->buf[0], info->display_fbuf->buf[1], info->display_fbuf->buf[2]};
+                                unsigned char *uyvy;
+                                frame->GetBytes((void**)&uyvy);
+                                convert_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
+#endif
+                                frame_done = 1;
+                            }
+                            break;
+
+                        default:
+                            break;
+                    }
+                } while(read && !frame_done);
+                break;
+
+            default:
+                dlexit("unknown input file type");
         }
-
-        /* allocate a new frame object */
-        if (output->CreateVideoFrame(width, height, width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
-            dlexit("error: failed to create video frame\n");
-
-        unsigned char *uyvy;
-        frame->GetBytes((void**)&uyvy);
-        if (pixelformat==UYVY) {
-            /* read directly into frame */
-            if (fread(uyvy, width*height*2, 1, filein)!=1)
-                dlerror("failed to read frame from input file");
-        } else {
-            if (use_mmap) {
-                /* align address to page size */
-                pageindex = (index*size) / pagesize;
-                offset = (index*size) - (pageindex*pagesize);
-
-                /* memory map next frame from file */
-                if ((data = (unsigned char *) mmap(NULL, size+pagesize, PROT_READ, MAP_PRIVATE, fileno(filein), pageindex*pagesize))==MAP_FAILED)
-                    dlerror("failed to map frame from input file");
-            } else {
-                /* read next frame from file */
-                if (fread(data, size, 1, filein)!=1)
-                    dlerror("failed to read frame from input file");
-            }
-
-            /* convert to uyvy */
-            if (!lumaonly)
-                convert_i420_uyvy(data, uyvy, width, height, pixelformat);
-            else
-                convert_i420_uyvy_lumaonly(data, uyvy, width, height);
-        }
-
-        if (use_mmap)
-            munmap(data, size+pagesize);
     }
 
     /* stop the video output */
@@ -591,6 +781,8 @@ int main(int argc, char *argv[])
     output->DisableVideoOutput();
 
     /* tidy up */
+    if (mpeg2dec)
+        mpeg2_close(mpeg2dec);
     sem_destroy(&sem);
     card->Release();
     iterator->Release();
