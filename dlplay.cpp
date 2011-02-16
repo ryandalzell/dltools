@@ -464,7 +464,7 @@ int main(int argc, char *argv[])
                         case STATE_SEQUENCE:
                             width = info->sequence->width;
                             height = info->sequence->height;
-                            interlaced = 1;
+                            interlaced = height==720? 0 : 1;
                             framerate = 27000000.0/info->sequence->frame_period;
                             pixelformat = info->sequence->height==info->sequence->chroma_height? I422 : I420;
                             if (verbose>=1)
