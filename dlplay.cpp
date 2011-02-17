@@ -739,6 +739,10 @@ int main(int argc, char *argv[])
                                 read = fread(data, 1, size, filein);
                             else
                                 read = next_data_packet(data, vid_pid, filein);
+                            if (feof(filein) && !ferror(filein)) {
+                                fseek(filein, 0, SEEK_SET);
+                                read = fread(data, 1, size, filein);
+                            }
                             mpeg2_buffer(mpeg2dec, data, data+read);
                             break;
 
