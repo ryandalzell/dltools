@@ -112,6 +112,7 @@ void usage(int exitcode)
 {
     fprintf(stderr, "%s: play raw video files\n", appname);
     fprintf(stderr, "usage: %s [options] <file> [<file>...]\n", appname);
+    fprintf(stderr, "  -f, --format        : specify display format: 480i,480p,576i,720p,1080i,1080p [optional +framerate] (default: auto)\n");
     fprintf(stderr, "  -a, --firstframe    : index of first frame in input to display (default: 0)\n");
     fprintf(stderr, "  -n, --numframes     : number of frames in input to display (default: all)\n");
     fprintf(stderr, "  -m, --ntscmode      : use proper ntsc framerate, e.g. 29.97 instead of 30fps (default: on)\n");
@@ -138,6 +139,7 @@ int divine_video_format(const char *filename, int *width, int *height, bool *int
         { "1080p24",    1920, 1080, false, 24.0 },
         { "1080p25",    1920, 1080, false, 25.0 },
         { "1080p30",    1920, 1080, false, 30.0 },
+        { "1080p",      1920, 1080, false, 30.0 },
         { "1080i50",    1920, 1080, true,  25.0 },
         { "1080i59.94", 1920, 1080, true,  30000.0/1001.0 },
         { "1080i5994",  1920, 1080, true,  30000.0/1001.0 },
@@ -362,6 +364,7 @@ int main(int argc, char *argv[])
     pixelformat_t pixelformat;
 
     /* command line defaults */
+    char *displayformat = NULL;
     int firstframe = 0;
     int numframes = -1;
     int ntscmode = 1;   /* use e.g. 29.97 instead of 30fps */
@@ -390,6 +393,7 @@ int main(int argc, char *argv[])
     /* parse command line for options */
     while (1) {
         static struct option long_options[] = {
+            {"format",    1, NULL, 'f'},
             {"firstframe",1, NULL, 'a'},
             {"numframes", 1, NULL, 'n'},
             {"ntscmode",  1, NULL, 'm'},
@@ -402,11 +406,15 @@ int main(int argc, char *argv[])
             {NULL,        0, NULL,  0 }
         };
 
-        int optchar = getopt_long(argc, argv, "a:n:m:lp:qvu", long_options, NULL);
+        int optchar = getopt_long(argc, argv, "f:a:n:m:lp:qvu", long_options, NULL);
         if (optchar==-1)
             break;
 
         switch (optchar) {
+            case 'f':
+                displayformat = optarg;
+                break;
+
             case 'a':
                 firstframe = atoi(optarg);
                 if (firstframe<0)
@@ -648,25 +656,32 @@ int main(int argc, char *argv[])
     }
 
     /* determine display dimensions */
-    dis_width = pic_width;
-    dis_height = pic_height;
-    switch (pic_width) {
-        case 704 : dis_width = 720; break;
-        case 1440: dis_width = 1920; break;
-    }
-    switch (pic_height) {
-        case 480 : dis_height = 486; break;
-        case 1088: dis_height = 1080; break;
-    }
-    if (pic_width<704 && pic_height<480) {
-        if (framerate<29.0) {
-            /* display pal */
-            dis_width = 720;
-            dis_height = 576;
-        } else {
-            /* display ntsc */
-            dis_width = 720;
-            dis_height = 486;
+    if (displayformat) {
+        /* lookup specified format */
+        if (divine_video_format(displayformat, &dis_width, &dis_height, &interlaced, &framerate, &pixelformat)<0)
+            dlexit("failed to determine output video format from filename: %s", displayformat);
+    } else {
+        /* determine from picture parameters */
+        dis_width = pic_width;
+        dis_height = pic_height;
+        switch (pic_width) {
+            case 704 : dis_width = 720; break;
+            case 1440: dis_width = 1920; break;
+        }
+        switch (pic_height) {
+            case 480 : dis_height = 486; break;
+            case 1088: dis_height = 1080; break;
+        }
+        if (pic_width<704 && pic_height<480) {
+            if (framerate<29.0) {
+                /* display pal */
+                dis_width = 720;
+                dis_height = 576;
+            } else {
+                /* display ntsc */
+                dis_width = 720;
+                dis_height = 486;
+            }
         }
     }
 
