@@ -116,6 +116,7 @@ void usage(int exitcode)
     fprintf(stderr, "  -n, --numframes     : number of frames in input to display (default: all)\n");
     fprintf(stderr, "  -m, --ntscmode      : use proper ntsc framerate, e.g. 29.97 instead of 30fps (default: on)\n");
     fprintf(stderr, "  -l, --luma          : display luma plane only (default: luma and chroma)\n");
+    fprintf(stderr, "  -p, --pid           : decode specific pid from transport stream (default: first program)\n");
     fprintf(stderr, "  -q, --quiet         : decrease verbosity, can be used multiple times\n");
     fprintf(stderr, "  -v, --verbose       : increase verbosity, can be used multiple times\n");
     fprintf(stderr, "  --                  : disable argument processing\n");
@@ -270,6 +271,78 @@ void *display_status(void *arg)
     pthread_exit(0);
 }
 
+/* peek at the next character in the file */
+int fpeek(FILE *file)
+{
+    int c = fgetc(file);
+    ungetc(c, file);
+    return c;
+}
+
+/* find a particular character in the file */
+int ffind(int f, FILE *file)
+{
+    int c = fgetc(file);
+    while (c!=f && !feof(file))
+        c = fgetc(file);
+    if (feof(file))
+        return -1;
+    ungetc(c, file);
+    return 0;
+}
+
+/* read next data packet from transport stream */
+int next_packet(unsigned char *packet, FILE *file)
+{
+    while (1) {
+        /* read a packet sized chunk */
+        if (fread(packet, 188, 1, file)!=1)
+            return -1;
+
+        if (packet[0]==0x47 && fpeek(file)==0x47)
+            /* success */
+            return 0;
+
+        /* resync and try again */
+        if (ffind(0x47, file)<0)
+            return -1;
+    }
+}
+
+/* read next video data packet from transport stream */
+int next_data_packet(unsigned char *data, int vid_pid, FILE *file)
+{
+    unsigned char packet[188];
+
+    /* find next whole transport stream packet with correct pid */
+    while (1) {
+        /* read next packet */
+        if (next_packet(packet, file)<0)
+            return 0;
+
+        /* check pid is video data */
+        int pid = ((packet[1]<<8) | packet[2]) & 0x1fff;
+        if (pid!=vid_pid)
+            continue;
+
+        /* skip adaption field */
+        int adaptation_field_control = (packet[3] >> 4) & 0x3;
+        if (adaptation_field_control==1) {
+            /* copy data */
+            memcpy(data, packet+4, 188-4);
+            return 188-4;
+        } else if (adaptation_field_control==3) {
+            int adaptation_field_length = packet[4];
+            memcpy(data, packet+4+1+adaptation_field_length, 188-4-1-adaptation_field_length);
+            return 188-4-1-adaptation_field_length;
+        }
+    }
+
+    return 0;
+}
+
+/* read next series of video data packets from transport stream */
+
 int main(int argc, char *argv[])
 {
     FILE *filein = stdin;
@@ -305,6 +378,9 @@ int main(int argc, char *argv[])
     mpeg2dec_t *mpeg2dec = NULL;
     const mpeg2_info_t *info = NULL;
 
+    /* transport stream variables */
+    int vid_pid = 0;
+
     /* parse command line for options */
     while (1) {
         static struct option long_options[] = {
@@ -312,6 +388,7 @@ int main(int argc, char *argv[])
             {"numframes", 1, NULL, 'n'},
             {"ntscmode",  1, NULL, 'm'},
             {"luma",      0, NULL, 'l'},
+            {"pid",       1, NULL, 'l'},
             {"quiet",     0, NULL, 'q'},
             {"verbose",   0, NULL, 'v'},
             {"usage",     0, NULL, 'u'},
@@ -319,7 +396,7 @@ int main(int argc, char *argv[])
             {NULL,        0, NULL,  0 }
         };
 
-        int optchar = getopt_long(argc, argv, "a:n:m:lqvu", long_options, NULL);
+        int optchar = getopt_long(argc, argv, "a:n:m:lp:qvu", long_options, NULL);
         if (optchar==-1)
             break;
 
@@ -344,6 +421,12 @@ int main(int argc, char *argv[])
 
             case 'l':
                 lumaonly = 1;
+                break;
+
+            case 'p':
+                vid_pid = atoi(optarg);
+                if (vid_pid<=1 || vid_pid>8191)
+                    dlexit("invalid value for pid: %d", vid_pid);
                 break;
 
             case 'q':
@@ -379,6 +462,8 @@ int main(int argc, char *argv[])
     /* determine the file type */
     if (strstr(filename[0], "m2v")!=NULL || strstr(filename[0], "M2V")!=NULL)
         filetype = M2V;
+    else if (strstr(filename[0], "ts")!=NULL || strstr(filename[0], "trp")!=NULL)
+        filetype = TS;
     else
         filetype = YUV;
 
@@ -436,13 +521,68 @@ int main(int argc, char *argv[])
 
             break;
 
+        case TS:
+            /* skip ts parsing if video pid specified */
+            if (vid_pid==0) {
+                /* allocate the read buffer */
+                size = 184;
+                data = (unsigned char *) malloc(size);
+
+                /* find the pmt pid */
+                int pmt_pid = 0;
+                do {
+
+                    /* find the next pat */
+                    read = next_data_packet(data, 0, filein);
+                    if (read==0)
+                        dlexit("failed to find a non-zero program in input file \"%s\"", filename[0]);
+
+                    /* find the pmt_pid of the first non-zero program number */
+                    int index = 9;
+                    while (pmt_pid==0 && index<read) {
+                        int program_number = (data[index]<<8) | data[index+1];
+                        if (program_number>0)
+                            pmt_pid = (data[index+2]<<8 | data[index+3]) & 0x1fff;
+                        index += 4;
+                    }
+
+                } while (pmt_pid==0);
+
+                if (verbose>=1)
+                    dlmessage("pmt_pid=%d", pmt_pid);
+
+                /* find the video pid */
+                vid_pid = 0;
+                do {
+                    /* find the next pmt */
+                    read = next_data_packet(data, pmt_pid, filein);
+                    if (read==0)
+                        dlexit("failed to find a video pid in input file \"%s\"", filename[0]);
+
+                    /* find the video pid */
+                    int program_info_length = (data[11]<<8 | data[12]) & 0x0fff;
+                    int index = 13 + program_info_length;
+                    while (vid_pid==0 && index<read) {
+                        int stream_type = data[index];
+                        if (stream_type==0x02 || stream_type==0x80) /* some files use user private stream types */
+                            vid_pid = (data[index+1]<<8 | data[index+2]) & 0x1fff;
+                        index += 5;
+                        // TODO skip over descriptors.
+                    }
+                } while (vid_pid==0);
+
+                if (verbose>=1)
+                    dlmessage("vid_pid=%d", vid_pid);
+
+                free(data);
+            }
+
         case M2V:
             /* initialise the mpeg2 decoder */
             mpeg2dec = mpeg2_init();
             if (mpeg2dec==NULL)
                 dlexit("failed to initialise libmpeg2");
             info = mpeg2_info(mpeg2dec);
-            //mpeg2_convert(mpeg2dec, mpeg2convert_rgb32, NULL);
             mpeg2_accel(MPEG2_ACCEL_DETECT);
 
             /* allocate the read buffer */
@@ -457,7 +597,10 @@ int main(int argc, char *argv[])
                     mpeg2_state_t state = mpeg2_parse(mpeg2dec);
                     switch (state) {
                         case STATE_BUFFER:
-                            read = fread(data, 1, size, filein);
+                            if (filetype==M2V)
+                                read = fread(data, 1, size, filein);
+                            else
+                                read = next_data_packet(data, vid_pid, filein);
                             mpeg2_buffer(mpeg2dec, data, data+read);
                             break;
 
@@ -509,7 +652,7 @@ int main(int argc, char *argv[])
         /* find mode for given width and height */
         while (iterator->Next(&mode) == S_OK) {
             mode->GetFrameRate(&framerate_duration, &framerate_scale);
-            fprintf(stderr, "%ldx%ld%c%lld/%lld\n", mode->GetWidth(), mode->GetHeight(), mode->GetFieldDominance()!=bmdProgressiveFrame? 'i' : 'p', framerate_duration, framerate_scale);
+            //fprintf(stderr, "%ldx%ld%c%lld/%lld\n", mode->GetWidth(), mode->GetHeight(), mode->GetFieldDominance()!=bmdProgressiveFrame? 'i' : 'p', framerate_duration, framerate_scale);
             if (mode->GetWidth()==width && (mode->GetHeight()==height || (mode->GetHeight()==486 && height==480) || (mode->GetHeight()==1080 && height==1088))) {
                 if (mode->GetFieldDominance()==bmdProgressiveFrame ^ interlaced) {
                     mode->GetFrameRate(&framerate_duration, &framerate_scale);
@@ -586,12 +729,16 @@ int main(int argc, char *argv[])
                 break;
 
             case M2V:
+            case TS:
                 frame_done = 0;
                 do {
                     mpeg2_state_t state = mpeg2_parse(mpeg2dec);
                     switch (state) {
                         case STATE_BUFFER:
-                            read = fread(data, 1, size, filein);
+                            if (filetype==M2V)
+                                read = fread(data, 1, size, filein);
+                            else
+                                read = next_data_packet(data, vid_pid, filein);
                             mpeg2_buffer(mpeg2dec, data, data+read);
                             break;
 
@@ -599,20 +746,12 @@ int main(int argc, char *argv[])
                         case STATE_END:
                             if (info->display_fbuf) {
                                 /* allocate a new frame object */
-#if 0
-                                if (output->CreateVideoFrame(width, height, width*4, bmdFormat8BitBGRA, bmdFrameFlagDefault, &frame)!=S_OK)
-                                    dlexit("error: failed to create video frame\n");
-                                unsigned char *uyvy;
-                                frame->GetBytes((void**)&uyvy);
-                                memcpy(uyvy, info->display_fbuf->buf[0], width*height*4);
-#else
                                 if (output->CreateVideoFrame(width, height, width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
                                     dlexit("error: failed to create video frame\n");
                                 unsigned char *uyvy;
                                 frame->GetBytes((void**)&uyvy);
                                 const unsigned char *yuv[3] = {info->display_fbuf->buf[0], info->display_fbuf->buf[1], info->display_fbuf->buf[2]};
                                 convert_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
-#endif
                                 frame_done = 1;
                             }
                             break;
@@ -730,12 +869,16 @@ int main(int argc, char *argv[])
                 break;
 
             case M2V:
+            case TS:
                 frame_done = 0;
                 do {
                     mpeg2_state_t state = mpeg2_parse(mpeg2dec);
                     switch (state) {
                         case STATE_BUFFER:
-                            read = fread(data, 1, size, filein);
+                            if (filetype==M2V)
+                                read = fread(data, 1, size, filein);
+                            else
+                                read = next_data_packet(data, vid_pid, filein);
                             if (feof(filein) && !ferror(filein)) {
                                 fseek(filein, 0, SEEK_SET);
                                 read = fread(data, 1, size, filein);
@@ -747,20 +890,12 @@ int main(int argc, char *argv[])
                         case STATE_END:
                             if (info->display_fbuf) {
                                 /* allocate a new frame object */
-#if 0
-                                if (output->CreateVideoFrame(width, height, width*4, bmdFormat8BitBGRA, bmdFrameFlagDefault, &frame)!=S_OK)
-                                    dlexit("error: failed to create video frame\n");
-                                unsigned char *uyvy;
-                                frame->GetBytes((void**)&uyvy);
-                                memcpy(uyvy, info->display_fbuf->buf[0], width*height*4);
-#else
                                 if (output->CreateVideoFrame(width, height, width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
                                     dlexit("error: failed to create video frame\n");
                                 const unsigned char *yuv[3] = {info->display_fbuf->buf[0], info->display_fbuf->buf[1], info->display_fbuf->buf[2]};
                                 unsigned char *uyvy;
                                 frame->GetBytes((void**)&uyvy);
                                 convert_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
-#endif
                                 frame_done = 1;
                             }
                             break;
