@@ -156,6 +156,8 @@ int divine_video_format(const char *filename, int *width, int *height, bool *int
         { "480i5994",   720,  480,  true,  30000.0/1001.0 },
         { "480i",       720,  480,  true,  30000.0/1001.0 },
         { "ntsc",       720,  480,  true,  30000.0/1001.0 },
+        { "hdv",        1440, 1080, true,  30.0 },
+        { "cif",        352,  288,  true,  30.0 },
     };
 
     if (strstr(filename, "uyvy")!=NULL || strstr(filename, "UYVY")!=NULL)
@@ -350,15 +352,19 @@ int main(int argc, char *argv[])
     unsigned int numfiles = 0;
     filetype_t filetype = OTHER;
 
-    /* command line defaults */
-    int width = 0;
-    int height = 0;
+    /* picture size variables */
+    int pic_width = 0;
+    int pic_height = 0;
+    int dis_width = 0;
+    int dis_height = 0;
     bool interlaced = 0;
     float framerate = 0.0;
     pixelformat_t pixelformat;
-    int ntscmode = 1;   /* use e.g. 29.97 instead of 30fps */
+
+    /* command line defaults */
     int firstframe = 0;
     int numframes = -1;
+    int ntscmode = 1;   /* use e.g. 29.97 instead of 30fps */
     int lumaonly = 0;
     int use_mmap = 0;
     int verbose = 0;
@@ -500,13 +506,13 @@ int main(int argc, char *argv[])
     /* figure out the mode to set */
     switch (filetype) {
         case YUV:
-            if (divine_video_format(filename[0], &width, &height, &interlaced, &framerate, &pixelformat)<0)
+            if (divine_video_format(filename[0], &pic_width, &pic_height, &interlaced, &framerate, &pixelformat)<0)
                 dlexit("failed to determine output video format from filename: %s", filename[0]);
             if (verbose>=1)
-                dlmessage("input file is %dx%d%c%.2f %s", width, height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);
+                dlmessage("input file is %dx%d%c%.2f %s", pic_width, pic_height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);
 
             /* allocate the read buffer */
-            size = pixelformat==I422? width*height*2 : width*height*3/2;
+            size = pixelformat==I422? pic_width*pic_height*2 : pic_width*pic_height*3/2;
             data = (unsigned char *) malloc(size);
 
             /* skip to the first frame */
@@ -517,7 +523,7 @@ int main(int argc, char *argv[])
             }
 
             /* calculate the number of frames in the input file */
-            maxframes = pixelformat==I420? stat.st_size / (width*height*3/2) : stat.st_size / (width*height*2);
+            maxframes = pixelformat==I420? stat.st_size / (pic_width*pic_height*3/2) : stat.st_size / (pic_width*pic_height*2);
 
             break;
 
@@ -576,6 +582,7 @@ int main(int argc, char *argv[])
 
                 free(data);
             }
+            /* fall through */
 
         case M2V:
             /* initialise the mpeg2 decoder */
@@ -605,13 +612,13 @@ int main(int argc, char *argv[])
                             break;
 
                         case STATE_SEQUENCE:
-                            width = info->sequence->width;
-                            height = info->sequence->height;
-                            interlaced = height==720? 0 : 1;
+                            pic_width = info->sequence->width;
+                            pic_height = info->sequence->height;
+                            interlaced = pic_height==720? 0 : 1;
                             framerate = 27000000.0/info->sequence->frame_period;
                             pixelformat = info->sequence->height==info->sequence->chroma_height? I422 : I420;
                             if (verbose>=1)
-                                dlmessage("input file is %dx%d%c%.2f %s", width, height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);
+                                dlmessage("input file is %dx%d%c%.2f %s", pic_width, pic_height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);
                             seq_found = 1;
                             break;
 
@@ -640,6 +647,29 @@ int main(int argc, char *argv[])
             framerate = 60.0;
     }
 
+    /* determine display dimensions */
+    dis_width = pic_width;
+    dis_height = pic_height;
+    switch (pic_width) {
+        case 704 : dis_width = 720; break;
+        case 1440: dis_width = 1920; break;
+    }
+    switch (pic_height) {
+        case 480 : dis_height = 486; break;
+        case 1088: dis_height = 1080; break;
+    }
+    if (pic_width<704 && pic_height<480) {
+        if (framerate<29.0) {
+            /* display pal */
+            dis_width = 720;
+            dis_height = 576;
+        } else {
+            /* display ntsc */
+            dis_width = 720;
+            dis_height = 486;
+        }
+    }
+
     /* get display mode iterator */
     IDeckLinkDisplayMode *mode;
     BMDTimeValue framerate_duration;
@@ -652,8 +682,8 @@ int main(int argc, char *argv[])
         /* find mode for given width and height */
         while (iterator->Next(&mode) == S_OK) {
             mode->GetFrameRate(&framerate_duration, &framerate_scale);
-            //fprintf(stderr, "%ldx%ld%c%lld/%lld\n", mode->GetWidth(), mode->GetHeight(), mode->GetFieldDominance()!=bmdProgressiveFrame? 'i' : 'p', framerate_duration, framerate_scale);
-            if (mode->GetWidth()==width && (mode->GetHeight()==height || (mode->GetHeight()==486 && height==480) || (mode->GetHeight()==1080 && height==1088))) {
+            fprintf(stderr, "%ldx%ld%c%lld/%lld\n", mode->GetWidth(), mode->GetHeight(), mode->GetFieldDominance()!=bmdProgressiveFrame? 'i' : 'p', framerate_duration, framerate_scale);
+            if (mode->GetWidth()==dis_width && mode->GetHeight()==dis_height) {
                 if (mode->GetFieldDominance()==bmdProgressiveFrame ^ interlaced) {
                     mode->GetFrameRate(&framerate_duration, &framerate_scale);
                     /* look for an integer frame rate match */
@@ -666,7 +696,7 @@ int main(int argc, char *argv[])
     }
 
     if (mode==NULL)
-        dlexit("error: failed to find mode for %dx%d%c%.2f", width, height, interlaced? 'i' : 'p', framerate);
+        dlexit("error: failed to find mode for %dx%d%c%.2f", pic_width, pic_height, interlaced? 'i' : 'p', framerate);
 
     /* display mode name */
     const char *name;
@@ -706,14 +736,14 @@ int main(int argc, char *argv[])
                 }
 
                 /* allocate a new frame object */
-                if (output->CreateVideoFrame(width, height, width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
+                if (output->CreateVideoFrame(pic_width, pic_height, pic_width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
                     dlexit("error: failed to create video frame\n");
 
                 unsigned char *uyvy;
                 frame->GetBytes((void**)&uyvy);
                 if (pixelformat==UYVY) {
                     /* read directly into frame */
-                    if (fread(uyvy, width*height*2, 1, filein)!=1)
+                    if (fread(uyvy, pic_width*pic_height*2, 1, filein)!=1)
                         dlerror("failed to read frame from input file");
                 } else {
                     /* read frame from file */
@@ -722,9 +752,9 @@ int main(int argc, char *argv[])
 
                     /* convert to uyvy */
                     if (!lumaonly)
-                        convert_i420_uyvy(data, uyvy, width, height, pixelformat);
+                        convert_i420_uyvy(data, uyvy, pic_width, pic_height, pixelformat);
                     else
-                        convert_i420_uyvy_lumaonly(data, uyvy, width, height);
+                        convert_i420_uyvy_lumaonly(data, uyvy, pic_width, pic_height);
                 }
                 break;
 
@@ -750,12 +780,12 @@ int main(int argc, char *argv[])
                         case STATE_END:
                             if (info->display_fbuf) {
                                 /* allocate a new frame object */
-                                if (output->CreateVideoFrame(width, height, width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
+                                if (output->CreateVideoFrame(pic_width, pic_height, pic_width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
                                     dlexit("error: failed to create video frame\n");
                                 unsigned char *uyvy;
                                 frame->GetBytes((void**)&uyvy);
                                 const unsigned char *yuv[3] = {info->display_fbuf->buf[0], info->display_fbuf->buf[1], info->display_fbuf->buf[2]};
-                                convert_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
+                                convert_yuv_uyvy(yuv, uyvy, pic_width, pic_height, pixelformat);
                                 frame_done = 1;
                             }
                             break;
@@ -837,14 +867,14 @@ int main(int argc, char *argv[])
                 }
 
                 /* allocate a new frame object */
-                if (output->CreateVideoFrame(width, height, width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
+                if (output->CreateVideoFrame(pic_width, pic_height, pic_width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
                     dlexit("error: failed to create video frame\n");
 
                 unsigned char *uyvy;
                 frame->GetBytes((void**)&uyvy);
                 if (pixelformat==UYVY) {
                     /* read directly into frame */
-                    if (fread(uyvy, width*height*2, 1, filein)!=1)
+                    if (fread(uyvy, pic_width*pic_height*2, 1, filein)!=1)
                         dlerror("failed to read frame from input file");
                 } else {
                     if (use_mmap) {
@@ -863,9 +893,9 @@ int main(int argc, char *argv[])
 
                     /* convert to uyvy */
                     if (!lumaonly)
-                        convert_i420_uyvy(data, uyvy, width, height, pixelformat);
+                        convert_i420_uyvy(data, uyvy, pic_width, pic_height, pixelformat);
                     else
-                        convert_i420_uyvy_lumaonly(data, uyvy, width, height);
+                        convert_i420_uyvy_lumaonly(data, uyvy, pic_width, pic_height);
                 }
 
                 if (use_mmap)
@@ -894,12 +924,12 @@ int main(int argc, char *argv[])
                         case STATE_END:
                             if (info->display_fbuf) {
                                 /* allocate a new frame object */
-                                if (output->CreateVideoFrame(width, height, width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
+                                if (output->CreateVideoFrame(pic_width, pic_height, pic_width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
                                     dlexit("error: failed to create video frame\n");
                                 const unsigned char *yuv[3] = {info->display_fbuf->buf[0], info->display_fbuf->buf[1], info->display_fbuf->buf[2]};
                                 unsigned char *uyvy;
                                 frame->GetBytes((void**)&uyvy);
-                                convert_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
+                                convert_yuv_uyvy(yuv, uyvy, pic_width, pic_height, pixelformat);
                                 frame_done = 1;
                             }
                             break;
