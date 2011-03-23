@@ -9,7 +9,7 @@ SDKDIR = /usr/local/decklink/include
 APPS = dlskel dltest
 
 # Common files
-OBJS = dlutil.o DeckLinkAPIDispatch.o
+OBJS = dlutil.o dlterm.o DeckLinkAPIDispatch.o
 
 # Flags
 CXXFLAGS = -Wall -D_FILE_OFFSET_BITS=64 -g -I $(SDKDIR)

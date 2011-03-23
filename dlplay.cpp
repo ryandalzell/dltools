@@ -28,6 +28,7 @@ extern "C" {
 #include "DeckLinkAPI.h"
 
 #include "dlutil.h"
+#include "dlterm.h"
 
 const char *appname = "dlplay";
 
@@ -508,6 +509,9 @@ int main(int argc, char *argv[])
     int vid_pid = 0;
     int aud_pid = 0;
     int ac3_pid = 0;
+
+    /* terminal input variables */
+    class dlterm term;
 
     /* parse command line for options */
     while (1) {
@@ -1012,8 +1016,6 @@ int main(int argc, char *argv[])
             return 2;
         }
 
-        dlmessage("press return to exit...");
-
         /* carry the last frame from the preroll to the main loop */
         IDeckLinkMutableVideoFrame *frame;
 
@@ -1160,6 +1162,8 @@ int main(int argc, char *argv[])
         if (verbose>=0)
             dlmessage("info: pre-rolled %d frames", framenum);
 
+        dlmessage("press q to exit...");
+
         /* continue queueing frames when semaphore is signalled */
         while (!feof(filein) && (framenum<numframes || numframes<0)) {
             /* check that one or more frames have been displayed */
@@ -1180,17 +1184,12 @@ int main(int argc, char *argv[])
             framenum++;
 
             /* check for user input */
-            {
-                fd_set fds;
-                FD_ZERO(&fds);
-                FD_SET(fileno(stdin), &fds);
-                struct timeval tv = {0, 0};
-                select(fileno(stdin)+1, &fds, NULL, NULL, &tv);
-                if (FD_ISSET(fileno(stdin), &fds)) {
-                    char buf[64];
-                    fgets(buf, sizeof(buf), stdin);
+            if (term.kbhit()) {
+                int c = term.readchar();
+                if (c=='q')
                     break;
-                }
+                if (c=='\n')
+                    break;
             }
 
             /* prepare next video frame */
@@ -1505,7 +1504,7 @@ int main(int argc, char *argv[])
 
     /* report statistics */
     if (verbose>=0)
-        fprintf(stdout, "%d frames: %d late, %d dropped, %d flushed\n", completed, late, dropped, flushed);
+        fprintf(stdout, "\n%d frames: %d late, %d dropped, %d flushed\n", completed, late, dropped, flushed);
 
     return 0;
 }
