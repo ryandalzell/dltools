@@ -1156,18 +1156,39 @@ int main(int argc, char *argv[])
             dlerror("failed to create status thread");
 
         /* start the video output */
-        if (output->StartScheduledPlayback(0, 100, 1.0) != S_OK)
+        if (output->StartScheduledPlayback(0, framerate_duration, 1.0) != S_OK)
             dlexit("%s: error: failed to start video playback");
 
         if (verbose>=0)
             dlmessage("info: pre-rolled %d frames", framenum);
 
-        dlmessage("press q to exit...");
+        dlmessage("press q to exit, p to pause...");
 
         /* continue queueing frames when semaphore is signalled */
         while (!feof(filein) && (framenum<numframes || numframes<0)) {
             /* check that one or more frames have been displayed */
             sem_wait(&sem);
+
+            /* check for user input */
+            if (term.kbhit()) {
+                int c = term.readchar();
+                if (c=='q' || c=='\n')
+                    /* quit */
+                    break;
+
+                if (c=='p') {
+                    /* pause */
+                    if (output->StopScheduledPlayback(0, NULL, 0) != S_OK)
+                        dlexit("%s: error: failed to pause video playback");
+                    output->DisplayVideoFrameSync(frame);
+                    do {
+                        c = term.readchar();
+                    } while (c!='p');
+                    break;
+                    if (output->StartScheduledPlayback((framenum-1)*framerate_duration, framerate_duration, 1.0) != S_OK)
+                        dlexit("%s: error: failed to resume video playback");
+                }
+            }
 
             /* enqueue previous frame */
             result = output->ScheduleVideoFrame(frame, framenum*framerate_duration, framerate_duration, framerate_scale);
@@ -1182,15 +1203,6 @@ int main(int argc, char *argv[])
             }
             index++;
             framenum++;
-
-            /* check for user input */
-            if (term.kbhit()) {
-                int c = term.readchar();
-                if (c=='q')
-                    break;
-                if (c=='\n')
-                    break;
-            }
 
             /* prepare next video frame */
             switch (filetype) {
