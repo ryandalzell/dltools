@@ -500,7 +500,7 @@ int main(int argc, char *argv[])
     /* liba52 variables */
     a52_state_t *a52_state = NULL;
     sample_t *sample = NULL;
-    int ac3_length;
+    int ac3_length = 0;
     unsigned char *ac3_frame = NULL;
     size_t ac3_size = 256*2*sizeof(uint16_t);
     int16_t *ac3_block = NULL;
@@ -724,7 +724,7 @@ int main(int argc, char *argv[])
                             int es_info_length = (vid_data[index+3]<<8 | vid_data[index+4]) & 0xfff;
                             if (vid_pid==0 && (stream_type==0x02 || stream_type==0x80)) /* some files use user private stream types */
                                 vid_pid = pid;
-                            if (aud_pid==0 && stream_type==0x03 || stream_type==0x04)
+                            if (aud_pid==0 && (stream_type==0x03 || stream_type==0x04))
                                 aud_pid = pid;
                             if (ac3_pid==0 && stream_type==0x81)
                                 ac3_pid = pid;
@@ -824,7 +824,7 @@ int main(int argc, char *argv[])
                     ac3_frame = (unsigned char *)malloc(3840+188);
                     ac3_block = (int16_t *)malloc(ac3_size);
 
-                    unsigned int sync;
+                    unsigned int sync = 0;
                     do {
                         read = next_pes_packet_data(aud_data, ac3_pid, 1, fileau);
                         if (read==0) {
@@ -973,7 +973,7 @@ int main(int argc, char *argv[])
                 mode->GetFrameRate(&framerate_duration, &framerate_scale);
                 //fprintf(stderr, "%ldx%ld%c%lld/%lld\n", mode->GetWidth(), mode->GetHeight(), mode->GetFieldDominance()!=bmdProgressiveFrame? 'i' : 'p', framerate_duration, framerate_scale);
                 if (mode->GetWidth()==dis_width && mode->GetHeight()==dis_height) {
-                    if (mode->GetFieldDominance()==bmdProgressiveFrame ^ interlaced) {
+                    if ((mode->GetFieldDominance()==bmdProgressiveFrame) ^ interlaced) {
                         mode->GetFrameRate(&framerate_duration, &framerate_scale);
                         /* look for an integer frame rate match */
                         if ((framerate_scale / framerate_duration)==(int)floor(framerate))
