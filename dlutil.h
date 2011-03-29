@@ -27,4 +27,6 @@ void dlexit(const char *format, ...);
 void dlmessage(const char *format, ...);
 void dlabort(const char *format, ...);
 
+int divine_video_format(const char *filename, int *width, int *height, bool *interlaced, float *framerate, pixelformat_t *pixelformat);
+
 #endif

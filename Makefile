@@ -9,7 +9,7 @@ SDKDIR = /usr/local/decklink/include
 APPS = dlskel dltest
 
 # Common files
-OBJS = dlutil.o dlterm.o DeckLinkAPIDispatch.o
+OBJS = dlutil.o dlterm.o dlconv.o dlts.o DeckLinkAPIDispatch.o
 
 # Flags
 CXXFLAGS = -Wall -D_FILE_OFFSET_BITS=64 -g -I $(SDKDIR)
@@ -21,7 +21,7 @@ LFLAGS = -lm -ldl -lpthread
 all   : $(APPS) dlplay
 debug : $(APPS) dlplay
 clean :
-	rm -f $(APPS) $(foreach i,$(APPS),$i.o) $(OBJS)
+	rm -f $(APPS) dlplay $(foreach i,$(APPS),$i.o) $(OBJS)
 
 $(APPS):
 	$(CXX) -o $@ $(LFLAGS) $^
@@ -34,5 +34,11 @@ DeckLinkAPIDispatch.o: $(SDKDIR)/DeckLinkAPIDispatch.cpp
 %.o: %.cpp
 	$(CXX) -c -o $@ $(CXXFLAGS) $<
 
-dlplay: dlplay.o $(OBJS)
+dlplay: dlplay.o dldecode.o $(OBJS)
 	$(CXX) -o $@ $^ $(LFLAGS) -lmpeg2 -lmpeg2convert -lmpg123 -la52
+
+# dependancies
+dlplay.o: dlutil.h dlterm.h dlconv.h dldecode.h
+dlterm.o: dlutil.h dlterm.h
+dlconv.o: dlutil.h dlconv.h
+dldecode.o : dlutil.h dldecode.h
