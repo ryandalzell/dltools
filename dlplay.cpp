@@ -9,9 +9,7 @@
 #include <string.h>
 #include <getopt.h>
 #include <semaphore.h>
-#include <sys/mman.h>
 #include <unistd.h>
-#include <sys/stat.h>
 #include <pthread.h>
 #include <math.h>
 #include <inttypes.h>
@@ -29,6 +27,7 @@ extern "C" {
 
 #include "dlutil.h"
 #include "dlterm.h"
+#include "dldecode.h"
 
 const char *appname = "dlplay";
 
@@ -140,116 +139,6 @@ void usage(int exitcode)
     exit(exitcode);
 }
 
-int divine_video_format(const char *filename, int *width, int *height, bool *interlaced, float *framerate, pixelformat_t *pixelformat)
-{
-    struct format_t {
-        const char *name;
-        int width;
-        int height;
-        bool interlaced;
-        float framerate;
-    };
-
-    const struct format_t formats[] = {
-        { "1080p24",    1920, 1080, false, 24.0 },
-        { "1080p25",    1920, 1080, false, 25.0 },
-        { "1080p30",    1920, 1080, false, 30.0 },
-        { "1080p",      1920, 1080, false, 30.0 },
-        { "1080i50",    1920, 1080, true,  25.0 },
-        { "1080i59.94", 1920, 1080, true,  30000.0/1001.0 },
-        { "1080i5994",  1920, 1080, true,  30000.0/1001.0 },
-        { "1080i60",    1920, 1080, true,  30.0 },
-        { "1080i",      1920, 1080, true,  30000.0/1001.0 },
-        { "720p50",     1280, 720,  false, 50.0 },
-        { "720p60",     1280, 720,  false, 60.0 },
-        { "720p59.94",  1280, 720,  false, 60000.0/1001.0 },
-        { "720p5994",   1280, 720,  false, 60000.0/1001.0 },
-        { "720p",       1280, 720,  false, 60000.0/1001.0 },
-        { "576i50",     720,  576,  true,  25.0 },
-        { "576i",       720,  576,  true,  25.0 },
-        { "pal",        720,  576,  true,  25.0 },
-        { "480i60",     720,  480,  true,  30.0 },
-        { "480i59.94",  720,  480,  true,  30000.0/1001.0 },
-        { "480i5994",   720,  480,  true,  30000.0/1001.0 },
-        { "480i",       720,  480,  true,  30000.0/1001.0 },
-        { "ntsc",       720,  480,  true,  30000.0/1001.0 },
-        { "hdv",        1440, 1080, true,  30.0 },
-        { "cif",        352,  288,  true,  30.0 },
-    };
-
-    if (strstr(filename, "uyvy")!=NULL || strstr(filename, "UYVY")!=NULL)
-        *pixelformat = UYVY;
-    else if (strstr(filename, "422")!=NULL)
-        *pixelformat = I422;
-    else
-        *pixelformat = I420;
-
-    for (unsigned i=0; i<sizeof(formats)/sizeof(struct format_t); i++) {
-        struct format_t f = formats[i];
-
-        if (strstr(filename, f.name)!=NULL) {
-            *width = f.width;
-            *height = f.height;
-            *interlaced = f.interlaced;
-            *framerate = f.framerate;
-            return 0;
-        }
-    }
-    return -1;
-}
-
-void convert_i420_uyvy(const unsigned char *i420, unsigned char *uyvy, int width, int height, pixelformat_t pixelformat)
-{
-    const unsigned char *yuv[3] = {i420};
-    for (int y=0; y<height; y++) {
-        if (pixelformat==I422) {
-            yuv[1] = i420 + width*height + (width/2)*y;
-            yuv[2] = i420 + width*height*6/4 + (width/2)*y;
-        } else {
-            yuv[1] = i420 + width*height + (width/2)*(y/2);
-            yuv[2] = i420 + width*height*5/4 + (width/2)*(y/2);
-        }
-        for (int x=0; x<width/2; x++) {
-            *(uyvy++) = *(yuv[1]++);
-            *(uyvy++) = *(yuv[0]++);
-            *(uyvy++) = *(yuv[2]++);
-            *(uyvy++) = *(yuv[0]++);
-        }
-    }
-}
-
-void convert_yuv_uyvy(const unsigned char *yuv[3], unsigned char *uyvy, int width, int height, pixelformat_t pixelformat)
-{
-    const unsigned char *ptr[3] = {yuv[0]};
-    for (int y=0; y<height; y++) {
-        if (pixelformat==I422) {
-            ptr[1] = yuv[1] + (width/2)*y;
-            ptr[2] = yuv[2] + (width/2)*y;
-        } else {
-            ptr[1] = yuv[1] + (width/2)*(y/2);
-            ptr[2] = yuv[2] + (width/2)*(y/2);
-        }
-        for (int x=0; x<width/2; x++) {
-            *(uyvy++) = *(ptr[1]++);
-            *(uyvy++) = *(ptr[0]++);
-            *(uyvy++) = *(ptr[2]++);
-            *(uyvy++) = *(ptr[0]++);
-        }
-    }
-}
-
-void convert_i420_uyvy_lumaonly(const unsigned char *i420, unsigned char *uyvy, int width, int height)
-{
-    for (int y=0; y<height; y++) {
-        for (int x=0; x<width/2; x++) {
-            *(uyvy++) = 0x80;
-            *(uyvy++) = *(i420++);
-            *(uyvy++) = 0x80;
-            *(uyvy++) = *(i420++);
-        }
-    }
-}
-
 void *display_status(void *arg)
 {
     IDeckLinkOutput *output = (IDeckLinkOutput *)arg;
@@ -291,167 +180,8 @@ void *display_status(void *arg)
     pthread_exit(0);
 }
 
-/* peek at the next character in the file */
-int fpeek(FILE *file)
-{
-    int c = fgetc(file);
-    ungetc(c, file);
-    return c;
-}
-
-/* find a particular character in the file */
-int ffind(int f, FILE *file)
-{
-    int c = fgetc(file);
-    while (c!=f && !feof(file))
-        c = fgetc(file);
-    if (feof(file))
-        return -1;
-    ungetc(c, file);
-    return 0;
-}
-
-/* read next data packet from transport stream */
-int next_packet(unsigned char *packet, FILE *file)
-{
-    while (1) {
-        /* read a packet sized chunk */
-        if (fread(packet, 188, 1, file)!=1)
-            return -1;
-
-        if (packet[0]==0x47 && fpeek(file)==0x47)
-            /* success */
-            return 0;
-
-        /* resync and try again */
-        if (ffind(0x47, file)<0)
-            return -1;
-    }
-}
-
-/* read next packet from transport stream with specified pid
- * return packet length or zero on failure */
-int next_data_packet(unsigned char *data, int pid, FILE *file)
-{
-    unsigned char packet[188];
-
-    /* find next whole transport stream packet with correct pid */
-    while (1) {
-        /* read next packet */
-        if (next_packet(packet, file)<0)
-            return 0;
-
-        /* check pid is correct */
-        int packet_pid = ((packet[1]<<8) | packet[2]) & 0x1fff;
-        if (packet_pid!=pid)
-            continue;
-
-        /* skip adaption field */
-        int adaptation_field_control = (packet[3] >> 4) & 0x3;
-        if (adaptation_field_control==1) {
-            /* copy data */
-            memcpy(data, packet+4, 188-4);
-            return 188-4;
-        } else if (adaptation_field_control==3) {
-            int adaptation_field_length = packet[4];
-            memcpy(data, packet+4+1+adaptation_field_length, 188-4-1-adaptation_field_length);
-            return 188-4-1-adaptation_field_length;
-        }
-    }
-
-    return 0;
-}
-
-/* read next packet from transport stream with either video or audio pid
- * return packet length or zero on failure */
-int next_stream_packet(unsigned char *data, int vid_pid, int aud_pid, int *pid, FILE *file)
-{
-    unsigned char packet[188];
-
-    /* find next whole transport stream packet with correct pid */
-    while (1) {
-        /* read next packet */
-        if (next_packet(packet, file)<0)
-            return 0;
-
-        /* check pid is correct */
-        int packet_pid = ((packet[1]<<8) | packet[2]) & 0x1fff;
-        if (packet_pid>1 && packet_pid!=vid_pid && packet_pid!=aud_pid)
-            continue;
-        *pid = packet_pid;
-
-        /* skip adaption field */
-        int adaptation_field_control = (packet[3] >> 4) & 0x3;
-        if (adaptation_field_control==1) {
-            /* copy data */
-            memcpy(data, packet+4, 188-4);
-            return 188-4;
-        } else if (adaptation_field_control==3) {
-            int adaptation_field_length = packet[4];
-            memcpy(data, packet+4+1+adaptation_field_length, 188-4-1-adaptation_field_length);
-            return 188-4-1-adaptation_field_length;
-        }
-    }
-
-    return 0;
-}
-
-/* read next series of video data packets from transport stream */
-
-/* read next packet from transport which is part of a pes packet
- * return packet length or zero on failure */
-int next_pes_packet_data(unsigned char *data, int pid, int start, FILE *file)
-{
-    unsigned char packet[188];
-
-    /* find next whole transport stream packet with correct pid */
-    while (1) {
-        /* read next packet */
-        if (next_packet(packet, file)<0)
-            return 0;
-
-        /* check start indicator */
-        int payload_unit_start_indicator = packet[1] & 0x40;
-        if (start && !payload_unit_start_indicator)
-            continue;
-
-        /* check pid is correct */
-        int packet_pid = ((packet[1]<<8) | packet[2]) & 0x1fff;
-        if (packet_pid!=pid)
-            continue;
-
-        /* skip transport packet header */
-        int ptr = 4;
-
-        /* skip adaption field */
-        int adaptation_field_control = (packet[3] >> 4) & 0x3;
-        if (adaptation_field_control==3)
-            ptr += 1 + packet[4];
-
-        /* skip pes header */
-        if (payload_unit_start_indicator) {
-            int packet_start_code_prefix = (packet[ptr]<<16) | (packet[ptr+1]<<8) | packet[ptr+2];
-            int stream_id = packet[ptr+3];
-            if (packet_start_code_prefix!=0x1)
-                dlexit("error parsing pes header, start_code=0x%06x stream_id=0x%02x", packet_start_code_prefix, stream_id);
-
-            int pes_header_data_length = packet[ptr+8];
-
-            ptr += 9 + pes_header_data_length;
-        }
-
-        /* copy data */
-        memcpy(data, packet+ptr, 188-ptr);
-        return 188-ptr;
-    }
-
-    return 0;
-}
-
 int main(int argc, char *argv[])
 {
-    FILE *filein = NULL;
-    FILE *fileau = NULL;
     char *filename[16] = {0};
     unsigned int numfiles = 0;
     filetype_t filetype = OTHER;
@@ -471,47 +201,25 @@ int main(int argc, char *argv[])
     int numframes = -1;
     int ntscmode = 1;   /* use e.g. 29.97 instead of 30fps */
     int lumaonly = 0;
-    int use_mmap = 0;
     int verbose = 0;
 
-    /* memory map variables */
-    off_t pagesize = sysconf(_SC_PAGE_SIZE);
-    off_t pageindex;
-    off_t offset = 0;
+    /* decoders */
+    class dldecode *video = NULL;
+    class dldecode *audio = NULL;
 
-    /* buffer variables */
-    size_t vid_size = 0;
-    unsigned char *vid_data = NULL;
+    /* decoded audio buffer */
     size_t aud_size = 0;
     unsigned char *aud_data = NULL;
-    size_t read = 0;
-    int maxframes = 0;
-
-    /* libmpeg2 variables */
-    mpeg2dec_t *mpeg2dec = NULL;
-    const mpeg2_info_t *info = NULL;
-
-    /* mpg123 variables */
-    mpg123_handle *m = NULL;
-    int ret;
-    size_t mpa_size = 32768;
-    unsigned char *mpa_data = NULL;
-
-    /* liba52 variables */
-    a52_state_t *a52_state = NULL;
-    sample_t *sample = NULL;
-    int ac3_length = 0;
-    unsigned char *ac3_frame = NULL;
-    size_t ac3_size = 256*2*sizeof(uint16_t);
-    int16_t *ac3_block = NULL;
 
     /* transport stream variables */
     int vid_pid = 0;
     int aud_pid = 0;
-    int ac3_pid = 0;
 
     /* terminal input variables */
     class dlterm term;
+
+    /* status thread variables */
+    pthread_t status_thread;
 
     /* parse command line for options */
     while (1) {
@@ -637,283 +345,66 @@ int main(int argc, char *argv[])
         else
             filetype = YUV;
 
-        /* open the input file */
-        filein = fopen(filename[fileindex], "rb");
-        fileau = fopen(filename[fileindex], "rb");
-        if (!filein || !fileau)
-            dlerror("error: failed to open input file \"%s\"", filename[fileindex]);
-
-        /* stat the input file */
-        struct stat stat;
-        fstat(fileno(filein), &stat);
-
-        /* figure out the mode to set */
+        /* create the video decoder */
         switch (filetype) {
-            case YUV:
-                if (divine_video_format(filename[fileindex], &pic_width, &pic_height, &interlaced, &framerate, &pixelformat)<0)
-                    dlexit("failed to determine output video format from filename: %s", filename[fileindex]);
-                if (verbose>=1)
-                    dlmessage("video format is %dx%d%c%.2f %s", pic_width, pic_height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);
-
-                /* allocate the read buffer */
-                vid_size = pixelformat==I422? pic_width*pic_height*2 : pic_width*pic_height*3/2;
-                vid_data = (unsigned char *) malloc(vid_size);
+            case YUV: video = new dlyuv;
 
                 /* skip to the first frame */
-                if (firstframe) {
-                    off_t skip = firstframe * vid_size;
-                    if (fseeko(filein, skip, SEEK_SET)<0)
-                        dlerror("failed to seek in input file");
-                }
-
-                /* calculate the number of frames in the input file */
-                maxframes = pixelformat==I420? stat.st_size / (pic_width*pic_height*3/2) : stat.st_size / (pic_width*pic_height*2);
+                if (firstframe)
+                    video->rewind(firstframe);
 
                 break;
 
-            case TS:
-                /* allocate the read buffer */
-                vid_size = aud_size = 184;
-                vid_data = (unsigned char *) malloc(vid_size);
-                aud_data = (unsigned char *) malloc(aud_size);
-
-                /* skip ts parsing if video pid specified */
-                if (vid_pid==0) {
-                    /* find the pmt pid */
-                    int pmt_pid[16] = {0};
-                    int num_pmts = 0;
-                    do {
-
-                        /* find the next pat */
-                        read = next_data_packet(vid_data, 0, filein);
-                        if (read==0)
-                            dlexit("failed to find a pat in input file \"%s\" (need to specify the pids)", filename[fileindex]);
-
-                        /* find the pmt_pids */
-                        int section_length = (vid_data[2]<<8 | vid_data[3]) & 0xfff;
-                        int index = 9;
-                        while (index<section_length+4-4) { /* +4: data before section_length, -4: crc_32 */
-                            int program_number = (vid_data[index]<<8) | vid_data[index+1];
-                            if (program_number>0)
-                                pmt_pid[num_pmts++] = (vid_data[index+2]<<8 | vid_data[index+3]) & 0x1fff;
-                            index += 4;
-                        }
-
-                    } while (num_pmts==0);
-
-                    if (verbose>=1)
-                        dlmessage("num_pmts=%d pmt_pid[0]=%d", num_pmts, pmt_pid[0]);
-
-                    /* find the video and audio pids */
-                    vid_pid = 0;
-                    aud_pid = 0;
-                    ac3_pid = 0;
-                    int pmt_index = 0;
-                    do {
-                        /* find the next pmt */
-                        read = next_data_packet(vid_data, pmt_pid[pmt_index], filein);
-                        if (read==0)
-                            dlexit("failed to find pmt with pid in input file \"%s\"", filename[fileindex], pmt_pid[pmt_index]);
-
-                        /* find the video pid */
-                        int program_info_length = (vid_data[11]<<8 | vid_data[12]) & 0x0fff;
-                        size_t index = 13 + program_info_length;
-                        while (index<read) {
-                            int stream_type = vid_data[index];
-                            int pid = (vid_data[index+1]<<8 | vid_data[index+2]) & 0x1fff;
-                            int es_info_length = (vid_data[index+3]<<8 | vid_data[index+4]) & 0xfff;
-                            if (vid_pid==0 && (stream_type==0x02 || stream_type==0x80)) /* some files use user private stream types */
-                                vid_pid = pid;
-                            if (aud_pid==0 && (stream_type==0x03 || stream_type==0x04))
-                                aud_pid = pid;
-                            if (ac3_pid==0 && stream_type==0x81)
-                                ac3_pid = pid;
-                            index += 5 + es_info_length;
-                        }
-
-                        /* try the next pmt */
-                        pmt_index++;
-
-                    } while (vid_pid==0); /* might not find an audio pid */
-
-                    if (verbose>=1)
-                        dlmessage("vid_pid=%d aud_pid=%d ac3_pid=%d", vid_pid, aud_pid, ac3_pid);
-                }
-
-                /* initialise the mpeg2 video decoder */
-                mpeg2dec = mpeg2_init();
-                if (mpeg2dec==NULL)
-                    dlexit("failed to initialise libmpeg2");
-                info = mpeg2_info(mpeg2dec);
-                mpeg2_accel(MPEG2_ACCEL_DETECT);
-
-                /* initialise the mpeg1 audio decoder */
-                ret = mpg123_init();
-                if (ret!=MPG123_OK)
-                    dlexit("failed to initialise mpg123");
-                m = mpg123_new(NULL, &ret);
-                if (m==NULL)
-                    dlexit("failed to create mpg123 handle");
-                mpg123_param(m, MPG123_VERBOSE, 2, 0);
-                mpg123_open_feed(m);
-
-                /* initialise the ac3 audio decoder */
-                //a52_state = a52_init(mm_accel());
-                a52_state = a52_init(MM_ACCEL_X86_MMXEXT);
-                sample = a52_samples(a52_state);
-                if (a52_state==NULL || sample==NULL)
-                    dlexit("failed to initialise liba52");
-
-                /* find the sequence header */
-                if (vid_pid) {
-                    int seq_found = 0;
-
-                    do {
-                        mpeg2_state_t state = mpeg2_parse(mpeg2dec);
-                        switch (state) {
-                            case STATE_BUFFER:
-                                read = next_pes_packet_data(vid_data, vid_pid, 1, filein);
-                                mpeg2_buffer(mpeg2dec, vid_data, vid_data+read);
-                                break;
-
-                            case STATE_SEQUENCE:
-                                pic_width = info->sequence->width;
-                                pic_height = info->sequence->height;
-                                interlaced = pic_height==720? 0 : 1;
-                                framerate = 27000000.0/info->sequence->frame_period;
-                                pixelformat = info->sequence->height==info->sequence->chroma_height? I422 : I420;
-                                if (verbose>=1)
-                                    dlmessage("video format is %dx%d%c%.2f %s", pic_width, pic_height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);
-                                seq_found = 1;
-                                break;
-
-                            default:
-                                break;
-                        }
-                    } while(read && !seq_found);
-                }
-
-                /* find the audio format */
-                if (aud_pid) {
-                    /* allocate the audio buffer */
-                    mpa_data = (unsigned char *)malloc(mpa_size);
-
-                    do {
-                        size_t bytes;
-                        read = next_pes_packet_data(aud_data, aud_pid, 1, fileau);
-                        // TODO try mpg123_feed
-                        ret = mpg123_decode(m, aud_data, read, NULL, 0, &bytes);
-                        if (ret==MPG123_ERR) {
-                            dlmessage("failed to determine format of audio data: %s", mpg123_strerror(m));
-                            aud_pid = 0;
-                            break;
-                        }
-                    } while (ret!=MPG123_NEW_FORMAT);
-
-                    long rate;
-                    int channels, enc;
-                    mpg123_getformat(m, &rate, &channels, &enc);
-                    dlmessage("audio format is  %ldHz x%d channels", rate, channels);
-                }
-
-                /* find the ac3 audio format */
-                if (ac3_pid) {
-                    int flags = 0, sample_rate = 0, bit_rate = 0;
-
-                    /* allocate the audio buffers */
-                    ac3_frame = (unsigned char *)malloc(3840+188);
-                    ac3_block = (int16_t *)malloc(ac3_size);
-
-                    unsigned int sync = 0;
-                    do {
-                        read = next_pes_packet_data(aud_data, ac3_pid, 1, fileau);
-                        if (read==0) {
-                            if (feof(fileau) || ferror(fileau)) {
-                                dlmessage("failed to sync ac3 audio");
-                                ac3_pid = 0;
-                                break;
-                            }
-                        }
-
-                        /* look for sync in ac3 stream FIXME this won't work if sync is in last 7 bytes of packet */
-                        for (sync=0; sync<read-7; sync++) {
-                            ret = a52_syncinfo(aud_data+sync, &flags, &sample_rate, &bit_rate);
-                            if (ret)
-                                break;
-                        }
-                    } while (ret==0);
-
-                    /* queue the synchronised data */
-                    memcpy(ac3_frame, aud_data+sync, read-sync);
-                    ac3_length = read-sync;
-
-                    /* report the format parameters */
-                    int channels = 0;
-                    switch (flags & A52_CHANNEL_MASK) {
-                        case  0: channels = 2; break;
-                        case  1: channels = 1; break;
-                        case  2: channels = 2; break;
-                        case  3: channels = 3; break;
-                        case  4: channels = 3; break;
-                        case  5: channels = 4; break;
-                        case  6: channels = 4; break;
-                        case  7: channels = 5; break;
-                        case  8: channels = 1; break;
-                        case  9: channels = 1; break;
-                        case 10: channels = 2; break;
-                    }
-                    int lfe_channel = flags&A52_LFE? 1 : 0;
-                    dlmessage("audio format is %.1fkHz %d.%d channels @%dbps", sample_rate/1000.0, channels, lfe_channel, bit_rate);
-                }
-
-                break;
-
-            case M2V:
-                /* initialise the mpeg2 video decoder */
-                mpeg2dec = mpeg2_init();
-                if (mpeg2dec==NULL)
-                    dlexit("failed to initialise libmpeg2");
-                info = mpeg2_info(mpeg2dec);
-                mpeg2_accel(MPEG2_ACCEL_DETECT);
-
-                /* allocate the read buffer */
-                vid_size = 32*1024;
-                vid_data = (unsigned char *) malloc(vid_size);
-
-                /* find the sequence header */
-                {
-                    int seq_found = 0;
-
-                    do {
-                        mpeg2_state_t state = mpeg2_parse(mpeg2dec);
-                        switch (state) {
-                            case STATE_BUFFER:
-                                read = fread(vid_data, 1, vid_size, filein);
-                                mpeg2_buffer(mpeg2dec, vid_data, vid_data+read);
-                                break;
-
-                            case STATE_SEQUENCE:
-                                pic_width = info->sequence->width;
-                                pic_height = info->sequence->height;
-                                interlaced = pic_height==720? 0 : 1;
-                                framerate = 27000000.0/info->sequence->frame_period;
-                                pixelformat = info->sequence->height==info->sequence->chroma_height? I422 : I420;
-                                if (verbose>=1)
-                                    dlmessage("input file is %dx%d%c%.2f %s", pic_width, pic_height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);
-                                seq_found = 1;
-                                break;
-
-                            default:
-                                break;
-                        }
-                    } while(read && !seq_found);
-                }
-
-                break;
-
-            default:
-                dlexit("unknown input file type");
+            case TS : video = new dlmpeg2ts; break;
+            case M2V: video = new dlmpeg2; break;
+            default: dlexit("unknown input file type");
         }
+
+        /* figure out the mode to set */
+        if (video->attach(filename[fileindex])<0)
+            dlexit("failed to initialise the video decoder");
+        pic_width = video->width;
+        pic_height = video->height;
+        interlaced = video->interlaced;
+        framerate = video->framerate;
+        pixelformat = video->pixelformat;
+
+        /* create the audio encoder */
+        switch (filetype) {
+            case TS:
+
+                /* try to attach a mpeg1 audio decoder */
+                if (audio==NULL) {
+                    audio = new dlmpg123;
+                    aud_size = 32768;
+                }
+                if (audio->attach(filename[fileindex])<0) {
+                    delete audio;
+                    audio = NULL;
+                }
+
+                /* try to attach an ac3 audio decoder */
+                if (audio==NULL) {
+                    audio = new dlliba52;
+                    aud_size = 6*256*2*sizeof(uint16_t);
+                }
+                if (audio->attach(filename[fileindex])<0) {
+                    delete audio;
+                    audio = NULL;
+                }
+
+                /* note there may not be an audio stream in the file
+                 * in which case the audio decoder will be null */
+                if (audio)
+                    aud_data = (unsigned char *) malloc(aud_size);
+
+                break;
+
+            default: break;
+        }
+
+        if (verbose>=1)
+            dlmessage("input file is %dx%d%c%.2f %s", pic_width, pic_height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);
 
         /* override the framerate with ntscmode */
         if (framerate>29.9 && framerate<=30.0) {
@@ -1004,7 +495,6 @@ int main(int argc, char *argv[])
         }
 
         /* set the audio output mode */
-        //result = output->EnableAudioOutput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, 2, bmdAudioOutputStreamContinuous);
         result = output->EnableAudioOutput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, 2, bmdAudioOutputStreamTimestamped);
         if (result != S_OK) {
             switch (result) {
@@ -1016,158 +506,14 @@ int main(int argc, char *argv[])
             return 2;
         }
 
-        /* carry the last frame from the preroll to the main loop */
-        IDeckLinkMutableVideoFrame *frame;
-
         /* preroll as many frames as possible */
-        int index = 0;
+        int preroll = 1;
+        IDeckLinkMutableVideoFrame *frame = NULL;
+
+        /* main loop */
         int framenum = 0;
         int blocknum = 0;
-        int frame_done;
-        while (!feof(filein) && (framenum<numframes || numframes<0)) {
-
-            switch (filetype) {
-                case YUV:
-                {
-                    /* loop input file */
-                    if (index==maxframes) {
-                        index = firstframe;
-                        off_t skip = index * vid_size;
-                        if (fseeko(filein, skip, SEEK_SET)<0)
-                            dlerror("failed to seek in input file");
-                    }
-
-                    /* allocate a new frame object */
-                    if (output->CreateVideoFrame(pic_width, pic_height, pic_width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
-                        dlexit("error: failed to create video frame\n");
-
-                    frame->GetBytes(&voidptr);
-                    unsigned char *uyvy = (unsigned char *)voidptr;
-                    if (pixelformat==UYVY) {
-                        /* read directly into frame */
-                        if (fread(uyvy, pic_width*pic_height*2, 1, filein)!=1)
-                            dlerror("failed to read frame from input file");
-                    } else {
-                        /* read frame from file */
-                        if (fread(vid_data, vid_size, 1, filein)!=1)
-                            dlerror("failed to read frame from input file");
-
-                        /* convert to uyvy */
-                        if (!lumaonly)
-                            convert_i420_uyvy(vid_data, uyvy, pic_width, pic_height, pixelformat);
-                        else
-                            convert_i420_uyvy_lumaonly(vid_data, uyvy, pic_width, pic_height);
-                    }
-                    break;
-                }
-
-                case TS:
-                    frame_done = 0;
-                    do {
-                        mpeg2_state_t state = mpeg2_parse(mpeg2dec);
-                        switch (state) {
-                            case STATE_BUFFER:
-                                read = next_pes_packet_data(vid_data, vid_pid, 0, filein);
-                                if (read==0 || feof(filein))  {
-                                    if (fseek(filein, 0, SEEK_SET)<0)
-                                        dlerror("failed to seek in file \"%s\"", filename[fileindex]);
-                                    read = next_pes_packet_data(vid_data, vid_pid, 0, filein);
-                                }
-                                mpeg2_buffer(mpeg2dec, vid_data, vid_data+read);
-                                break;
-
-                            case STATE_SLICE:
-                            case STATE_END:
-                                if (info->display_fbuf) {
-                                    /* allocate a new frame object */
-                                    if (output->CreateVideoFrame(pic_width, pic_height, pic_width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
-                                        dlexit("error: failed to create video frame\n");
-                                    frame->GetBytes(&voidptr);
-                                    unsigned char *uyvy = (unsigned char *)voidptr;
-                                    const unsigned char *yuv[3] = {info->display_fbuf->buf[0], info->display_fbuf->buf[1], info->display_fbuf->buf[2]};
-                                    convert_yuv_uyvy(yuv, uyvy, pic_width, pic_height, pixelformat);
-                                    frame_done = 1;
-                                }
-                                break;
-
-                            default:
-                                break;
-                        }
-                    } while(read && !frame_done);
-                    break;
-
-                case M2V:
-                    frame_done = 0;
-                    do {
-                        mpeg2_state_t state = mpeg2_parse(mpeg2dec);
-                        switch (state) {
-                            case STATE_BUFFER:
-                                read = fread(vid_data, 1, vid_size, filein);
-                                if (read==0 || feof(filein)) {
-                                    if (fseek(filein, 0, SEEK_SET)<0)
-                                        dlerror("failed to seek in file \"%s\"", filename[fileindex]);
-                                    read = fread(vid_data, 1, vid_size, filein);
-                                }
-                                mpeg2_buffer(mpeg2dec, vid_data, vid_data+read);
-                                break;
-
-                            case STATE_SLICE:
-                            case STATE_END:
-                                if (info->display_fbuf) {
-                                    /* allocate a new frame object */
-                                    if (output->CreateVideoFrame(pic_width, pic_height, pic_width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
-                                        dlexit("error: failed to create video frame\n");
-                                    frame->GetBytes(&voidptr);
-                                    unsigned char *uyvy = (unsigned char *)voidptr;
-                                    const unsigned char *yuv[3] = {info->display_fbuf->buf[0], info->display_fbuf->buf[1], info->display_fbuf->buf[2]};
-                                    convert_yuv_uyvy(yuv, uyvy, pic_width, pic_height, pixelformat);
-                                    frame_done = 1;
-                                }
-                                break;
-
-                            default:
-                                break;
-                        }
-                    } while(read && !frame_done);
-                    break;
-
-                default:
-                    dlexit("unknown input file type");
-            }
-
-            result = output->ScheduleVideoFrame(frame, framenum*framerate_duration, framerate_duration, framerate_scale);
-            if (result != S_OK) {
-                switch (result) {
-                    case E_ACCESSDENIED : fprintf(stderr, "%s: error: frame %d: video output disabled when queueing video frame\n", appname, framenum); break;
-                    case E_OUTOFMEMORY  : fprintf(stderr, "%s: error: frame %d: too many frames are scheduled when queueing video frame\n", appname, framenum); break;
-                    case E_INVALIDARG   : fprintf(stderr, "%s: error: frame %d: frame attributes are invalid when queueing video frame\n", appname, framenum); break;
-                }
-                /* preroll complete */
-                break;
-            }
-            index++;
-            framenum++;
-        }
-
-        /* start the status thread */
-        exit_thread = 0;
-        pthread_t status_thread;
-        if (pthread_create(&status_thread, NULL, display_status, output)<0)
-            dlerror("failed to create status thread");
-
-        /* start the video output */
-        if (output->StartScheduledPlayback(0, framerate_duration, 1.0) != S_OK)
-            dlexit("%s: error: failed to start video playback");
-
-        if (verbose>=0)
-            dlmessage("info: pre-rolled %d frames", framenum);
-
-        dlmessage("press q to exit, p to pause...");
-
-        /* continue queueing frames when semaphore is signalled */
-        while (!feof(filein) && (framenum<numframes || numframes<0)) {
-            /* check that one or more frames have been displayed */
-            sem_wait(&sem);
+        while (framenum<numframes || numframes<0) {
 
             /* check for user input */
             if (term.kbhit()) {
@@ -1190,296 +536,88 @@ int main(int argc, char *argv[])
                 }
             }
 
+            /* wait for callback after a frame is finished */
+            if (!preroll)
+                sem_wait(&sem);
+
             /* enqueue previous frame */
-            result = output->ScheduleVideoFrame(frame, framenum*framerate_duration, framerate_duration, framerate_scale);
-            if (result != S_OK) {
-                switch (result) {
-                    case E_ACCESSDENIED : fprintf(stderr, "%s: error: frame %d: video output disabled when queueing video frame\n", appname, framenum); break;
-                    case E_OUTOFMEMORY  : fprintf(stderr, "%s: error: frame %d: too many frames are scheduled when queueing video frame\n", appname, framenum); break;
-                    case E_INVALIDARG   : fprintf(stderr, "%s: error: frame %d: frame attributes are invalid when queueing video frame\n", appname, framenum); break;
-                    default             : fprintf(stderr, "%s: error: frame %d: failed to queue video frame\n", appname, framenum); break;
-                }
-                break;
-            }
-            index++;
-            framenum++;
+            if (frame) {
+                result = output->ScheduleVideoFrame(frame, framenum*framerate_duration, framerate_duration, framerate_scale);
+                if (result != S_OK) {
+                    if (preroll) {
+                        /* preroll complete */
+                        preroll = 0;
 
-            /* prepare next video frame */
-            switch (filetype) {
-                case YUV:
-                {
-                    /* loop input file */
-                    if (index==maxframes) {
-                        index = firstframe;
-                        off_t skip = index * vid_size;
-                        if (fseeko(filein, skip, SEEK_SET)<0)
-                            dlerror("failed to seek in input file");
-                    }
+                        /* start the status thread */
+                        exit_thread = 0;
+                        if (pthread_create(&status_thread, NULL, display_status, output)<0)
+                            dlerror("failed to create status thread");
 
-                    /* allocate a new frame object */
-                    if (output->CreateVideoFrame(pic_width, pic_height, pic_width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
-                        dlexit("error: failed to create video frame\n");
+                        /* start the video output */
+                        if (output->StartScheduledPlayback(0, framerate_duration, 1.0) != S_OK)
+                            dlexit("%s: error: failed to start video playback");
 
-                    frame->GetBytes(&voidptr);
-                    unsigned char *uyvy = (unsigned char *)voidptr;
-                    if (pixelformat==UYVY) {
-                        /* read directly into frame */
-                        if (fread(uyvy, pic_width*pic_height*2, 1, filein)!=1)
-                            dlerror("failed to read frame from input file");
+                        if (verbose>=0)
+                            dlmessage("info: pre-rolled %d frames", framenum);
+
+                        dlmessage("press q to exit, p to pause...");
+
+                        continue;
+
                     } else {
-                        if (use_mmap) {
-                            /* align address to page size */
-                            pageindex = (index*vid_size) / pagesize;
-                            offset = (index*vid_size) - (pageindex*pagesize);
-
-                            /* memory map next frame from file */
-                            if ((vid_data = (unsigned char *) mmap(NULL, vid_size+pagesize, PROT_READ, MAP_PRIVATE, fileno(filein), pageindex*pagesize))==MAP_FAILED)
-                                dlerror("failed to map frame from input file");
-                        } else {
-                            /* read next frame from file */
-                            if (fread(vid_data, vid_size, 1, filein)!=1)
-                                dlerror("failed to read frame from input file");
+                        switch (result) {
+                            case E_ACCESSDENIED : fprintf(stderr, "%s: error: frame %d: video output disabled when queueing video frame\n", appname, framenum); break;
+                            case E_OUTOFMEMORY  : fprintf(stderr, "%s: error: frame %d: too many frames are scheduled when queueing video frame\n", appname, framenum);
+                            case E_INVALIDARG   : fprintf(stderr, "%s: error: frame %d: frame attributes are invalid when queueing video frame\n", appname, framenum); break;
+                            default             : fprintf(stderr, "%s: error: frame %d: failed to schedule video frame\n", appname, framenum); break;
                         }
-
-                        /* convert to uyvy */
-                        if (!lumaonly)
-                            convert_i420_uyvy(vid_data, uyvy, pic_width, pic_height, pixelformat);
-                        else
-                            convert_i420_uyvy_lumaonly(vid_data, uyvy, pic_width, pic_height);
+                        break;
                     }
-
-                    if (use_mmap)
-                        munmap(vid_data, vid_size+pagesize);
-                    break;
                 }
+                framenum++;
+            }
 
-                case TS:
-                    frame_done = 0;
-                    do {
-                        mpeg2_state_t state = mpeg2_parse(mpeg2dec);
-                        switch (state) {
-                            case STATE_BUFFER:
-                                read = next_pes_packet_data(vid_data, vid_pid, 0, filein);
-                                if (read==0 || feof(filein)) {
-                                    if (fseek(filein, 0, SEEK_SET)<0)
-                                        dlerror("failed to seek in file \"%s\"", filename[fileindex]);
-                                    read = next_pes_packet_data(vid_data, vid_pid, 0, filein);
-                                }
-                                mpeg2_buffer(mpeg2dec, vid_data, vid_data+read);
-                                break;
+            /* allocate a new frame object */
+            if (output->CreateVideoFrame(pic_width, pic_height, pic_width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
+                dlexit("error: failed to create video frame\n");
 
-                            case STATE_SLICE:
-                            case STATE_END:
-                                if (info->display_fbuf) {
-                                    /* allocate a new frame object */
-                                    if (output->CreateVideoFrame(pic_width, pic_height, pic_width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
-                                        dlexit("error: failed to create video frame\n");
-                                    const unsigned char *yuv[3] = {info->display_fbuf->buf[0], info->display_fbuf->buf[1], info->display_fbuf->buf[2]};
-                                    frame->GetBytes(&voidptr);
-                                    unsigned char *uyvy = (unsigned char *)voidptr;
-                                    convert_yuv_uyvy(yuv, uyvy, pic_width, pic_height, pixelformat);
-                                    frame_done = 1;
-                                }
-                                break;
+            /* extract the frame buffer pointer without type punning */
+            frame->GetBytes(&voidptr);
+            unsigned char *uyvy = (unsigned char *)voidptr;
 
-                            default:
-                                break;
-                        }
-                    } while(read && !frame_done);
-                    break;
-
-                case M2V:
-                    frame_done = 0;
-                    do {
-                        mpeg2_state_t state = mpeg2_parse(mpeg2dec);
-                        switch (state) {
-                            case STATE_BUFFER:
-                                read = fread(vid_data, 1, vid_size, filein);
-                                if (read==0 || feof(filein)) {
-                                    if (fseek(filein, 0, SEEK_SET)<0)
-                                        dlerror("failed to seek in file \"%s\"", filename[fileindex]);
-                                    read = fread(vid_data, 1, vid_size, filein);
-                                }
-                                mpeg2_buffer(mpeg2dec, vid_data, vid_data+read);
-                                break;
-
-                            case STATE_SLICE:
-                            case STATE_END:
-                                if (info->display_fbuf) {
-                                    /* allocate a new frame object */
-                                    if (output->CreateVideoFrame(pic_width, pic_height, pic_width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
-                                        dlexit("error: failed to create video frame\n");
-                                    const unsigned char *yuv[3] = {info->display_fbuf->buf[0], info->display_fbuf->buf[1], info->display_fbuf->buf[2]};
-                                    frame->GetBytes(&voidptr);
-                                    unsigned char *uyvy = (unsigned char *)voidptr;
-                                    convert_yuv_uyvy(yuv, uyvy, pic_width, pic_height, pixelformat);
-                                    frame_done = 1;
-                                }
-                                break;
-
-                            default:
-                                break;
-                        }
-                    } while(read && !frame_done);
-                    break;
-
-                default:
-                    dlexit("unknown input file type");
+            /* read the next frame */
+            if (video->decode(uyvy, frame->GetRowBytes()*frame->GetHeight())) {
+                dlmessage("failed to decode video frame %d in file \"%s\"", framenum, filename[fileindex]);
+                break;
             }
 
             /* maintain audio buffer level */
-            switch (filetype) {
-                case TS:
-                    if (aud_pid) {
+            if (audio && !preroll) {
 
-                        while (1) {
-                            unsigned int buffered;
-                            if (output->GetBufferedAudioSampleFrameCount(&buffered) != S_OK)
-                                dlexit("failed to get audio buffer level");
+                while (true) {
+                    unsigned int buffered;
+                    if (output->GetBufferedAudioSampleFrameCount(&buffered) != S_OK)
+                        dlexit("failed to get audio buffer level");
 
-                            if (buffered >= 48000)
-                                break;
+                    if (buffered >= 48000)
+                        break;
 
-                            /* feed the audio decoder */
-                            size_t decoded = 0;
-                            do {
-                                read = next_pes_packet_data(aud_data, aud_pid, 0, fileau);
-                                if (read==0) {
-                                    if (ferror(fileau)) {
-                                        dlmessage("error reading file \"%s\": %s", filename[fileindex], strerror(errno));
-                                        aud_pid = 0;
-                                        break;
-                                    }
-                                    if (feof(fileau)) {
-                                        off_t offset = 0;
-                                        ret = mpg123_feedseek(m, 0, SEEK_SET, &offset);
-                                        if (ret != MPG123_OK)
-                                            dlerror("failed to seek in audio stream: %d", mpg123_strerror(m));
-                                        if (fseek(fileau, offset, SEEK_SET)<0)
-                                            dlerror("failed to seek in file \"%s\"", filename[fileindex]);
-                                        continue;
-                                    }
-                                }
-                                ret = mpg123_decode(m, aud_data, read, mpa_data, mpa_size, &decoded);
-                            } while (!decoded && ret!=MPG123_ERR);
+                    /* decode audio */
+                    size_t samples = audio->decode(aud_data, aud_size);
 
-                            /* buffer decoded audio */
-                            uint32_t scheduled;
-                            result = output->ScheduleAudioSamples(mpa_data, decoded/4, 0, 0, &scheduled);
-                            //dlmessage("buffer level %d: decoded %d bytes and scheduled %d frames", buffered, decoded, scheduled);
-                            if (result != S_OK) {
-                                dlmessage("%s: error: frame %d: failed to schedule audio data", appname, framenum);
-                                aud_pid = 0;
-                                break;
-                            }
-                        }
+                    /* buffer decoded audio */
+                    uint32_t scheduled;
+                    result = output->ScheduleAudioSamples(aud_data, samples/2, blocknum*256*framerate_scale/48000, framerate_scale, &scheduled);
+                    //dlmessage("buffer level %d: decoded %d bytes and scheduled %d frames", buffered, decoded, scheduled);
+                    if (result != S_OK) {
+                        dlmessage("error: frame %d: failed to schedule audio data", framenum);
+                        delete audio;
+                        audio = NULL;
+                        break;
                     }
-
-                    if (ac3_pid) {
-
-                        while (1) {
-                            unsigned int buffered;
-                            if (output->GetBufferedAudioSampleFrameCount(&buffered) != S_OK)
-                                dlexit("failed to get audio buffer level");
-
-                            if (buffered >= 48000)
-                                break;
-
-                            /* sync to next frame */
-                            int length = 0;
-                            int flags, sample_rate, bit_rate;
-                            do {
-
-                                if (ac3_length<7) {
-                                    read = next_pes_packet_data(aud_data, ac3_pid, 0, fileau);
-                                    if (read==0) {
-                                        if (ferror(fileau)) {
-                                            dlmessage("error reading file \"%s\": %s", filename[fileindex], strerror(errno));
-                                            ac3_pid = 0;
-                                            break;
-                                        }
-                                        if (feof(fileau)) {
-                                            off_t offset = 0;
-                                            if (fseek(fileau, offset, SEEK_SET)<0)
-                                                dlerror("failed to seek in file \"%s\"", filename[fileindex]);
-                                            continue;
-                                        }
-                                    }
-                                    memcpy(ac3_frame+ac3_length, aud_data, read);
-                                    ac3_length += read;
-                                }
-                                length = a52_syncinfo(ac3_frame, &flags, &sample_rate, &bit_rate);
-
-                                if (length==0)
-                                    fprintf(stderr, "length=%d ac_length=%d ac3_frame=%02x %02x %02x %02x\n", length, ac3_length,
-                                        ac3_frame[0], ac3_frame[1], ac3_frame[2], ac3_frame[3]);
-                            } while (0);
-
-                            /* prepare the next frame for decoding */
-                            do {
-                                /* read data from transport stream to complete frame */
-                                while (ac3_length < length) {
-                                    read = next_pes_packet_data(aud_data, ac3_pid, 0, fileau);
-                                    if (read==0) {
-                                        if (ferror(fileau)) {
-                                            dlmessage("error reading file \"%s\": %s", filename[fileindex], strerror(errno));
-                                            ac3_pid = 0;
-                                            break;
-                                        }
-                                        if (feof(fileau)) {
-                                            off_t offset = 0;
-                                            if (fseek(fileau, offset, SEEK_SET)<0)
-                                                dlerror("failed to seek in file \"%s\"", filename[fileindex]);
-                                            continue;
-                                        }
-                                    }
-                                    memcpy(ac3_frame+ac3_length, aud_data, read);
-                                    ac3_length += read;
-                                }
-                            } while (0);
-
-                            /* feed the frame to the audio decoder */
-                            flags = A52_STEREO;
-                            sample_t level = 32767.0;
-                            sample_t bias = 0.0;
-                            a52_frame(a52_state, ac3_frame, &flags, &level, bias);
-
-                            /* buffer decoded audio */
-                            int i, j;
-                            for (i=0; i<6; i++) {
-                                a52_block(a52_state);
-
-                                /* convert decoded samples to integer and interleave */
-                                for (j=0; j<256; j++) {
-                                    ac3_block[j*2  ] = (int16_t) lround(sample[j    ]);
-                                    ac3_block[j*2+1] = (int16_t) lround(sample[j+256]);
-                                }
-
-                                uint32_t scheduled;
-                                result = output->ScheduleAudioSamples(ac3_block, 256, blocknum*256*framerate_scale/48000, framerate_scale, &scheduled);
-                                //dlmessage("buffer level %d: decoded %d bytes and scheduled %d frames", buffered, decoded, scheduled);
-                                if (result != S_OK) {
-                                    dlmessage("%s: error: block %d: failed to schedule audio data", appname, blocknum);
-                                    aud_pid = 0;
-                                    break;
-                                }
-
-                                blocknum++;
-                            }
-
-                            /* keep leftover data for next frame */
-                            if (ac3_length-length)
-                                memcpy(ac3_frame, ac3_frame+length, ac3_length-length);
-                            ac3_length = ac3_length-length;
-                        }
-                    }
-                    break;
-
-                default:
-                    /* no other audio support */
-                    break;
+                    blocknum += 6;
+                }
             }
-
         }
 
         /* stop the status display */
@@ -1497,22 +635,12 @@ int main(int argc, char *argv[])
     }
 
     /* tidy up */
-    if (mpeg2dec)
-        mpeg2_close(mpeg2dec);
-    mpg123_delete(m);
-    mpg123_exit();
-    if (a52_state)
-        a52_free(a52_state);
     card->Release();
     iterator->Release();
-    if (ac3_block)
-        free(ac3_block);
-    if (ac3_frame)
-        free(ac3_frame);
-    if (mpa_data)
-        free(mpa_data);
-    if (vid_data)
-        free(vid_data);
+    delete video;
+    delete audio;
+    if (aud_data)
+        free(aud_data);
 
     /* report statistics */
     if (verbose>=0)
