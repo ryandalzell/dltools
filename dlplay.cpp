@@ -36,8 +36,19 @@ sem_t sem;
 int exit_thread;
 
 /* display statistics */
+bool preroll;
 unsigned int completed;
 unsigned int late, dropped, flushed;
+
+/* video frame history buffer */
+bool pause_mode = 0;
+int num_history_frames = 0;
+const int MAX_HISTORY_FRAMES = 150;
+typedef struct {
+    IDeckLinkVideoFrame *frame;
+    tstamp_t timestamp;
+} history_frame_t;
+history_frame_t history_buffer[MAX_HISTORY_FRAMES];
 
 class callback : public IDeckLinkVideoOutputCallback, public IDeckLinkAudioOutputCallback
 {
@@ -97,15 +108,16 @@ bool test()
 
 HRESULT callback::ScheduledFrameCompleted(IDeckLinkVideoFrame* frame, BMDOutputFrameCompletionResult result)
 {
-    /* when a video frame has been released by the API, increment a semaphore */
-    sem_post(&sem);
-    frame->Release();
-    completed++;
     switch (result) {
         case bmdOutputFrameDisplayedLate: late++; break;
         case bmdOutputFrameDropped: dropped++; break;
         case bmdOutputFrameFlushed: flushed++; break;
     }
+
+    /* when a video frame has been completed, post a semaphore */
+    sem_post(&sem);
+    completed++;
+
     return S_OK;
 }
 
@@ -120,6 +132,24 @@ HRESULT callback::RenderAudioSamples(bool preroll)
 }
 
 /*****************************************/
+
+const char *describe_time(long long t)
+{
+    static char s[32];
+
+    t /= 90;
+    int msec = t % 1000;
+    t /= 1000;
+    int sec = t % 60;
+    t /= 60;
+    int min = t % 60;
+    t /= 60;
+    int hour = t % 60;
+
+    snprintf(s, sizeof(s), "%2d:%2d:%2d.%3d", hour, min, sec, msec);
+
+    return s;
+}
 
 void usage(int exitcode)
 {
@@ -149,29 +179,34 @@ void *display_status(void *arg)
     unsigned int latecount = late;
     unsigned int dropcount = dropped;
     do {
-        char string[256];
-        int len = 0;
+        if (!pause_mode && !preroll) {
+            char string[256];
+            int len = 0;
 
-        /* get buffer depth */
-        uint32_t video_buffer, audio_buffer;
-        output->GetBufferedVideoFrameCount(&video_buffer);
-        output->GetBufferedAudioSampleFrameCount(&audio_buffer);
+            /* get buffer depth */
+            uint32_t video_buffer, audio_buffer;
+            output->GetBufferedVideoFrameCount(&video_buffer);
+            output->GetBufferedAudioSampleFrameCount(&audio_buffer);
 
-        /* display status output */
-        len += snprintf(string+len, sizeof(string)-len, "%dfps video buffer %d audio buffer %d", completed-framerate, video_buffer, audio_buffer);
-        framerate = completed;
-        if (late!=latecount) {
-            len += snprintf(string+len, sizeof(string)-len, " late %d frame%s", late-latecount, late-latecount>1? "s" : "");
-            latecount = late;
+            /* get scheduled time */
+            BMDTimeValue time;
+            double speed;
+            output->GetScheduledStreamTime(90000, &time, &speed);
+
+            /* display status output */
+            len += snprintf(string+len, sizeof(string)-len, "%dfps video buffer %d audio buffer %d time %s speed %.1f", completed-framerate, video_buffer, audio_buffer, describe_time(time), speed);
+            framerate = completed;
+            if (late!=latecount) {
+                len += snprintf(string+len, sizeof(string)-len, " late %d frame%s", late-latecount, late-latecount>1? "s" : "");
+                latecount = late;
+            }
+            if (dropped!=dropcount) {
+                len += snprintf(string+len, sizeof(string)-len, " dropped %d frame%s", dropped-dropcount, dropped-dropcount>1? "s" : "");
+                dropcount = dropped;
+            }
+            fprintf(stdout, "\rperformance: %s", string);
+            fflush(stdout);
         }
-        if (dropped!=dropcount) {
-            len += snprintf(string+len, sizeof(string)-len, " dropped %d frame%s", dropped-dropcount, dropped-dropcount>1? "s" : "");
-            dropcount = dropped;
-        }
-        fprintf(stdout, "\rperformance: %s", string);
-        fflush(stdout);
-
-        /* clear stats */
 
         /* wait for stats to accumulate */
         sleep(1);
@@ -340,7 +375,7 @@ int main(int argc, char *argv[])
         /* determine the file type */
         if (strstr(filename[fileindex], "m2v")!=NULL || strstr(filename[fileindex], "M2V")!=NULL)
             filetype = M2V;
-        else if (strstr(filename[fileindex], "ts")!=NULL || strstr(filename[fileindex], "trp")!=NULL)
+        else if (strstr(filename[fileindex], "ts")!=NULL || strstr(filename[fileindex], "trp")!=NULL || strstr(filename[fileindex], "mpg")!=NULL)
             filetype = TS;
         else
             filetype = YUV;
@@ -372,7 +407,7 @@ int main(int argc, char *argv[])
         /* create the audio encoder */
         switch (filetype) {
             case TS:
-
+#if 1
                 /* try to attach a mpeg1 audio decoder */
                 if (audio==NULL) {
                     audio = new dlmpg123;
@@ -392,7 +427,7 @@ int main(int argc, char *argv[])
                     delete audio;
                     audio = NULL;
                 }
-
+#endif
                 /* note there may not be an audio stream in the file
                  * in which case the audio decoder will be null */
                 if (audio)
@@ -404,7 +439,7 @@ int main(int argc, char *argv[])
         }
 
         if (verbose>=1)
-            dlmessage("input file is %dx%d%c%.2f %s", pic_width, pic_height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);
+            dlmessage("info: video format is %dx%d%c%.2f %s", pic_width, pic_height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);
 
         /* override the framerate with ntscmode */
         if (framerate>29.9 && framerate<=30.0) {
@@ -506,34 +541,112 @@ int main(int argc, char *argv[])
             return 2;
         }
 
-        /* preroll as many frames as possible */
-        int preroll = 1;
+        /* being audio preroll */
+        if (output->BeginAudioPreroll()!=S_OK) {
+            dlmessage("error: failed to begin audio preroll");
+            return 2;
+        }
+
+        /* preroll as many video frames as possible */
+        preroll = 1;
         IDeckLinkMutableVideoFrame *frame = NULL;
+        decode_t decode = {0, 0};
+
+        /* start playback timestamp */
+        tstamp_t start_time = 1ll<<34;
+
+        /* start the status thread */
+        exit_thread = 0;
+        if (pthread_create(&status_thread, NULL, display_status, output)<0)
+            dlerror("failed to create status thread");
+
+        dlmessage("press q to exit, p to pause...");
 
         /* main loop */
+        int queuenum = 0;
         int framenum = 0;
         int blocknum = 0;
-        while (framenum<numframes || numframes<0) {
+        while (true) {
 
             /* check for user input */
             if (term.kbhit()) {
                 int c = term.readchar();
-                if (c=='q' || c=='\n')
-                    /* quit */
-                    break;
 
+                /* pause */
                 if (c=='p') {
-                    /* pause */
+                    /* enter pause mode */
+                    pause_mode = 1;
+
+                    /* find the index in the history buffer of the current frame */
+                    BMDTimeValue time;
+                    double speed;
+                    output->GetScheduledStreamTime(90000, &time, &speed);
+                    int pause_index = 0;
+                    if (time < history_buffer[0].timestamp)
+                        pause_index = 0;
+                    else if (time >= history_buffer[num_history_frames-1].timestamp)
+                        pause_index = num_history_frames-1;
+                    else
+                        for (int i=0; i<num_history_frames-1; i++) {
+                            if (history_buffer[i].timestamp <= time && time < history_buffer[i+1].timestamp) {
+                                pause_index = i+1;
+                                break;
+                            }
+                        }
+
+                    if (verbose>=1)
+                        dlmessage("current time is %s, pause timestamp %s", describe_time(time), describe_time(history_buffer[pause_index].timestamp));
+
+                    /* stop the playback */
                     if (output->StopScheduledPlayback(0, NULL, 0) != S_OK)
                         dlexit("%s: error: failed to pause video playback");
-                    output->DisplayVideoFrameSync(frame);
+                    output->DisableAudioOutput();
+
+                    /* display the current frame in the history buffer */
+                    output->DisplayVideoFrameSync(history_buffer[pause_index].frame);
                     do {
+                        /* blocking terminal read */
                         c = term.readchar();
-                    } while (c!='p');
-                    break;
-                    if (output->StartScheduledPlayback((framenum-1)*framerate_duration, framerate_duration, 1.0) != S_OK)
-                        dlexit("%s: error: failed to resume video playback");
+
+                        if (c=='j')
+                            if (pause_index>0)
+                                output->DisplayVideoFrameSync(history_buffer[--pause_index].frame);
+
+                        if (c=='k')
+                            if (pause_index<num_history_frames-1)
+                                output->DisplayVideoFrameSync(history_buffer[++pause_index].frame);
+
+                    } while (c!='p' && c!='q');
+
+                    /* preroll from end of history buffer to current pause index */
+                    for (int i=num_history_frames-1; i>pause_index; i--)
+                        if (output->ScheduleVideoFrame(history_buffer[i].frame, history_buffer[i].timestamp, lround(90000.0/framerate), 90000)==S_OK)
+                            start_time = history_buffer[i].timestamp;
+                        else
+                            break;
+
+                    /* resume the audio output */
+                    result = output->EnableAudioOutput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, 2, bmdAudioOutputStreamTimestamped);
+                    if (result != S_OK) {
+                        dlmessage("error: failed to resume audio output\n");
+                    }
+
+                    /* the semaphone has to be re-initialised */
+                    sem_destroy(&sem);
+                    sem_init(&sem, 0, 0);
+
+                    /* resume scheduled playback */
+                    preroll = 1;
+                    queuenum = 0;
+
+                    /* exit pause */
+                    pause_mode = 0;
                 }
+
+                /* quit */
+                if (c=='q' || c=='\n')
+                    break;
+
             }
 
             /* wait for callback after a frame is finished */
@@ -542,39 +655,41 @@ int main(int argc, char *argv[])
 
             /* enqueue previous frame */
             if (frame) {
-                result = output->ScheduleVideoFrame(frame, framenum*framerate_duration, framerate_duration, framerate_scale);
+                result = output->ScheduleVideoFrame(frame, decode.timestamp, lround(90000.0/framerate), 90000);
                 if (result != S_OK) {
                     if (preroll) {
                         /* preroll complete */
                         preroll = 0;
 
-                        /* start the status thread */
-                        exit_thread = 0;
-                        if (pthread_create(&status_thread, NULL, display_status, output)<0)
-                            dlerror("failed to create status thread");
+                        /* end audio preroll
+                        if (output->EndAudioPreroll()!=S_OK) {
+                            dlmessage("error: failed to end audio preroll");
+                            return 2;
+                        } */
 
                         /* start the video output */
-                        if (output->StartScheduledPlayback(0, framerate_duration, 1.0) != S_OK)
+                        if (output->StartScheduledPlayback(start_time, 90000, 1.0) != S_OK)
                             dlexit("%s: error: failed to start video playback");
 
-                        if (verbose>=0)
-                            dlmessage("info: pre-rolled %d frames", framenum);
+                        if (verbose>=1)
+                            dlmessage("info: pre-rolled %d frames", queuenum);
+                        if (verbose>=1)
+                            dlmessage("info: start time of video is %lld, %s", start_time, describe_time(start_time));
 
-                        dlmessage("press q to exit, p to pause...");
-
+                        /* reschedule this frame later */
                         continue;
 
                     } else {
                         switch (result) {
-                            case E_ACCESSDENIED : fprintf(stderr, "%s: error: frame %d: video output disabled when queueing video frame\n", appname, framenum); break;
-                            case E_OUTOFMEMORY  : fprintf(stderr, "%s: error: frame %d: too many frames are scheduled when queueing video frame\n", appname, framenum);
-                            case E_INVALIDARG   : fprintf(stderr, "%s: error: frame %d: frame attributes are invalid when queueing video frame\n", appname, framenum); break;
-                            default             : fprintf(stderr, "%s: error: frame %d: failed to schedule video frame\n", appname, framenum); break;
+                            case E_ACCESSDENIED : fprintf(stderr, "%s: error: frame %d: video output disabled when queueing video frame\n", appname, queuenum); break;
+                            case E_OUTOFMEMORY  : fprintf(stderr, "%s: error: frame %d: too many frames are scheduled when queueing video frame\n", appname, queuenum);
+                            case E_INVALIDARG   : fprintf(stderr, "%s: error: frame %d: frame attributes are invalid when queueing video frame\n", appname, queuenum); break;
+                            default             : fprintf(stderr, "%s: error: frame %d: failed to schedule video frame, timestamp %s\n", appname, queuenum, describe_time(decode.timestamp)); break;
                         }
                         break;
                     }
                 }
-                framenum++;
+                queuenum++;
             }
 
             /* allocate a new frame object */
@@ -586,13 +701,33 @@ int main(int argc, char *argv[])
             unsigned char *uyvy = (unsigned char *)voidptr;
 
             /* read the next frame */
-            if (video->decode(uyvy, frame->GetRowBytes()*frame->GetHeight())) {
-                dlmessage("failed to decode video frame %d in file \"%s\"", framenum, filename[fileindex]);
+            decode = video->decode(uyvy, frame->GetRowBytes()*frame->GetHeight());
+            if (decode.size==0) {
+                dlmessage("error: failed to decode video frame %d in file \"%s\"", framenum, filename[fileindex]);
                 break;
+            }
+            framenum++;
+            if (decode.timestamp<start_time) {
+                start_time = decode.timestamp;
+            }
+
+            if (verbose>=2)
+                dlmessage("info: frame %d timestamp %s", framenum, describe_time(decode.timestamp));
+
+            /* store the frame in the history buffer */
+            if (num_history_frames<MAX_HISTORY_FRAMES) {
+                history_buffer[num_history_frames].frame = frame;
+                history_buffer[num_history_frames].timestamp = decode.timestamp;
+                num_history_frames++;
+            } else {
+                history_buffer[0].frame->Release();
+                memmove(&history_buffer[0], &history_buffer[1], (MAX_HISTORY_FRAMES-1)*sizeof(history_frame_t));
+                history_buffer[MAX_HISTORY_FRAMES-1].frame = frame;
+                history_buffer[MAX_HISTORY_FRAMES-1].timestamp = decode.timestamp;
             }
 
             /* maintain audio buffer level */
-            if (audio && !preroll) {
+            if (audio /*&& !preroll*/) {
 
                 while (true) {
                     unsigned int buffered;
@@ -602,15 +737,19 @@ int main(int argc, char *argv[])
                     if (buffered >= 48000)
                         break;
 
+                    //printf("%d\n", buffered);
+
                     /* decode audio */
-                    size_t samples = audio->decode(aud_data, aud_size);
+                    decode_t decode = audio->decode(aud_data, aud_size);
+                    if (verbose>=1 && blocknum==0)
+                        dlmessage("info: start time of audio is %lld, %s", decode.timestamp, describe_time(decode.timestamp));
 
                     /* buffer decoded audio */
                     uint32_t scheduled;
-                    result = output->ScheduleAudioSamples(aud_data, samples/2, blocknum*256*framerate_scale/48000, framerate_scale, &scheduled);
+                    result = output->ScheduleAudioSamples(aud_data, decode.size/2, decode.timestamp, 90000, &scheduled);
                     //dlmessage("buffer level %d: decoded %d bytes and scheduled %d frames", buffered, decoded, scheduled);
                     if (result != S_OK) {
-                        dlmessage("error: frame %d: failed to schedule audio data", framenum);
+                        dlmessage("error: block %d: failed to schedule audio data", blocknum);
                         delete audio;
                         audio = NULL;
                         break;

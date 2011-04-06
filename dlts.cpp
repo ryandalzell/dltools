@@ -118,9 +118,12 @@ int next_stream_packet(unsigned char *data, int vid_pid, int aud_pid, int *pid, 
 
 /* read next packet from transport which is part of a pes packet
  * return packet length or zero on failure */
-int next_pes_packet_data(unsigned char *data, int pid, int start, FILE *file)
+int next_pes_packet_data(unsigned char *data, long long *pts, int pid, int start, FILE *file)
 {
     unsigned char packet[188];
+
+    /* default no pts */
+    *pts = -1;
 
     /* find next whole transport stream packet with correct pid */
     while (1) {
@@ -152,6 +155,15 @@ int next_pes_packet_data(unsigned char *data, int pid, int start, FILE *file)
             int stream_id = packet[ptr+3];
             if (packet_start_code_prefix!=0x1)
                 dlexit("error parsing pes header, start_code=0x%06x stream_id=0x%02x", packet_start_code_prefix, stream_id);
+
+            /* look for pts and dts */
+            int pts_dts_flags = packet[ptr+7] >> 6;
+            if (pts_dts_flags==2 || pts_dts_flags==3) {
+                long long pts3 = (packet[ptr+9] >> 1) && 0x7;
+                long long pts2 = (packet[ptr+10] << 7 | (packet[ptr+11] >> 1));
+                long long pts1 = (packet[ptr+12] << 7 | (packet[ptr+13] >> 1));
+                *pts = (pts3<<30) | (pts2<<15) | pts1;
+            }
 
             int pes_header_data_length = packet[ptr+8];
 
@@ -198,7 +210,7 @@ int find_pid_for_stream_type(int stream_types[], int num_stream_types, const cha
 
     } while (num_pmts==0);
 
-    //dlmessage("num_pmts=%d pmt_pid[0]=%d", num_pmts, pmt_pid[0]);
+    //dlmessage("num_pmts=%d pmt_pid[0]=%d pmt_pid[1]=%d", num_pmts, pmt_pid[0], pmt_pid[1]);
 
     /* find the video or audio pid */
     int pid = 0;
@@ -209,9 +221,18 @@ int find_pid_for_stream_type(int stream_types[], int num_stream_types, const cha
         if (read==0)
             return 0;
 
-        /* find the pid which carries one of the given stream types */
-        int program_info_length = (packet[11]<<8 | packet[12]) & 0x0fff;
+        int section_length = (packet[2]<<8 | packet[3]) & 0xfff;
+        if (section_length>1021)
+            continue;
+
+        /* skip any descriptors */
+        int program_info_length = (packet[11]<<8 | packet[12]) & 0xfff;
+        if (program_info_length>section_length-9)
+            /* this seems to be a problem in some streams, ignore packet */
+            continue;
         size_t index = 13 + program_info_length;
+
+        /* find the pid which carries one of the given stream types */
         while (index<read) {
             int stream_type = packet[index];
             int pid = (packet[index+1]<<8 | packet[index+2]) & 0x1fff;

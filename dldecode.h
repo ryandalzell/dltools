@@ -14,6 +14,14 @@ extern "C" {
 
 #include "dlutil.h"
 
+/* decoder data types */
+typedef long long tstamp_t;
+typedef struct {
+    size_t size;
+    tstamp_t timestamp;
+} decode_t;
+
+
 /* virtual base class for decoders */
 class dldecode
 {
@@ -23,7 +31,7 @@ public:
 
     virtual int attach(const char *filename);
     virtual int rewind(int frame);
-    virtual size_t decode(unsigned char *uyvy, size_t size) = 0;
+    virtual decode_t decode(unsigned char *buffer, size_t bufsize) = 0;
 
 protected:
     /* file and buffer variables */
@@ -31,6 +39,9 @@ protected:
     FILE *file;
     size_t size;
     unsigned char *data;
+
+    /* timestamp variables */
+    tstamp_t timestamp;
 
 public: /* yes public, we're not designing a type library here */
     /* video parameters */
@@ -50,7 +61,7 @@ public:
     virtual int attach(const char *filename);
     bool atend();
     virtual int rewind(int frame);
-    virtual size_t decode(unsigned char *uyvy, size_t size);
+    virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
 
@@ -70,7 +81,7 @@ public:
 
     virtual int attach(const char *filename);
     bool atend();
-    virtual size_t decode(unsigned char *uyvy, size_t size);
+    virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
 
@@ -80,7 +91,6 @@ protected:
     /* libmpeg2 variables */
     mpeg2dec_t *mpeg2dec;
     const mpeg2_info_t *info;
-
 };
 
 /* libmpeg2 class for transport streams */
@@ -90,6 +100,7 @@ public:
     dlmpeg2ts();
 
     virtual int attach(const char *filename);
+    virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
     int pid;
@@ -98,7 +109,9 @@ protected:
     virtual int readdata();
 
 private:
-    int findpid();
+    /* transport stream variables */
+    long long last_pts;
+    int frames_since_pts;
 };
 
 /* mpg123 class */
@@ -109,15 +122,20 @@ public:
     ~dlmpg123();
 
     virtual int attach(const char *filename);
-    virtual size_t decode(unsigned char *frame, size_t size);
+    virtual decode_t decode(unsigned char *frame, size_t size);
 
 public:
     int pid;
+    long long pts;
 
 private:
     /* mpg123 variables */
     mpg123_handle *m;
     int ret;
+
+    /* transport stream variables */
+    long long last_pts;
+    int frames_since_pts;
 };
 
 /* libmpeg2 class */
@@ -128,7 +146,7 @@ public:
     ~dlliba52();
 
     virtual int attach(const char *filename);
-    virtual size_t decode(unsigned char *frame, size_t size);
+    virtual decode_t decode(unsigned char *frame, size_t size);
 
 public:
     int pid;
@@ -141,6 +159,10 @@ private:
     unsigned char *ac3_frame;
     size_t ac3_size;
     int16_t *ac3_block;
+
+    /* transport stream variables */
+    long long last_pts;
+    int frames_since_pts;
 
 };
 

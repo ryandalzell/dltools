@@ -19,6 +19,7 @@ dldecode::dldecode()
     file = NULL;
     size = 0;
     data = NULL;
+    timestamp = 0;
 }
 
 dldecode::~dldecode()
@@ -83,8 +84,10 @@ int dlyuv::rewind(int frame)
     return 0;
 }
 
-size_t dlyuv::decode(unsigned char *uyvy, size_t size)
+decode_t dlyuv::decode(unsigned char *uyvy, size_t uyvysize)
 {
+    decode_t results = {0, 0};
+
     /* loop input file */
     if (atend()) {
         rewind(0);
@@ -94,10 +97,12 @@ size_t dlyuv::decode(unsigned char *uyvy, size_t size)
         /* read directly into frame */
         if (fread(uyvy, width*height*2, 1, file)!=1)
             dlerror("failed to read frame from input file");
+        results.size = width*height*2;
     } else {
         /* read frame from file */
         if (fread(data, size, 1, file)!=1)
             dlerror("failed to read frame from input file");
+        results.size = size;
 
         /* convert to uyvy */
         if (!lumaonly)
@@ -106,7 +111,10 @@ size_t dlyuv::decode(unsigned char *uyvy, size_t size)
             convert_i420_uyvy_lumaonly(data, uyvy, width, height);
     }
 
-    return 0;
+    results.timestamp = timestamp;
+    timestamp += lround(90000.0/framerate);
+
+    return results;
 }
 
 dlmpeg2::dlmpeg2()
@@ -173,8 +181,10 @@ int dlmpeg2::attach(const char *f)
     return 0;
 }
 
-size_t dlmpeg2::decode(unsigned char *uyvy, size_t size)
+decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
 {
+    decode_t results = {0, 0};
+
     int read;
     do {
         mpeg2_state_t state = mpeg2_parse(mpeg2dec);
@@ -194,7 +204,10 @@ size_t dlmpeg2::decode(unsigned char *uyvy, size_t size)
                 if (info->display_fbuf) {
                     const unsigned char *yuv[3] = {info->display_fbuf->buf[0], info->display_fbuf->buf[1], info->display_fbuf->buf[2]};
                     convert_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
-                    return 0;
+                    results.size = width*height*2;
+                    results.timestamp = timestamp;
+                    timestamp += lround(90000.0/framerate);
+                    return results;
                 }
                 break;
 
@@ -202,20 +215,35 @@ size_t dlmpeg2::decode(unsigned char *uyvy, size_t size)
                 break;
         }
     } while(1);
-    return 0;
+
+    return results;
 }
 
 dlmpeg2ts::dlmpeg2ts()
 {
     dlmpeg2();
     pid = 0;
+    last_pts = 0;
+    frames_since_pts = 0;
 }
 
 int dlmpeg2ts::readdata()
 {
+    long long pts;
+
     /* for transport streams we need to extract data from pes packets,
      * and pes packets from transport stream packets */
-    return next_pes_packet_data(data, pid, 0, file);
+    int read = next_pes_packet_data(data, &pts, pid, 0, file);
+    if (pts>=0) {
+        /* tag the picture with the pts so it can be retrieved when the picture is decoded */
+        mpeg2_tag_picture(mpeg2dec, pts, pts);
+
+        /* make a note of the pts */
+        last_pts = pts;
+        frames_since_pts = 0;
+    }
+
+    return read;
 }
 
 int dlmpeg2ts::attach(const char *f)
@@ -273,6 +301,53 @@ int dlmpeg2ts::attach(const char *f)
     return -1;
 }
 
+decode_t dlmpeg2ts::decode(unsigned char *uyvy, size_t uyvysize)
+{
+    decode_t results = {0, -1};
+
+    /* tag the picture with a marker that can be overwritten with a pts */
+    //mpeg2_tag_picture(mpeg2dec, -1, -1);
+
+    int read, done = 0;
+    do {
+        mpeg2_state_t state = mpeg2_parse(mpeg2dec);
+        switch (state) {
+            case STATE_BUFFER:
+                read = readdata();
+                if (read==0 || feof(file)) {
+                    if (fseek(file, 0, SEEK_SET)<0)
+                        dlerror("failed to seek in file \"%s\"", filename);
+                    read = readdata();
+                }
+                mpeg2_buffer(mpeg2dec, data, data+read);
+                break;
+
+            case STATE_SLICE:
+            case STATE_END:
+                if (info->display_fbuf) {
+                    const unsigned char *yuv[3] = {info->display_fbuf->buf[0], info->display_fbuf->buf[1], info->display_fbuf->buf[2]};
+                    convert_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
+                    results.size = width*height*2;
+                    results.timestamp = info->display_picture->tag;
+                    done = 1;
+                }
+                break;
+
+            default:
+                break;
+        }
+    } while(!done);
+
+    /* extrapolate a timestamp if necessary */
+    if (results.timestamp<0) {
+        frames_since_pts++;
+        results.timestamp = last_pts + (tstamp_t)(frames_since_pts*90000ll/framerate);
+        dlmessage("frame since pts=%d last pts=%lld", frames_since_pts, last_pts);
+    }
+
+    return results;
+}
+
 dlmpg123::dlmpg123()
 {
     /* initialise the mpeg1 audio decoder */
@@ -287,6 +362,7 @@ dlmpg123::dlmpg123()
 
     /* initialise the transport stream parser */
     pid = 0;
+    last_pts = -1;
 }
 
 dlmpg123::~dlmpg123()
@@ -324,7 +400,7 @@ int dlmpg123::attach(const char *f)
     /* find the audio format */
     do {
         size_t bytes;
-        int read = next_pes_packet_data(data, pid, 1, file);
+        int read = next_pes_packet_data(data, &pts, pid, 1, file);
         // TODO try mpg123_feed
         ret = mpg123_decode(m, data, read, NULL, 0, &bytes);
         if (ret==MPG123_ERR) {
@@ -342,17 +418,20 @@ int dlmpg123::attach(const char *f)
     return 0;
 }
 
-size_t dlmpg123::decode(unsigned char *samples, size_t size)
+decode_t dlmpg123::decode(unsigned char *samples, size_t sampsize)
 {
+    decode_t results = {0, 0};
+
     /* feed the audio decoder */
-    size_t decoded = 0;
+    results.size = 0;
     do {
-        int read = next_pes_packet_data(data, pid, 0, file);
+        int read = next_pes_packet_data(data, &pts, pid, 0, file);
         if (read==0) {
             if (ferror(file)) {
                 dlmessage("error reading file \"%s\": %s", filename, strerror(errno));
                 pid = 0;
-                return -1;
+                results.size = 0;
+                return results;
             }
             if (feof(file)) {
                 off_t offset = 0;
@@ -364,10 +443,10 @@ size_t dlmpg123::decode(unsigned char *samples, size_t size)
                 continue;
             }
         }
-        ret = mpg123_decode(m, data, read, samples, size, &decoded);
-    } while (!decoded && ret!=MPG123_ERR);
+        ret = mpg123_decode(m, data, read, samples, size, &results.size);
+    } while (!results.size && ret!=MPG123_ERR);
 
-    return decoded;
+    return results;
 }
 
 dlliba52::dlliba52()
@@ -385,6 +464,7 @@ dlliba52::dlliba52()
 
     /* initialise the transport stream parser */
     pid = 0;
+    last_pts = -1;
 }
 
 dlliba52::~dlliba52()
@@ -429,7 +509,8 @@ int dlliba52::attach(const char *f)
     size_t read;
     int ret = 0;
     do {
-        read = next_pes_packet_data(data, pid, 1, file);
+        long long pts;
+        read = next_pes_packet_data(data, &pts, pid, 1, file);
         if (read==0) {
             if (feof(file) || ferror(file)) {
                 dlmessage("failed to sync ac3 audio");
@@ -438,13 +519,19 @@ int dlliba52::attach(const char *f)
             }
         }
 
+        /* look for first pts */
+        if (pts>=0) {
+            last_pts = pts;
+            frames_since_pts = 0;
+        }
+
         /* look for sync in ac3 stream FIXME this won't work if sync is in last 7 bytes of packet */
         for (sync=0; sync<read-7; sync++) {
             ret = a52_syncinfo(data+sync, &flags, &sample_rate, &bit_rate);
             if (ret)
                 break;
         }
-    } while (ret==0);
+    } while (ret==0 && last_pts<0);
 
     /* queue the synchronised data */
     memcpy(ac3_frame, data+sync, read-sync);
@@ -471,21 +558,24 @@ int dlliba52::attach(const char *f)
     return 0;
 }
 
-size_t dlliba52::decode(unsigned char *frame, size_t size)
+decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
 {
+    decode_t results = {0, -1};
     int read;
+    long long pts;
 
     /* sync to next frame */
     int length = 0;
     int flags, sample_rate, bit_rate;
     do {
         if (ac3_length<7) {
-            read = next_pes_packet_data(data, pid, 0, file);
+            read = next_pes_packet_data(data, &pts, pid, 0, file);
             if (read==0) {
                 if (ferror(file)) {
                     dlmessage("error reading file \"%s\": %s", filename, strerror(errno));
                     pid = 0;
-                    return -1;
+                    results.size = 0;
+                    return results;
                 }
                 if (feof(file)) {
                     off_t offset = 0;
@@ -493,6 +583,10 @@ size_t dlliba52::decode(unsigned char *frame, size_t size)
                         dlerror("failed to seek in file \"%s\"", filename);
                     continue;
                 }
+            }
+            if (pts>=0) {
+                last_pts = pts;
+                frames_since_pts = 0;
             }
             memcpy(ac3_frame+ac3_length, data, read);
             ac3_length += read;
@@ -507,7 +601,7 @@ size_t dlliba52::decode(unsigned char *frame, size_t size)
     do {
         /* read data from transport stream to complete frame */
         while (ac3_length < length) {
-            read = next_pes_packet_data(data, pid, 0, file);
+            read = next_pes_packet_data(data, &pts, pid, 0, file);
             if (read==0) {
                 if (ferror(file)) {
                     dlmessage("error reading file \"%s\": %s", filename, strerror(errno));
@@ -545,12 +639,18 @@ size_t dlliba52::decode(unsigned char *frame, size_t size)
             ac3_frame[i*512+j*2+1] = (int16_t) lround(sample[j+256]);
         }
     }
+    results.size = 6*256*2;
 
     /* keep leftover data for next frame */
     if (ac3_length-length)
         memcpy(ac3_frame, ac3_frame+length, ac3_length-length);
     ac3_length = ac3_length-length;
 
-    /* return number of samples */
-    return 6*256*2;
+    /* extrapolate a timestamp if necessary */
+    if (results.timestamp<0) {
+        frames_since_pts++;
+        results.timestamp = last_pts + (tstamp_t)(frames_since_pts*90000ll/48000ll*6ll*256ll);
+    }
+
+    return results;
 }
