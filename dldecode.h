@@ -6,7 +6,6 @@
 
 extern "C" {
     #include <mpeg2dec/mpeg2.h>
-    #include <mpeg2dec/mpeg2convert.h>
     #include <a52dec/a52.h>
     #include <a52dec/mm_accel.h>
 }
