@@ -85,8 +85,6 @@ public:
 public:
 
 protected:
-    virtual int readdata();
-
     /* libmpeg2 variables */
     mpeg2dec_t *mpeg2dec;
     const mpeg2_info_t *info;
@@ -103,9 +101,6 @@ public:
 
 public:
     int pid;
-
-protected:
-    virtual int readdata();
 
 private:
     /* transport stream variables */

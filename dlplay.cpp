@@ -146,7 +146,7 @@ const char *describe_time(long long t)
     t /= 60;
     int hour = t % 60;
 
-    snprintf(s, sizeof(s), "%2d:%2d:%2d.%3d", hour, min, sec, msec);
+    snprintf(s, sizeof(s), "%02d:%02d:%02d.%03d", hour, min, sec, msec);
 
     return s;
 }
@@ -407,27 +407,27 @@ int main(int argc, char *argv[])
         /* create the audio encoder */
         switch (filetype) {
             case TS:
-#if 1
+
                 /* try to attach a mpeg1 audio decoder */
                 if (audio==NULL) {
                     audio = new dlmpg123;
                     aud_size = 32768;
-                }
-                if (audio->attach(filename[fileindex])<0) {
-                    delete audio;
-                    audio = NULL;
+                    if (audio->attach(filename[fileindex])<0) {
+                        delete audio;
+                        audio = NULL;
+                    }
                 }
 
                 /* try to attach an ac3 audio decoder */
                 if (audio==NULL) {
                     audio = new dlliba52;
                     aud_size = 6*256*2*sizeof(uint16_t);
+                    if (audio->attach(filename[fileindex])<0) {
+                        delete audio;
+                        audio = NULL;
+                    }
                 }
-                if (audio->attach(filename[fileindex])<0) {
-                    delete audio;
-                    audio = NULL;
-                }
-#endif
+
                 /* note there may not be an audio stream in the file
                  * in which case the audio decoder will be null */
                 if (audio)
@@ -707,7 +707,6 @@ int main(int argc, char *argv[])
                 dlmessage("error: failed to decode video frame %d in file \"%s\"", framenum, filename[fileindex]);
                 break;
             }
-            framenum++;
             if (decode.timestamp<start_time) {
                 start_time = decode.timestamp;
             }
@@ -717,6 +716,7 @@ int main(int argc, char *argv[])
 
             if (verbose>=2)
                 dlmessage("info: frame %d timestamp %s", framenum, describe_time(decode.timestamp));
+            framenum++;
 
             /* store the frame in the history buffer */
             if (num_history_frames<MAX_HISTORY_FRAMES) {
@@ -741,8 +741,6 @@ int main(int argc, char *argv[])
                     if (buffered >= 48000)
                         break;
 
-                    //printf("%d\n", buffered);
-
                     /* decode audio */
                     decode_t decode = audio->decode(aud_data, aud_size);
                     if (verbose>=1 && blocknum==0)
@@ -751,14 +749,14 @@ int main(int argc, char *argv[])
                     /* buffer decoded audio */
                     uint32_t scheduled;
                     result = output->ScheduleAudioSamples(aud_data, decode.size/2, decode.timestamp, 90000, &scheduled);
-                    //dlmessage("buffer level %d: decoded %d bytes and scheduled %d frames", buffered, decoded, scheduled);
+                    //dlmessage("buffer level %d: decoded %d bytes at timestamp %lld and scheduled %d samples", buffered, decode.size, decode.timestamp, scheduled);
                     if (result != S_OK) {
                         dlmessage("error: block %d: failed to schedule audio data", blocknum);
                         delete audio;
                         audio = NULL;
                         break;
                     }
-                    blocknum += 6;
+                    blocknum++;
                 }
             }
         }

@@ -133,12 +133,6 @@ dlmpeg2::~dlmpeg2()
         mpeg2_close(mpeg2dec);
 }
 
-int dlmpeg2::readdata()
-{
-    /* for elementary stream we can just read a chunk of data from file */
-    return fread(data, 1, size, file);
-}
-
 int dlmpeg2::attach(const char *f)
 {
     /* attach the input m2v file */
@@ -160,7 +154,8 @@ int dlmpeg2::attach(const char *f)
         mpeg2_state_t state = mpeg2_parse(mpeg2dec);
         switch (state) {
             case STATE_BUFFER:
-                read = readdata();
+                /* for elementary stream we can just read a chunk of data from file */
+                read = fread(data, 1, size, file);
                 mpeg2_buffer(mpeg2dec, data, data+read);
                 break;
 
@@ -190,11 +185,12 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
         mpeg2_state_t state = mpeg2_parse(mpeg2dec);
         switch (state) {
             case STATE_BUFFER:
-                read = readdata();
+                /* for elementary stream we can just read a chunk of data from file */
+                read = fread(data, 1, size, file);
                 if (read==0 || feof(file)) {
                     if (fseek(file, 0, SEEK_SET)<0)
                         dlerror("failed to seek in file \"%s\"", filename);
-                    read = readdata();
+                    read = fread(data, 1, size, file);
                 }
                 mpeg2_buffer(mpeg2dec, data, data+read);
                 break;
@@ -224,28 +220,9 @@ dlmpeg2ts::dlmpeg2ts()
     dlmpeg2();
     pid = 0;
     first_pts = -1;
-    last_pts = 0;
+    last_pts = -1;
     frames_since_pts = 0;
     offset_pts = 0;
-}
-
-int dlmpeg2ts::readdata()
-{
-    long long pts;
-
-    /* for transport streams we need to extract data from pes packets,
-     * and pes packets from transport stream packets */
-    int read = next_pes_packet_data(data, &pts, pid, 0, file);
-    if (pts>=0) {
-        /* tag the picture with the pts so it can be retrieved when the picture is decoded */
-        mpeg2_tag_picture(mpeg2dec, pts, pts);
-
-        /* make a note of the pts */
-        last_pts = pts;
-        frames_since_pts = 0;
-    }
-
-    return read;
 }
 
 int dlmpeg2ts::attach(const char *f)
@@ -272,16 +249,30 @@ int dlmpeg2ts::attach(const char *f)
         dlmessage("could not find video pid in file \"%s\"", filename);
         return -1;
     }
+    dlmessage("mpeg video pid is %d", pid);
 
     /* find the first sequence header */
-    int read = 1;
+    int read = 1, done = 0;
     do {
         mpeg2_state_t state = mpeg2_parse(mpeg2dec);
         switch (state) {
             case STATE_BUFFER:
-                read = readdata();
+            {
+                long long pts;
+                /* for transport streams we need to extract data from pes packets,
+                * and pes packets from transport stream packets */
+                read = next_pes_packet_data(data, &pts, pid, 0, file);
+                if (pts>=0) {
+                    /* tag the picture with the pts so it can be retrieved when the picture is decoded */
+                    mpeg2_tag_picture(mpeg2dec, pts, pts);
+
+                    /* make a note of the pts */
+                    last_pts = pts;
+                    frames_since_pts = 0;
+                }
                 mpeg2_buffer(mpeg2dec, data, data+read);
                 break;
+            }
 
             case STATE_SEQUENCE:
                 width = info->sequence->width;
@@ -289,17 +280,24 @@ int dlmpeg2ts::attach(const char *f)
                 interlaced = height==720? 0 : 1;
                 framerate = 27000000.0/info->sequence->frame_period;
                 pixelformat = info->sequence->height==info->sequence->chroma_height? I422 : I420;
-                return 0;
+                done = 1;
                 break;
 
             default:
                 break;
         }
+
+        if (done && last_pts>=0)
+            break;
     } while (read);
 
-    /* failed to attach */
-    dlmessage("could not find an mpeg2 sequence header in transport stream \"%s\"", filename);
-    return -1;
+    if (read==0) {
+        /* failed to attach */
+        dlmessage("could not find an mpeg2 sequence header in transport stream \"%s\"", filename);
+        return -1;
+    }
+
+    return 0;
 }
 
 decode_t dlmpeg2ts::decode(unsigned char *uyvy, size_t uyvysize)
@@ -314,17 +312,30 @@ decode_t dlmpeg2ts::decode(unsigned char *uyvy, size_t uyvysize)
         mpeg2_state_t state = mpeg2_parse(mpeg2dec);
         switch (state) {
             case STATE_BUFFER:
-                read = readdata();
+            {
+                long long pts;
+                /* for transport streams we need to extract data from pes packets,
+                * and pes packets from transport stream packets */
+                read = next_pes_packet_data(data, &pts, pid, 0, file);
                 if (read==0 || feof(file)) {
                     if (fseek(file, 0, SEEK_SET)<0)
                         dlerror("failed to seek in file \"%s\"", filename);
-                    read = readdata();
+                    read = next_pes_packet_data(data, &pts, pid, 0, file);
 
                     /* offset the timestamp for looped decoding */
                     offset_pts += last_pts + (tstamp_t)(frames_since_pts*90000ll/framerate) - first_pts;
                 }
+                if (pts>=0) {
+                    /* tag the picture with the pts so it can be retrieved when the picture is decoded */
+                    mpeg2_tag_picture(mpeg2dec, pts, pts);
+
+                    /* make a note of the pts */
+                    last_pts = pts;
+                    frames_since_pts = 0;
+                }
                 mpeg2_buffer(mpeg2dec, data, data+read);
                 break;
+            }
 
             case STATE_SLICE:
             case STATE_END:
@@ -340,10 +351,10 @@ decode_t dlmpeg2ts::decode(unsigned char *uyvy, size_t uyvysize)
             default:
                 break;
         }
-    } while(!done);
+    } while (!done);
 
     /* extrapolate a timestamp if necessary */
-    if (results.timestamp<0) {
+    if (results.timestamp<=0) {
         frames_since_pts++;
         results.timestamp = last_pts + (tstamp_t)(frames_since_pts*90000ll/framerate);
     }
@@ -365,7 +376,7 @@ dlmpg123::dlmpg123()
     m = mpg123_new(NULL, &ret);
     if (m==NULL)
         dlexit("failed to create mpg123 handle");
-    mpg123_param(m, MPG123_VERBOSE, 2, 0);
+    //mpg123_param(m, MPG123_VERBOSE, 2, 0);
     mpg123_open_feed(m);
 
     /* initialise the transport stream parser */
@@ -397,17 +408,15 @@ int dlmpg123::attach(const char *f)
     if (pid==0) {
         int stream_types[] = { 0x03, 0x04 };
         pid = find_pid_for_stream_type(stream_types, sizeof(stream_types)/sizeof(int), filename, file);
-    } else
-        dlmessage("mpa pid is %d", pid);
-
-    if (pid==0) {
-        dlmessage("could not find audio pid in file \"%s\"", filename);
-        return -1;
     }
 
-    /* find the audio format */
+    if (pid==0)
+        /* no mpeg audio pid found */
+        return -1;
+    dlmessage("mpeg audio pid is %d", pid);
+
+    /* find the first pes with a pts */
     do {
-        size_t bytes;
         int read = next_pes_packet_data(data, &pts, pid, 1, file);
         if (read==0) {
             if (feof(file) || ferror(file)) {
@@ -417,10 +426,35 @@ int dlmpg123::attach(const char *f)
             }
         }
 
+        /* look for first pts */
+        if (pts>=0) {
+            last_pts = pts;
+            frames_since_pts = 0;
+        }
+    }
+    while (last_pts<0);
+
+    /* find the audio format */
+    do {
+        size_t bytes;
+        int read = next_pes_packet_data(data, &pts, pid, 0, file);
+        if (read==0) {
+            if (feof(file) || ferror(file)) {
+                dlmessage("failed to sync mpa audio");
+                pid = 0;
+                return -1;
+            }
+        }
+
+        if (pts>=0) {
+            last_pts = pts;
+            frames_since_pts = 0;
+        }
+
         // TODO try mpg123_feed
         ret = mpg123_decode(m, data, read, NULL, 0, &bytes);
         //ret = mpg123_feed(m, data, read);
-        if (ret==MPG123_ERR) {
+        if (ret==MPG123_ERR || ret==MPG123_DONE) {
             dlmessage("failed to determine format of audio data: %s", mpg123_strerror(m));
             pid = 0;
             return -1;
@@ -437,10 +471,9 @@ int dlmpg123::attach(const char *f)
 
 decode_t dlmpg123::decode(unsigned char *samples, size_t sampsize)
 {
-    decode_t results = {0, 0};
+    decode_t results = {0, -1};
 
     /* feed the audio decoder */
-    results.size = 0;
     do {
         int read = next_pes_packet_data(data, &pts, pid, 0, file);
         if (read==0) {
@@ -460,8 +493,20 @@ decode_t dlmpg123::decode(unsigned char *samples, size_t sampsize)
                 continue;
             }
         }
-        ret = mpg123_decode(m, data, read, samples, size, &results.size);
-    } while (!results.size && ret!=MPG123_ERR);
+
+        if (pts>=0) {
+            last_pts = pts;
+            frames_since_pts = 0;
+        }
+
+        ret = mpg123_decode(m, data, read, samples, sampsize, &results.size);
+    } while (results.size==0 && ret!=MPG123_ERR);
+
+    /* extrapolate a timestamp if necessary */
+    if (results.timestamp<0) {
+        frames_since_pts++;
+        results.timestamp = last_pts + (tstamp_t)(frames_since_pts*90000ll*1152ll/48000ll);
+    }
 
     return results;
 }
@@ -508,13 +553,12 @@ int dlliba52::attach(const char *f)
     if (pid==0) {
         int stream_types[] = { 0x81 };
         pid = find_pid_for_stream_type(stream_types, sizeof(stream_types)/sizeof(int), filename, file);
-    } else
-        dlmessage("ac3 pid is %d", pid);
-
-    if (pid==0) {
-        dlmessage("could not find audio pid in file \"%s\"", filename);
-        return -1;
     }
+
+    if (pid==0)
+        /* no ac3 audio pid found */
+        return -1;
+    dlmessage("ac3 audio pid is %d", pid);
 
     /* find the ac3 audio format */
     int flags = 0, sample_rate = 0, bit_rate = 0;
