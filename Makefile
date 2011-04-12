@@ -12,8 +12,8 @@ APPS = dlskel dltest
 OBJS = dlutil.o dlterm.o dlconv.o dlts.o DeckLinkAPIDispatch.o
 
 # Flags
-CXXFLAGS = -Wall -ffast-math -fomit-frame-pointer -D_FILE_OFFSET_BITS=64 -g -I $(SDKDIR)
-all  : CXXFLAGS += -O2
+CXXFLAGS = -Wall -D_FILE_OFFSET_BITS=64 -g -I $(SDKDIR)
+all  : CXXFLAGS += -O2 -ffast-math -fomit-frame-pointer
 debug: CXXFLAGS +=
 LFLAGS = -lm -ldl -lpthread
 
