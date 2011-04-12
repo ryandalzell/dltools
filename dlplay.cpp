@@ -552,8 +552,9 @@ int main(int argc, char *argv[])
         IDeckLinkMutableVideoFrame *frame = NULL;
         decode_t decode = {0, 0};
 
-        /* start playback timestamp */
+        /* playback timestamp boundaries */
         tstamp_t start_time = 1ll<<34;
+        tstamp_t end_time = 0ll;
 
         /* start the status thread */
         exit_thread = 0;
@@ -709,6 +710,9 @@ int main(int argc, char *argv[])
             framenum++;
             if (decode.timestamp<start_time) {
                 start_time = decode.timestamp;
+            }
+            if (decode.timestamp>end_time) {
+                end_time = decode.timestamp;
             }
 
             if (verbose>=2)

@@ -223,8 +223,10 @@ dlmpeg2ts::dlmpeg2ts()
 {
     dlmpeg2();
     pid = 0;
+    first_pts = -1;
     last_pts = 0;
     frames_since_pts = 0;
+    offset_pts = 0;
 }
 
 int dlmpeg2ts::readdata()
@@ -287,7 +289,6 @@ int dlmpeg2ts::attach(const char *f)
                 interlaced = height==720? 0 : 1;
                 framerate = 27000000.0/info->sequence->frame_period;
                 pixelformat = info->sequence->height==info->sequence->chroma_height? I422 : I420;
-                dlmessage("width=%d height=%d", width, height);
                 return 0;
                 break;
 
@@ -318,6 +319,9 @@ decode_t dlmpeg2ts::decode(unsigned char *uyvy, size_t uyvysize)
                     if (fseek(file, 0, SEEK_SET)<0)
                         dlerror("failed to seek in file \"%s\"", filename);
                     read = readdata();
+
+                    /* offset the timestamp for looped decoding */
+                    offset_pts += last_pts + (tstamp_t)(frames_since_pts*90000ll/framerate) - first_pts;
                 }
                 mpeg2_buffer(mpeg2dec, data, data+read);
                 break;
@@ -342,8 +346,12 @@ decode_t dlmpeg2ts::decode(unsigned char *uyvy, size_t uyvysize)
     if (results.timestamp<0) {
         frames_since_pts++;
         results.timestamp = last_pts + (tstamp_t)(frames_since_pts*90000ll/framerate);
-        dlmessage("frame since pts=%d last pts=%lld", frames_since_pts, last_pts);
     }
+    results.timestamp += offset_pts;
+
+    /* record the timestamp of the first frame */
+    if (first_pts<0)
+        first_pts = results.timestamp;
 
     return results;
 }
@@ -401,8 +409,17 @@ int dlmpg123::attach(const char *f)
     do {
         size_t bytes;
         int read = next_pes_packet_data(data, &pts, pid, 1, file);
+        if (read==0) {
+            if (feof(file) || ferror(file)) {
+                dlmessage("failed to sync mpa audio");
+                pid = 0;
+                return -1;
+            }
+        }
+
         // TODO try mpg123_feed
         ret = mpg123_decode(m, data, read, NULL, 0, &bytes);
+        //ret = mpg123_feed(m, data, read);
         if (ret==MPG123_ERR) {
             dlmessage("failed to determine format of audio data: %s", mpg123_strerror(m));
             pid = 0;

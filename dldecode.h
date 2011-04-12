@@ -110,8 +110,10 @@ protected:
 
 private:
     /* transport stream variables */
-    long long last_pts;
+    tstamp_t first_pts;
+    tstamp_t last_pts;
     int frames_since_pts;
+    tstamp_t offset_pts;
 };
 
 /* mpg123 class */
