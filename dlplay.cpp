@@ -394,9 +394,9 @@ int main(int argc, char *argv[])
         sem_init(&sem, 0, 0);
 
         /* determine the file type */
-        if (strstr(filename[fileindex], "m2v")!=NULL || strstr(filename[fileindex], "M2V")!=NULL)
+        if (strstr(filename[fileindex], ".m2v")!=NULL || strstr(filename[fileindex], ".M2V")!=NULL)
             filetype = M2V;
-        else if (strstr(filename[fileindex], "ts")!=NULL || strstr(filename[fileindex], "trp")!=NULL || strstr(filename[fileindex], "mpg")!=NULL)
+        else if (strstr(filename[fileindex], ".ts")!=NULL || strstr(filename[fileindex], ".trp")!=NULL || strstr(filename[fileindex], ".mpg")!=NULL)
             filetype = TS;
         else
             filetype = YUV;
@@ -404,7 +404,7 @@ int main(int argc, char *argv[])
         /* create the video decoder */
         if (!audioonly) {
             switch (filetype) {
-                case YUV: video = new dlyuv;
+                case YUV: video = new dlyuv(lumaonly);
 
                     /* skip to the first frame */
                     if (firstframe)

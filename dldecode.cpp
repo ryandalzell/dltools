@@ -109,6 +109,7 @@ decode_t dlyuv::decode(unsigned char *uyvy, size_t uyvysize)
             convert_i420_uyvy(data, uyvy, width, height, pixelformat);
         else
             convert_i420_uyvy_lumaonly(data, uyvy, width, height);
+
     }
 
     results.timestamp = timestamp;

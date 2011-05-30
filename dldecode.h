@@ -56,6 +56,7 @@ class dlyuv : public dldecode
 {
 public:
     dlyuv() { lumaonly = 0; }
+    dlyuv(int l) { lumaonly = l; }
 
     virtual int attach(const char *filename);
     bool atend();
