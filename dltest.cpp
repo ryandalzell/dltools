@@ -1,7 +1,7 @@
 /*
  * Description: DeckLink test app - iterate cards and print some info.
  * Author     : Ryan Dalzell
- * Copyright  : (c) 2010 4i2i Communications Ltd.
+ * Copyright  : (c) 2010,2011 4i2i Communications Ltd.
  */
 
 #include <stdio.h>
@@ -42,7 +42,7 @@ int main(int argc, char *argv[])
 
         /* list the video output display modes supported by the card */
         do {
-            /* query the card for its configuration interface */
+            /* query the card for its output interface */
             IDeckLinkOutput *interface = NULL;
             result = card->QueryInterface(IID_IDeckLinkOutput, (void**)&interface);
             if (result != S_OK) {
@@ -61,6 +61,51 @@ int main(int argc, char *argv[])
 
             /* list all supported output display modes */
             printf("  output modes:");
+            IDeckLinkDisplayMode *display_mode = NULL;
+            while (displaymode_iterator->Next(&display_mode) == S_OK)
+            {
+
+                /* obtain the display mode's properties */
+                long height = display_mode->GetHeight();
+                BMDTimeValue framerate_duration;
+                BMDTimeScale framerate_scale;
+                display_mode->GetFrameRate(&framerate_duration, &framerate_scale);
+                BMDFieldDominance field_dominance = display_mode->GetFieldDominance();
+
+                if (framerate_duration==BMDTimeValue(1000))
+                    printf(" %ld%c%d", height, field_dominance==bmdProgressiveFrame? 'p' : 'i', int(framerate_scale / framerate_duration));
+                else
+                    printf(" %ld%c%.2f", height, field_dominance==bmdProgressiveFrame? 'p' : 'i', (double)framerate_scale / (double)framerate_duration);
+
+                /* tidy up */
+                display_mode->Release();
+            }
+            printf("\n");
+
+
+        } while(0);
+
+        /* list the video input display modes supported by the card */
+        do {
+            /* query the card for its input interface */
+            IDeckLinkInput *interface = NULL;
+            result = card->QueryInterface(IID_IDeckLinkInput, (void**)&interface);
+            if (result != S_OK) {
+                fprintf(stderr, "%s: error: could not obtain the IDeckLinkInput interface - result = %08x\n", appname, result);
+                break;
+            }
+
+            /* obtain an IDeckLinkDisplayModeIterator to enumerate the display modes supported on output */
+            IDeckLinkDisplayModeIterator *displaymode_iterator = NULL;
+            result = interface->GetDisplayModeIterator(&displaymode_iterator);
+            if (result != S_OK) {
+                fprintf(stderr, "%s: error: could not obtain the video input display mode iterator - result = %08x\n", appname, result);
+                interface->Release();
+                break;
+            }
+
+            /* list all supported output display modes */
+            printf("   input modes:");
             IDeckLinkDisplayMode *display_mode = NULL;
             while (displaymode_iterator->Next(&display_mode) == S_OK)
             {
