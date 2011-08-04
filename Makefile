@@ -4,6 +4,7 @@
 # Build configuration
 BINDIR = /usr/local/bin
 SDKDIR = /usr/local/decklink/include
+PLATFORM = $(shell uname -p)
 
 # Targets
 APPS = dlskel dltest
@@ -12,7 +13,10 @@ APPS = dlskel dltest
 OBJS = dlutil.o dlterm.o dlconv.o dlts.o DeckLinkAPIDispatch.o
 
 # Flags
-CXXFLAGS = -Wall -D_FILE_OFFSET_BITS=64 -g -I $(SDKDIR)
+CXXFLAGS = -Wall -g -I $(SDKDIR)
+ifeq ($(PLATFORM),i686)
+CXXFLAGS += -D_FILE_OFFSET_BITS=64
+endif
 all  : CXXFLAGS += -O2 -ffast-math -fomit-frame-pointer
 debug: CXXFLAGS +=
 LFLAGS = -lm -ldl -lpthread
@@ -21,7 +25,7 @@ LFLAGS = -lm -ldl -lpthread
 all   : $(APPS) dlplay
 debug : $(APPS) dlplay
 clean :
-	rm -f $(APPS) dlplay $(foreach i,$(APPS),$i.o) $(OBJS)
+	rm -f $(APPS) $(foreach i,$(APPS),$i.o) dlplay dlplay.o dldecode.o $(OBJS)
 
 install: all
 	install --strip $(filter-out dlskel,$(APPS) dlplay) $(BINDIR)
