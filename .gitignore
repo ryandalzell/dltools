@@ -1,6 +1,7 @@
 dlskel
 dltest
 dlplay
+dlcap
 *.o
 *~
 .vimrc

@@ -519,11 +519,11 @@ int main(int argc, char *argv[])
         if (video) {
             IDeckLinkDisplayModeIterator *iterator;
             if (output->GetDisplayModeIterator(&iterator) != S_OK)
-                return false;
+                dlerror("failed to get display mode iterator");
 
             /* find mode for given width and height */
             while (iterator->Next(&mode) == S_OK) {
-                mode->GetFrameRate(&framerate_duration, &framerate_scale);
+                //mode->GetFrameRate(&framerate_duration, &framerate_scale);
                 //fprintf(stderr, "%ldx%ld%c%lld/%lld\n", mode->GetWidth(), mode->GetHeight(), mode->GetFieldDominance()!=bmdProgressiveFrame? 'i' : 'p', framerate_duration, framerate_scale);
                 if (mode->GetWidth()==dis_width && mode->GetHeight()==dis_height) {
                     if ((mode->GetFieldDominance()==bmdProgressiveFrame) ^ interlaced) {
