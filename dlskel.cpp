@@ -94,24 +94,20 @@ int main(int argc, char *argv[])
 
     /* initialise the DeckLink API */
     IDeckLinkIterator *iterator = CreateDeckLinkIteratorInstance();
-    if (iterator==NULL) {
-        fprintf(stderr, "%s: error: could not initialise, the DeckLink driver may not be installed\n", appname);
-        return 1;
-    }
+    if (iterator==NULL)
+        dlexit("error: could not initialise, the DeckLink driver may not be installed");
 
     /* connect to the first card in the system */
     IDeckLink *card;
     HRESULT result = iterator->Next(&card);
-    if (result!=S_OK) {
-        fprintf(stderr, "%s: error: no DeckLink cards found\n", appname);
-        return 1;
-    }
+    if (result!=S_OK)
+        dlexit("error: no DeckLink cards found");
 
     /* print the model name of the DeckLink card */
     char *name = NULL;
     result = card->GetModelName((const char **) &name);
     if (result == S_OK) {
-        printf("info: found a %s\n", name);
+        dlmessage("info: found a %s", name);
         free(name);
     }
 
