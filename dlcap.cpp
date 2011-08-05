@@ -33,6 +33,9 @@ class DeckLinkCapture : public IDeckLinkInputCallback
 
         /* control interface */
         HRESULT Init();
+        BMDDisplayMode DetectInput();
+        HRESULT Start();
+        HRESULT Start(BMDDisplayMode mode);
         HRESULT Start(int width, int height, bool interlaced, float framerate);
         void Wait();
         void Stop();
@@ -63,8 +66,9 @@ class DeckLinkCapture : public IDeckLinkInputCallback
         int maxframes;
         int framecount;
 
-        /* synchronisation semaphore */
-        sem_t sem;
+        /* synchronisation semaphores */
+        sem_t sem_done;
+        sem_t sem_format;
 };
 
 DeckLinkCapture::DeckLinkCapture()
@@ -117,9 +121,60 @@ HRESULT DeckLinkCapture::Init()
     return S_OK;
 }
 
+/* auto-detect input format */
+BMDDisplayMode DeckLinkCapture::DetectInput()
+{
+    /* start the video input with a random choice of mode */
+    Start(bmdModeHD1080i6000);
+
+    /* wait for input format detection */
+    sem_wait(&sem_format);
+
+    /* stop */
+    Stop();
+
+    /* display mode name */
+    dlmessage("info: auto-detected input format %s", inp_mode_name);
+
+    return inp_mode;
+}
+
+HRESULT DeckLinkCapture::Start(BMDDisplayMode mode)
+{
+    /* configure the video input */
+    HRESULT result = input->EnableVideoInput(mode, bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection);
+    if (result!=S_OK)
+        dlapierror(result, "failed to configure video input");
+
+    /* initialise the counters */
+    numframes = 0;
+    framecount = 0;
+
+    /* initialise the semaphores */
+    sem_init(&sem_done, 0, 0);
+    sem_init(&sem_format, 0, 0);
+
+    /* start the video input */
+    result = input->StartStreams();
+    if (result!=S_OK) {
+        sem_destroy(&sem_done);
+        sem_destroy(&sem_format);
+        dlapierror(result, "failed to start video input");
+    }
+
+    return S_OK;
+}
+
+HRESULT DeckLinkCapture::Start()
+{
+    DetectInput();
+    return Start(inp_mode);
+}
+
 HRESULT DeckLinkCapture::Start(int width, int height, bool interlaced, float framerate)
 {
-    /* get display mode iterator */
+    /* find display mode from  arguments */
+    IDeckLinkDisplayMode *mode;
     {
         IDeckLinkDisplayModeIterator *iterator;
         HRESULT result = input->GetDisplayModeIterator(&iterator);
@@ -150,22 +205,7 @@ HRESULT DeckLinkCapture::Start(int width, int height, bool interlaced, float fra
             dlmessage("info: requested capture format %s", name);
     }
 
-    /* configure the video input */
-    HRESULT result = input->EnableVideoInput(mode->GetDisplayMode(), bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection);
-    if (result!=S_OK)
-        dlapierror(result, "failed to configure video input");
-
-    /* initialise the semaphore */
-    sem_init(&sem, 0, 0);
-
-    /* start the video input */
-    result = input->StartStreams();
-    if (result!=S_OK) {
-        sem_destroy(&sem);
-        dlapierror(result, "failed to start video input");
-    }
-
-    return S_OK;
+    return Start(mode->GetDisplayMode());
 }
 
 HRESULT DeckLinkCapture::VideoInputFrameArrived(IDeckLinkVideoInputFrame* videoframe, IDeckLinkAudioInputPacket* audioframe)
@@ -177,7 +217,7 @@ HRESULT DeckLinkCapture::VideoInputFrameArrived(IDeckLinkVideoInputFrame* videof
     {
         if (videoframe->GetFlags() & bmdFrameHasNoInputSource)
         {
-            if (framecount%lroundf(inp_mode_framerate)==0) {
+            if (framecount && framecount%lroundf(inp_mode_framerate)==0) {
                 if (inp_mode_name == NULL)
                     dlstatus("frame %d: no input signal detected", framecount);
                 else
@@ -205,8 +245,8 @@ HRESULT DeckLinkCapture::VideoInputFrameArrived(IDeckLinkVideoInputFrame* videof
             if (videoframe->GetTimecode(timecodeformat, &timecode) == S_OK)
                 timecode->GetString(&timecodeString);
 
-            if (framecount%lroundf(inp_mode_framerate)==0)
-                dlstatus("frame %d: [%s]", framecount, timecodeString? timecodeString : "no timecode");
+            if (framecount && framecount%lroundf(inp_mode_framerate)==0)
+                dlstatus("frame %d: captured %d/%d [%s]", framecount, numframes, maxframes, timecodeString? timecodeString : "no timecode");
 
             /* tidy up */
             if (timecodeString)
@@ -218,7 +258,7 @@ HRESULT DeckLinkCapture::VideoInputFrameArrived(IDeckLinkVideoInputFrame* videof
 
         if (maxframes>0 && numframes>=maxframes)
         {
-            sem_post(&sem);
+            sem_post(&sem_done);
         }
     }
 
@@ -240,13 +280,16 @@ HRESULT DeckLinkCapture::VideoInputFormatChanged(BMDVideoInputFormatChangedEvent
     mode->GetFrameRate(&framerate_scale, &framerate_duration);
     inp_mode_framerate = (float)framerate_duration / (float) framerate_scale;
 
+    /* signal that input format has been detected */
+    sem_post(&sem_format);
+
     return S_OK;
 }
 
 void DeckLinkCapture::Wait()
 {
     /* wait for the callback to signal capture is finished */
-    sem_wait(&sem);
+    sem_wait(&sem_done);
 }
 
 void DeckLinkCapture::Stop()
@@ -257,7 +300,8 @@ void DeckLinkCapture::Stop()
         input->DisableVideoInput();
         //input->DisableAudioOutput();
     }
-    sem_destroy(&sem);
+    sem_destroy(&sem_done);
+    sem_destroy(&sem_format);
 }
 
 DeckLinkCapture::~DeckLinkCapture()
@@ -294,11 +338,11 @@ int main(int argc, char *argv[])
     int verbose = 0;
 
     /* input format variables */
-    int width;
-    int height;
-    bool interlaced;
-    float framerate;
-    pixelformat_t pixelformat;
+    int width = 0;
+    int height = 0;
+    bool interlaced = false;
+    float framerate = 0.0f;
+    pixelformat_t pixelformat = UNKNOWN;
 
     /* parse command line for options */
     while (1) {
@@ -359,10 +403,11 @@ int main(int argc, char *argv[])
     }
 
     /* lookup format type */
-    if (!format && !outfile)
-        dlexit("need to specify the input sdi format type, either use the -s switch or specify it in the output filename");
-    if (divine_video_format(format? format : outfile, &width, &height, &interlaced, &framerate, &pixelformat)<0)
-        dlexit("format type unsupported: %s", format);
+    if (format || outfile) {
+        if (divine_video_format(format? format : outfile, &width, &height, &interlaced, &framerate, &pixelformat)<0)
+            dlmessage("info: auto-detecting input format");
+    } else
+        dlmessage("info: auto-detecting input format");
 
     /* open outfile after all other error conditions */
     if (outfile) {
@@ -380,13 +425,16 @@ int main(int argc, char *argv[])
 
     /* run the capture */
     capture.Init();
-    capture.Start(width, height, interlaced, framerate);
+    if (width && height && framerate)
+        capture.Start(width, height, interlaced, framerate);
+    else
+        capture.Start(); /* auto-detect format */
     capture.Wait();
     capture.Stop();
 
     /* report statistics */
     if (verbose>=0)
-        fprintf(stdout, "\ncaptured %d frames\n", capture.GetNumCaptures());
+        dlmessage("captured %d frames", capture.GetNumCaptures());
 
     return 0;
 }
