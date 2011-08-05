@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <getopt.h>
 #include <semaphore.h>
+#include <math.h>
 
 #include "DeckLinkAPI.h"
 
@@ -38,10 +39,18 @@ class callback : public IDeckLinkInputCallback
         void SetMaxframes(int m) {maxframes = m;}
 
         /* status interface */
-        int GetFrameCount() {return framecount;}
+        int GetNumCaptures() { return numframes; }
+        int GetFrameCount()  {return framecount;}
 
     private:
+        /* input format */
+        BMDDisplayMode inp_mode;
+        const char *inp_mode_name;
+        float inp_mode_framerate;
+
+        /* file output */
         FILE *fileout;
+        int numframes;
         int maxframes;
         int framecount;
 };
@@ -50,7 +59,11 @@ callback::callback(IDeckLinkInput *input)
 {
     if (input->SetCallback(this)!=S_OK)
         dlexit("%s: error: could not set video callback object");
+    inp_mode = 0;
+    inp_mode_name = NULL;
+    inp_mode_framerate = 30.0;
     fileout = NULL;
+    numframes = 0;
     maxframes = 0;
     framecount = 0;
 }
@@ -64,17 +77,24 @@ HRESULT callback::VideoInputFrameArrived(IDeckLinkVideoInputFrame* videoframe, I
     {
         if (videoframe->GetFlags() & bmdFrameHasNoInputSource)
         {
-            if (framecount%60==0)
-                dlmessage("frame %d: no input signal detected", framecount);
+            if (framecount%lroundf(inp_mode_framerate)==0) {
+                if (inp_mode_name == NULL)
+                    dlstatus("frame %d: no input signal detected", framecount);
+                else
+                    dlstatus("frame %d: detected input format %s %.2f", framecount, inp_mode_name, inp_mode_framerate);
+            }
         }
         else
         {
             /* write video frame to file */
-            int framesize = videoframe->GetRowBytes() * videoframe->GetHeight();
             if (fileout) {
+                int framesize = videoframe->GetRowBytes() * videoframe->GetHeight();
                 void *framedata;
                 videoframe->GetBytes(&framedata);
-                fwrite(framedata, framesize, 1, fileout);
+                int write = fwrite(framedata, framesize, 1, fileout);
+                if (write!=1)
+                    dlerror("failed to write %d bytes to output");
+                numframes++;
             }
 
             /* report frame */
@@ -86,7 +106,8 @@ HRESULT callback::VideoInputFrameArrived(IDeckLinkVideoInputFrame* videoframe, I
             if (videoframe->GetTimecode(timecodeformat, &timecode) == S_OK)
                 timecode->GetString(&timecodeString);
 
-            dlmessage("frame %d: [%s] %li bytes", framecount, timecodeString? timecodeString : "no timecode", framesize);
+            if (framecount%lroundf(inp_mode_framerate)==0)
+                dlstatus("frame %d: [%s]", framecount, timecodeString? timecodeString : "no timecode");
 
             /* tidy up */
             if (timecodeString)
@@ -95,7 +116,7 @@ HRESULT callback::VideoInputFrameArrived(IDeckLinkVideoInputFrame* videoframe, I
         }
         framecount++;
 
-        if (maxframes>0 && framecount>=maxframes)
+        if (maxframes>0 && numframes>=maxframes)
         {
             sem_post(&sem);
         }
@@ -109,8 +130,16 @@ HRESULT callback::VideoInputFrameArrived(IDeckLinkVideoInputFrame* videoframe, I
     return S_OK;
 }
 
-HRESULT callback::VideoInputFormatChanged(BMDVideoInputFormatChangedEvents events, IDeckLinkDisplayMode *mode, BMDDetectedVideoInputFormatFlags)
+HRESULT callback::VideoInputFormatChanged(BMDVideoInputFormatChangedEvents events, IDeckLinkDisplayMode *mode, BMDDetectedVideoInputFormatFlags flags)
 {
+    BMDTimeValue framerate_duration;
+    BMDTimeScale framerate_scale;
+
+    inp_mode = mode->GetDisplayMode();
+    mode->GetName(&inp_mode_name);
+    mode->GetFrameRate(&framerate_scale, &framerate_duration);
+    inp_mode_framerate = (float)framerate_duration / (float) framerate_scale;
+
     return S_OK;
 }
 
@@ -118,6 +147,7 @@ void usage(int exitcode)
 {
     fprintf(stderr, "%s: capture raw video\n", appname);
     fprintf(stderr, "usage: %s [options] [<file>] [<file>...]\n", appname);
+    fprintf(stderr, "  -s, --format        : sdi input format\n");
     fprintf(stderr, "  -n, --numframes     : number of frames (default: all)\n");
     fprintf(stderr, "  -o, --output        : write output to file\n");
     fprintf(stderr, "  -q, --quiet         : decrease verbosity, can be used multiple times\n");
@@ -139,6 +169,13 @@ int main(int argc, char *argv[])
     int numframes = -1;
     int verbose = 0;
 
+    /* input format variables */
+    int width;
+    int height;
+    bool interlaced;
+    float framerate;
+    pixelformat_t pixelformat;
+
     /* parse command line for options */
     while (1) {
         static struct option long_options[] = {
@@ -152,11 +189,15 @@ int main(int argc, char *argv[])
             {NULL,        0, NULL,  0 }
         };
 
-        int optchar = getopt_long(argc, argv, "n:o:qvu", long_options, NULL);
+        int optchar = getopt_long(argc, argv, "s:n:o:qvu", long_options, NULL);
         if (optchar==-1)
             break;
 
         switch (optchar) {
+            case 's':
+                format = optarg;
+                break;
+
             case 'n':
                 numframes = atoi(optarg);
                 if (numframes<=0)
@@ -193,6 +234,12 @@ int main(int argc, char *argv[])
             dlexit("more than %d input files", numfiles);
     }
 
+    /* lookup format type */
+    if (!format && !outfile)
+        dlexit("need to specify the input sdi format type, either use the -s switch or specify it in the output filename");
+    if (divine_video_format(format, &width, &height, &interlaced, &framerate, &pixelformat)<0)
+        dlexit("format type unsupported: %s", format);
+
     /* initialise the DeckLink API */
     IDeckLinkIterator *iterator = CreateDeckLinkIteratorInstance();
     if (iterator==NULL)
@@ -202,7 +249,7 @@ int main(int argc, char *argv[])
     IDeckLink *card;
     HRESULT result = iterator->Next(&card);
     if (result!=S_OK)
-        dlexit("error: no DeckLink cards found");
+        dlapierror(result, "error: no DeckLink cards found");
 
     /* print the model name of the DeckLink card */
     char *name = NULL;
@@ -222,8 +269,9 @@ int main(int argc, char *argv[])
     IDeckLinkDisplayMode *mode;
     {
         IDeckLinkDisplayModeIterator *iterator;
-        if (input->GetDisplayModeIterator(&iterator) != S_OK)
-            dlerror("failed to get display mode iterator");
+        result = input->GetDisplayModeIterator(&iterator);
+        if (result != S_OK)
+            dlapierror(result, "failed to get display mode iterator");
 
         /* find mode for given width and height */
         while (iterator->Next(&mode) == S_OK) {
@@ -250,11 +298,11 @@ int main(int argc, char *argv[])
     }
 
     /* configure the video input */
-    //BMDDisplayMode selectedDisplayMode = bmdModeHD1080i5994;
-    BMDDisplayMode selectedDisplayMode = bmdModeNTSC;
-    result = input->EnableVideoInput(selectedDisplayMode, bmdFormat8BitYUV, 0);
+    result = input->EnableVideoInput(mode->GetDisplayMode(), bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection);
     if (result!=S_OK)
-        dlexit("failed to configure video input, is card in use?");
+        dlapierror(result, "failed to configure video input");
+    //if (result!=S_OK)
+    //    dlapierror(result, "failed to configure video input: width=%d, height=%d, interlaced=%c", mode->GetWidth(), mode->GetHeight(), mode->GetFieldDominance()==bmdProgressiveFrame? 'p' : 'i');
 
     /* open outfile after all other error conditions */
     if (outfile) {
@@ -294,7 +342,7 @@ int main(int argc, char *argv[])
 
     /* report statistics */
     if (verbose>=0)
-        fprintf(stdout, "\ncaptured %d frames\n", the_callback.GetFrameCount());
+        fprintf(stdout, "\ncaptured %d frames\n", the_callback.GetNumCaptures());
 
     return 0;
 }

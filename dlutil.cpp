@@ -14,6 +14,42 @@
 
 extern const char *appname;
 
+void dlapierror(HRESULT result, const char *format, ...)
+{
+    va_list ap;
+    char message[256];
+
+    /* start output with application name */
+    int len = snprintf(message, sizeof(message), "%s: ", appname);
+
+    /* print message and system error message */
+    va_start(ap, format);
+    vsnprintf(message+len, sizeof(message)-len, format, ap);
+    fprintf(stderr, "%s: ", message);
+    va_end(ap);
+
+    /* append with api error message */
+    const char *apimessage;
+    switch (result) {
+        case S_OK           : apimessage = "success"; break;
+        case S_FALSE        : apimessage = "last in list"; break;
+        case E_UNEXPECTED   : apimessage = "unexpected use of api"; break;
+        case E_NOTIMPL      : apimessage = "not implemented"; break;
+        case E_OUTOFMEMORY  : apimessage = "out of memory"; break;
+        case E_INVALIDARG   : apimessage = "invalid argument"; break;
+        case E_NOINTERFACE  : apimessage = "interface was not found"; break;
+        case E_POINTER      : apimessage = "invalid pointer argument"; break;
+        case E_HANDLE       : apimessage = "invalid handle argument"; break;
+        case E_ABORT        : apimessage = "abort"; break;
+        case E_FAIL         : apimessage = "failure"; break;
+        case E_ACCESSDENIED : apimessage = "access denied"; break;
+        default             : apimessage = "unknown error"; break;
+    }
+    fprintf(stderr, "%s\n", apimessage);
+
+    exit(2);
+}
+
 void dlerror(const char *format, ...)
 {
     va_list ap;
@@ -61,6 +97,21 @@ void dlmessage(const char *format, ...)
     va_start(ap, format);
     vsnprintf(message+len, sizeof(message)-len, format, ap);
     fprintf(stderr, "%s\n", message);
+    va_end(ap);
+}
+
+void dlstatus(const char *format, ...)
+{
+    va_list ap;
+    char message[256];
+
+    /* start output with carriage return and application name */
+    int len = snprintf(message, sizeof(message), "\r%s: ", appname);
+
+    /* print message */
+    va_start(ap, format);
+    vsnprintf(message+len, sizeof(message)-len, format, ap);
+    fprintf(stderr, "%s", message);
     va_end(ap);
 }
 
