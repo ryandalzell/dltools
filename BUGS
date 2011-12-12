@@ -1,0 +1,4 @@
+This file contains a list of the known bugs in the dltools package.
+
+* dlplay: when playing out transport streams with MPEG-1 audio the audio
+doesn't loop like the video does, becoming corrupt on the second pass

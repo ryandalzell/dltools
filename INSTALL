@@ -1,0 +1,4 @@
+1) make
+
+2) make install
+You can use PREFIX= to install the package somewhere other than /usr/local

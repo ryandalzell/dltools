@@ -44,6 +44,11 @@ DeckLinkAPIDispatch.o: $(SDKDIR)/DeckLinkAPIDispatch.cpp
 dlplay: dlplay.o dldecode.o $(OBJS)
 	$(CXX) -o $@ $^ $(LFLAGS) -lmpeg2 -lmpg123 -la52
 
+dist: dltools.tar.gz
+
+dltools.tar.gz: Makefile *.cpp *.h BUGS COPYING INSTALL
+	tar zcf $@ -C .. $(foreach i,$^,dltools/$i)
+
 # dependancies
 dlplay.o: dlutil.h dlterm.h dlconv.h dldecode.h
 dlterm.o: dlutil.h dlterm.h
