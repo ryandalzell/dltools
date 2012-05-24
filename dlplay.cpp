@@ -548,14 +548,8 @@ int main(int argc, char *argv[])
         /* set the video output mode */
         if (video) {
             HRESULT result = output->EnableVideoOutput(mode->GetDisplayMode(), bmdVideoOutputFlagDefault);
-            if (result != S_OK) {
-                switch (result) {
-                    case E_ACCESSDENIED : fprintf(stderr, "%s: error: access denied when enabling video output\n", appname); break;
-                    case E_OUTOFMEMORY  : fprintf(stderr, "%s: error: out of memory when enabling video output\n", appname); break;
-                    default             : fprintf(stderr, "%s: error: failed to enable video output\n", appname); break;
-                }
-                return 2;
-            }
+            if (result!=S_OK)
+                dlapierror(result, "failed to enable video output");
         }
 
         /* set the audio output mode */
