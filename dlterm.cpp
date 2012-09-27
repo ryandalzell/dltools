@@ -49,12 +49,13 @@ int dlterm::kbhit()
 int dlterm::readchar()
 {
     char ch;
+    ssize_t r;
 
     if (peek_character != -1) {
         ch = peek_character;
         peek_character = -1;
         return ch;
     }
-    read(0,&ch,1);
+    r = read(0,&ch,1);
     return ch;
 }

@@ -66,7 +66,7 @@ public:
 public:
 
 private:
-    int maxframes;
+    unsigned maxframes;
 
     /* display parameters */
     int lumaonly;

@@ -33,7 +33,7 @@ int main(int argc, char *argv[])
     FILE *fileout = stdout;
     char *filename[16] = {0};
     char *outfile = NULL;
-    int numfiles = 0;
+    unsigned numfiles = 0;
 
     /* command line defaults */
     int numframes = -1;
