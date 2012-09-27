@@ -237,7 +237,7 @@ HRESULT DeckLinkCapture::VideoInputFrameArrived(IDeckLinkVideoInputFrame* videof
             }
 
             /* report frame */
-            const BMDTimecodeFormat timecodeformat = bmdTimecodeRP188;
+            const BMDTimecodeFormat timecodeformat = bmdTimecodeRP188Any;
             //const BMDTimecodeFormat timecodeformat = bmdTimecodeVITC;
             //const BMDTimecodeFormat timecodeformat = bmdTimecodeSerial;
             const char *timecodeString = NULL;
