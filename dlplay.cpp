@@ -46,7 +46,7 @@ unsigned int late, dropped, flushed;
 /* video frame history buffer */
 bool pause_mode = 0;
 int num_history_frames = 0;
-const int MAX_HISTORY_FRAMES = 150;
+const int MAX_HISTORY_FRAMES = 64;
 typedef struct {
     IDeckLinkVideoFrame *frame;
     tstamp_t timestamp;
@@ -729,8 +729,9 @@ int main(int argc, char *argv[])
             /* decode the next frame */
             if (video) {
                 /* allocate a new frame object */
-                if (output->CreateVideoFrame(pic_width, pic_height, pic_width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame)!=S_OK)
-                    dlexit("error: failed to create video frame\n");
+                HRESULT result = output->CreateVideoFrame(pic_width, pic_height, pic_width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame);
+                if (result!=S_OK)
+                    dlapierror(result, "error: failed to create video frame");
 
                 /* extract the frame buffer pointer without type punning */
                 frame->GetBytes(&voidptr);
