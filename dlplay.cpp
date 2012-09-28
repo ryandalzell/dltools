@@ -28,6 +28,7 @@ extern "C" {
 #include "dlutil.h"
 #include "dlterm.h"
 #include "dldecode.h"
+#include "dlalloc.h"
 
 /* compile options */
 #define USE_TERMIOS
@@ -46,7 +47,7 @@ unsigned int late, dropped, flushed;
 /* video frame history buffer */
 bool pause_mode = 0;
 int num_history_frames = 0;
-const int MAX_HISTORY_FRAMES = 64;
+const int MAX_HISTORY_FRAMES = 150;
 typedef struct {
     IDeckLinkVideoFrame *frame;
     tstamp_t timestamp;
@@ -265,6 +266,9 @@ int main(int argc, char *argv[])
     /* status thread variables */
     pthread_t status_thread;
 
+    /* custom memory allocator */
+    class dlalloc alloc;
+
     /* parse command line for options */
     while (1) {
         static struct option long_options[] = {
@@ -385,6 +389,10 @@ int main(int argc, char *argv[])
 
     /* create callback object */
     class callback the_callback(output);
+
+    /* assign the custom memory allocator */
+    if (output->SetVideoOutputFrameMemoryAllocator(&alloc)!=S_OK)
+        dlexit("%s: error: could not set a custom memory allocator");
 
     /* play input files sequentially */
     unsigned int fileindex;
@@ -678,6 +686,7 @@ int main(int argc, char *argv[])
 
             }
 #endif
+
             /* wait for callback after a frame is finished */
             if (video && !preroll)
                 /* use video callback to wait */

@@ -10,7 +10,7 @@ PLATFORM = $(shell uname -p)
 APPS = dlskel dltest dlcap
 
 # Common files
-OBJS = dlutil.o dlterm.o dlconv.o dlts.o DeckLinkAPIDispatch.o
+OBJS = dlutil.o dlterm.o dlconv.o dlts.o dlalloc.o DeckLinkAPIDispatch.o
 
 # Flags
 CXXFLAGS = -Wall -g -I $(SDKDIR)
@@ -54,3 +54,4 @@ dlplay.o: dlutil.h dlterm.h dlconv.h dldecode.h
 dlterm.o: dlutil.h dlterm.h
 dlconv.o: dlutil.h dlconv.h
 dldecode.o : dlutil.h dldecode.h
+dlalloc.o : dlutil.h dlalloc.h
