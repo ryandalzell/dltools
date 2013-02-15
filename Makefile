@@ -31,7 +31,7 @@ install: all
 	install --strip $(filter-out dlskel,$(APPS) dlplay) $(BINDIR)
 
 $(APPS):
-	$(CXX) -o $@ $(LFLAGS) $^
+	$(CXX) -o $@ $^ $(LFLAGS)
 
 $(APPS): % : %.o $(OBJS)
 
