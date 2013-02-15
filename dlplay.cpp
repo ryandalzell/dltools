@@ -39,6 +39,7 @@ sem_t sem;
 int exit_thread;
 
 /* display statistics */
+const int PREROLL_FRAMES = 20;
 bool preroll;
 unsigned int completed;
 unsigned int late, dropped, flushed;
@@ -46,7 +47,7 @@ unsigned int late, dropped, flushed;
 /* video frame history buffer */
 bool pause_mode = 0;
 int num_history_frames = 0;
-const int MAX_HISTORY_FRAMES = 150;
+const int MAX_HISTORY_FRAMES = 30;
 typedef struct {
     IDeckLinkVideoFrame *frame;
     tstamp_t timestamp;
@@ -724,6 +725,27 @@ int main(int argc, char *argv[])
                     }
                 }
                 queuenum++;
+            }
+
+            /* end pre-roll after a certain number of frames */
+            if (preroll && queuenum>=PREROLL_FRAMES) {
+                /* preroll complete */
+                preroll = 0;
+
+                /* end audio preroll
+                if (output->EndAudioPreroll()!=S_OK) {
+                    dlmessage("error: failed to end audio preroll");
+                    return 2;
+                } */
+
+                /* start the playback */
+                if (output->StartScheduledPlayback(video_start_time, 90000, 1.0) != S_OK)
+                    dlexit("error: failed to start video playback");
+
+                if (verbose>=1)
+                    dlmessage("info: pre-rolled %d frames", queuenum);
+                if (verbose>=1)
+                    dlmessage("info: start time of video is %lld, %s", video_start_time, describe_time(video_start_time));
             }
 
             /* decode the next frame */
