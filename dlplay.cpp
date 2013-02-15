@@ -692,37 +692,13 @@ int main(int argc, char *argv[])
             if (frame && video) {
                 HRESULT result = output->ScheduleVideoFrame(frame, decode.timestamp, lround(90000.0/framerate), 90000);
                 if (result != S_OK) {
-                    if (preroll) {
-                        /* preroll complete */
-                        preroll = 0;
-
-                        /* end audio preroll
-                        if (output->EndAudioPreroll()!=S_OK) {
-                            dlmessage("error: failed to end audio preroll");
-                            return 2;
-                        } */
-
-                        /* start the playback */
-                        if (output->StartScheduledPlayback(video_start_time, 90000, 1.0) != S_OK)
-                            dlexit("error: failed to start video playback");
-
-                        if (verbose>=1)
-                            dlmessage("info: pre-rolled %d frames", queuenum);
-                        if (verbose>=1)
-                            dlmessage("info: start time of video is %lld, %s", video_start_time, describe_time(video_start_time));
-
-                        /* reschedule this frame later */
-                        continue;
-
-                    } else {
-                        switch (result) {
-                            case E_ACCESSDENIED : fprintf(stderr, "%s: error: frame %d: video output disabled when queueing video frame\n", appname, queuenum); break;
-                            case E_OUTOFMEMORY  : fprintf(stderr, "%s: error: frame %d: too many frames are scheduled when queueing video frame\n", appname, queuenum);
-                            case E_INVALIDARG   : fprintf(stderr, "%s: error: frame %d: frame attributes are invalid when queueing video frame\n", appname, queuenum); break;
-                            default             : fprintf(stderr, "%s: error: frame %d: failed to schedule video frame, timestamp %s\n", appname, queuenum, describe_time(decode.timestamp)); break;
-                        }
-                        break;
+                    switch (result) {
+                        case E_ACCESSDENIED : fprintf(stderr, "%s: error: frame %d: video output disabled when queueing video frame\n", appname, queuenum); break;
+                        case E_OUTOFMEMORY  : fprintf(stderr, "%s: error: frame %d: too many frames are scheduled when queueing video frame\n", appname, queuenum);
+                        case E_INVALIDARG   : fprintf(stderr, "%s: error: frame %d: frame attributes are invalid when queueing video frame\n", appname, queuenum); break;
+                        default             : fprintf(stderr, "%s: error: frame %d: failed to schedule video frame, timestamp %s\n", appname, queuenum, describe_time(decode.timestamp)); break;
                     }
+                    break;
                 }
                 queuenum++;
             }
