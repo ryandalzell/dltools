@@ -168,6 +168,7 @@ void usage(int exitcode)
     fprintf(stderr, "  -~, --audiooonly    : play audio only (default: video and audio if possible)\n");
     fprintf(stderr, "  -p, --video-pid     : decode specific video pid from transport stream (default: first program)\n");
     fprintf(stderr, "  -o, --audio-pid     : decode specific audio pid from transport stream (default: first program)\n");
+    fprintf(stderr, "  -i, --index         : index of decklink card to use (default: 0)\n");
     fprintf(stderr, "  -q, --quiet         : decrease verbosity, can be used multiple times\n");
     fprintf(stderr, "  -v, --verbose       : increase verbosity, can be used multiple times\n");
     fprintf(stderr, "  --                  : disable argument processing\n");
@@ -244,6 +245,7 @@ int main(int argc, char *argv[])
     int lumaonly = 0;
     int videoonly = 0;
     int audioonly = 0;
+    int index = 0;
     int verbose = 0;
 
     /* decoders */
@@ -280,6 +282,7 @@ int main(int argc, char *argv[])
             {"novideo",   0, NULL, '~'},
             {"video-pid", 1, NULL, 'p'},
             {"audio-pid", 1, NULL, 'o'},
+            {"index",     1, NULL, 'i'},
             {"quiet",     0, NULL, 'q'},
             {"verbose",   0, NULL, 'v'},
             {"usage",     0, NULL, 'u'},
@@ -287,7 +290,7 @@ int main(int argc, char *argv[])
             {NULL,        0, NULL,  0 }
         };
 
-        int optchar = getopt_long(argc, argv, "f:a:n:m:l=~p:o:qvu", long_options, NULL);
+        int optchar = getopt_long(argc, argv, "f:a:n:m:l=~p:o:i:qvu", long_options, NULL);
         if (optchar==-1)
             break;
 
@@ -338,6 +341,12 @@ int main(int argc, char *argv[])
                     dlexit("invalid value for audio pid: %d", aud_pid);
                 break;
 
+            case 'i':
+                index = atoi(optarg);
+                if (index<0)
+                    dlexit("invalid value for card index: %d", index);
+                break;
+
             case 'q':
                 verbose--;
                 break;
@@ -375,8 +384,10 @@ int main(int argc, char *argv[])
 
     /* connect to the first card in the system */
     IDeckLink *card;
-    if (iterator->Next(&card)!=S_OK)
-        dlexit("error: no DeckLink cards found");
+    int i;
+    for (i=0; i<=index; i++)
+        if (iterator->Next(&card)!=S_OK)
+            dlexit("error: failed to find DeckLink card with index %d", i);
 
     /* obtain the audio/video output interface */
     void *voidptr;
