@@ -20,6 +20,7 @@ extern "C" {
     #include <mpeg2dec/mpeg2convert.h>
     #include <a52dec/a52.h>
     #include <a52dec/mm_accel.h>
+    #include <libde265/de265.h>
 }
 #include <mpg123.h>
 
@@ -418,6 +419,8 @@ int main(int argc, char *argv[])
             filetype = M2V;
         else if (strstr(filename[fileindex], ".ts")!=NULL || strstr(filename[fileindex], ".trp")!=NULL || strstr(filename[fileindex], ".mpg")!=NULL)
             filetype = TS;
+        else if (strstr(filename[fileindex], ".265")!=NULL || strstr(filename[fileindex], ".h265")!=NULL || strstr(filename[fileindex], ".hevc")!=NULL)
+            filetype = HEVC;
         else
             filetype = YUV;
 
@@ -432,8 +435,9 @@ int main(int argc, char *argv[])
 
                     break;
 
-                case TS : video = new dlmpeg2ts; break;
-                case M2V: video = new dlmpeg2; break;
+                case TS  : video = new dlmpeg2ts; break;
+                case M2V : video = new dlmpeg2; break;
+                case HEVC: video = new dlhevc; break;
                 default: dlexit("unknown input file type");
             }
 
@@ -543,8 +547,8 @@ int main(int argc, char *argv[])
 
             /* find mode for given width and height */
             while (iterator->Next(&mode) == S_OK) {
-                //mode->GetFrameRate(&framerate_duration, &framerate_scale);
-                //fprintf(stderr, "%ldx%ld%c%lld/%lld\n", mode->GetWidth(), mode->GetHeight(), mode->GetFieldDominance()!=bmdProgressiveFrame? 'i' : 'p', framerate_duration, framerate_scale);
+                mode->GetFrameRate(&framerate_duration, &framerate_scale);
+                fprintf(stderr, "%ldx%ld%c%.2f\n", mode->GetWidth(), mode->GetHeight(), mode->GetFieldDominance()!=bmdProgressiveFrame? 'i' : 'p', (double)framerate_scale/framerate_duration);
                 if (mode->GetWidth()==dis_width && mode->GetHeight()==dis_height) {
                     if ((mode->GetFieldDominance()==bmdProgressiveFrame) ^ interlaced) {
                         mode->GetFrameRate(&framerate_duration, &framerate_scale);

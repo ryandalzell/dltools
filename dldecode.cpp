@@ -724,3 +724,153 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
 
     return results;
 }
+
+dlhevc::dlhevc()
+{
+    /* initialise the hevc video decoder */
+    err = DE265_OK;
+    ctx = de265_new_decoder();
+    if (ctx==NULL)
+        dlexit("failed to initialise libde265");
+
+    /* configure hevc decoder */
+    de265_set_parameter_bool(ctx, DE265_DECODER_PARAM_BOOL_SEI_CHECK_HASH, 1);
+    de265_set_parameter_bool(ctx, DE265_DECODER_PARAM_SUPPRESS_FAULTY_PICTURES, false);
+    if (0) {
+        //de265_set_limit_TID(ctx, highestTID);
+    }
+}
+
+dlhevc::~dlhevc()
+{
+    if (ctx)
+        de265_free_decoder(ctx);
+}
+
+int dlhevc::attach(const char *f)
+{
+    /* attach the input hevc file */
+    filename = f;
+
+    /* open the input file */
+    file = fopen(filename, "rb");
+    if (!file)
+        dlerror("error: failed to open input file \"%s\"", filename);
+
+    /* allocate the read buffer */
+    size = 32*1024;
+    data = (unsigned char *) malloc(size);
+
+    /* decode the first hevc frame */
+    image = de265_peek_next_picture(ctx);
+    while (!image) {
+
+        /* decode some more */
+        int more = 1;
+        de265_error err = de265_decode(ctx, &more);
+        if (more && de265_isOK(err))
+            image = de265_peek_next_picture(ctx);
+        else if (more && err==DE265_ERROR_IMAGE_BUFFER_FULL)
+            image = de265_peek_next_picture(ctx);
+        else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
+            /* read a chunk of input data */
+            int n = fread(data, 1, size, file);
+            if (n) {
+                err = de265_push_data(ctx, data, n, 0, NULL);
+                if (!de265_isOK(err)) {
+                    dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
+                }
+            }
+
+            if (feof(file)) {
+                err = de265_flush_data(ctx); // indicate end of stream
+            }
+        } else if (!more) {
+            /* decoding finished */
+            if (!de265_isOK(err))
+                dlmessage("error decoding frame: %s", de265_get_error_text(err));
+            break;
+        }
+    }
+
+    /* retrieve parameters from first frame */
+    if (image) {
+        width  = de265_get_image_width(image,0);
+        height = de265_get_image_height(image,0);
+        interlaced = 0;
+        framerate = 60; // FIXME not sure how to extract this.
+        switch (de265_get_chroma_format(image)) {
+          //case de265_chroma_444  : pixelformat = I444; break;
+            case de265_chroma_422  : pixelformat = I422; break;
+            case de265_chroma_420  : pixelformat = I420; break;
+          //case de265_chroma_mono : pixelformat = Y800; break;
+            default : dlerror("unknown chroma format");
+        }
+    }
+
+    return 0;
+}
+
+decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
+{
+    decode_t results = {0, 0};
+
+    /* decode the next hevc frame */
+    image = de265_get_next_picture(ctx);
+    while (!image) {
+
+        /* decode some more */
+        int more = 1;
+        de265_error err = de265_decode(ctx, &more);
+        if (more && de265_isOK(err))
+            image = de265_get_next_picture(ctx);
+        else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
+            /* read a chunk of input data */
+            int read = fread(data, 1, size, file);
+            if (read==0 || feof(file)) {
+                if (fseek(file, 0, SEEK_SET)<0)
+                    dlerror("failed to seek in file \"%s\"", filename);
+                read = fread(data, 1, size, file);
+            }
+            if (read) {
+                err = de265_push_data(ctx, data, read, 0, NULL);
+                if (!de265_isOK(err)) {
+                    dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
+                }
+            }
+        } else if (!more) {
+            /* decoding finished */
+            if (!de265_isOK(err))
+                dlmessage("error decoding frame: %s", de265_get_error_text(err));
+            break;
+        }
+    }
+
+    /* extract data from available frame */
+    if (image) {
+        int stride;
+
+        /* copy frame to history buffer FIXME 4:2:0 only */
+        const unsigned char *yuv[3] = {NULL};
+        yuv[0] = de265_get_image_plane(image, 0, &stride);
+        yuv[1] = de265_get_image_plane(image, 1, &stride);
+        yuv[2] = de265_get_image_plane(image, 2, &stride);
+        convert_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
+        results.size = width*height*2;
+        results.timestamp = timestamp;
+        timestamp += lround(90000.0/framerate);
+        return results;
+    }
+
+    /* show warnings in decode */
+    while (1) {
+        de265_error warning = de265_get_warning(ctx);
+        if (de265_isOK(warning))
+            break;
+
+        dlmessage("warning after decoding: %s", de265_get_error_text(warning));
+    }
+
+    return results;
+}
+

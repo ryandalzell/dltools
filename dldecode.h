@@ -8,6 +8,7 @@ extern "C" {
     #include <mpeg2dec/mpeg2.h>
     #include <a52dec/a52.h>
     #include <a52dec/mm_accel.h>
+    #include <libde265/de265.h>
 }
 #include <mpg123.h>
 
@@ -161,6 +162,26 @@ private:
     long long last_pts;
     int frames_since_pts;
 
+};
+
+/* libde265 class */
+class dlhevc : public dldecode
+{
+public:
+    dlhevc();
+    ~dlhevc();
+
+    virtual int attach(const char *filename);
+    bool atend();
+    virtual decode_t decode(unsigned char *buffer, size_t bufsize);
+
+public:
+
+protected:
+    /* libde265 variables */
+    de265_error err;
+    de265_decoder_context* ctx;
+    const struct de265_image *image;
 };
 
 #endif
