@@ -653,10 +653,18 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
             memcpy(ac3_frame+ac3_length, data, read);
             ac3_length += read;
         }
-        length = a52_syncinfo(ac3_frame, &flags, &sample_rate, &bit_rate);
 
-        if (length==0)
-            fprintf(stderr, "length=%d ac_length=%d ac3_frame=%02x %02x %02x %02x\n", length, ac3_length, ac3_frame[0], ac3_frame[1], ac3_frame[2], ac3_frame[3]);
+        /* look for sync in ac3 stream */
+        int sync;
+        for (sync=0; sync<ac3_length-7; sync++) {
+            length = a52_syncinfo(ac3_frame+sync, &flags, &sample_rate, &bit_rate);
+            if (length)
+                break;
+        }
+
+        //length = a52_syncinfo(ac3_frame, &flags, &sample_rate, &bit_rate);
+        //if (length==0)
+        //    fprintf(stderr, "length=%d ac_length=%d ac3_frame=%02x %02x %02x %02x\n", length, ac3_length, ac3_frame[0], ac3_frame[1], ac3_frame[2], ac3_frame[3]);
     } while (0);
 
     /* prepare the next frame for decoding */
