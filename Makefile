@@ -42,7 +42,7 @@ DeckLinkAPIDispatch.o: $(SDKDIR)/DeckLinkAPIDispatch.cpp
 	$(CXX) -c -o $@ $(CXXFLAGS) $<
 
 dlplay: dlplay.o dldecode.o $(OBJS)
-	$(CXX) -o $@ $^ $(LFLAGS) -lmpeg2 -lmpg123 -la52
+	$(CXX) -o $@ $^ $(LFLAGS) -lmpeg2 -lmpg123 -la52 -lde265
 
 dist: dltools.tar.gz
 

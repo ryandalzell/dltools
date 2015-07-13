@@ -12,6 +12,7 @@ typedef enum {
     PS,
     PES,
     M2V,
+    HEVC,
 } filetype_t;
 
 /* pixel formats */
