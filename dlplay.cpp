@@ -424,6 +424,12 @@ int main(int argc, char *argv[])
         else
             filetype = YUV;
 
+        /* create the input data source */
+        dlsource *source = NULL;
+        //switch () {
+            source = new dlfile();
+            source->open(filename[fileindex]);
+
         /* create the video decoder */
         if (!audioonly) {
             switch (filetype) {
@@ -442,7 +448,7 @@ int main(int argc, char *argv[])
             }
 
             /* figure out the mode to set */
-            if (video->attach(filename[fileindex])<0)
+            if (video->attach(source)<0)
                 dlexit("failed to initialise the video decoder");
             pic_width = video->width;
             pic_height = video->height;
@@ -459,7 +465,7 @@ int main(int argc, char *argv[])
                 if (audio==NULL && !videoonly) {
                     audio = new dlmpg123;
                     aud_size = 32768;
-                    if (audio->attach(filename[fileindex])<0) {
+                    if (audio->attach(source)<0) {
                         delete audio;
                         audio = NULL;
                     }
@@ -469,7 +475,7 @@ int main(int argc, char *argv[])
                 if (audio==NULL && !videoonly) {
                     audio = new dlliba52;
                     aud_size = 6*256*2*sizeof(uint16_t);
-                    if (audio->attach(filename[fileindex])<0) {
+                    if (audio->attach(source)<0) {
                         delete audio;
                         audio = NULL;
                     }
@@ -842,6 +848,9 @@ int main(int argc, char *argv[])
         /* the semaphone has to be re-initialised */
         sem_destroy(&sem);
 
+        /* tidy up */
+        delete source;
+        delete video;
     }
 
     /* tidy up */

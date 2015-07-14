@@ -13,6 +13,7 @@ extern "C" {
 #include <mpg123.h>
 
 #include "dlutil.h"
+#include "dlsource.h"
 
 /* decoder data types */
 typedef long long tstamp_t;
@@ -29,14 +30,15 @@ public:
     dldecode();
     virtual ~dldecode();
 
-    virtual int attach(const char *filename);
+    virtual int attach(dlsource *source);
     virtual int rewind(int frame);
     virtual decode_t decode(unsigned char *buffer, size_t bufsize) = 0;
 
 protected:
-    /* file and buffer variables */
-    const char *filename;
-    FILE *file;
+    /* data source */
+    dlsource *source;
+
+    /* buffer variables */
     size_t size;
     unsigned char *data;
 
@@ -59,9 +61,8 @@ public:
     dlyuv() { lumaonly = 0; }
     dlyuv(int l) { lumaonly = l; }
 
-    virtual int attach(const char *filename);
+    virtual int attach(dlsource *source);
     bool atend();
-    virtual int rewind(int frame);
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
@@ -80,7 +81,7 @@ public:
     dlmpeg2();
     ~dlmpeg2();
 
-    virtual int attach(const char *filename);
+    virtual int attach(dlsource *source);
     bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
@@ -98,7 +99,7 @@ class dlmpeg2ts : public dlmpeg2
 public:
     dlmpeg2ts();
 
-    virtual int attach(const char *filename);
+    virtual int attach(dlsource *source);
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
@@ -119,7 +120,7 @@ public:
     dlmpg123();
     ~dlmpg123();
 
-    virtual int attach(const char *filename);
+    virtual int attach(dlsource *source);
     virtual decode_t decode(unsigned char *frame, size_t size);
 
 public:
@@ -143,7 +144,7 @@ public:
     dlliba52();
     ~dlliba52();
 
-    virtual int attach(const char *filename);
+    virtual int attach(dlsource *source);
     virtual decode_t decode(unsigned char *frame, size_t size);
 
 public:
@@ -171,7 +172,7 @@ public:
     dlhevc();
     ~dlhevc();
 
-    virtual int attach(const char *filename);
+    virtual int attach(dlsource *source);
     bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 

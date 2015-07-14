@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "dlutil.h"
+#include "dlts.h"
 
 /* peek at the next character in the file */
 int fpeek(FILE *file)
@@ -30,33 +31,37 @@ int ffind(int f, FILE *file)
 }
 
 /* read next data packet from transport stream */
-int next_packet(unsigned char *packet, FILE *file)
+int next_packet(unsigned char *packet, dlsource *source)
 {
     while (1) {
         /* read a packet sized chunk */
-        if (fread(packet, 188, 1, file)!=1)
+        if (source->read(packet, 188)!=188)
             return -1;
 
-        if (packet[0]==0x47 && fpeek(file)==0x47)
+        if (packet[0]==0x47 /*&& fpeek(file)==0x47*/) // TODO lookahead in dlsource.
             /* success */
             return 0;
 
-        /* resync and try again */
-        if (ffind(0x47, file)<0)
-            return -1;
+        /* resync or try again */
+        for (int i=1; i<188; i++) {
+            if (packet[i]==0x47) {
+                memmove(packet, packet+i, 188-i);
+                source->read(packet+188-i, i);
+            }
+        }
     }
 }
 
 /* read next packet from transport stream with specified pid
  * return packet length or zero on failure */
-int next_data_packet(unsigned char *data, int pid, FILE *file)
+int next_data_packet(unsigned char *data, int pid, dlsource *source)
 {
     unsigned char packet[188];
 
     /* find next whole transport stream packet with correct pid */
     while (1) {
         /* read next packet */
-        if (next_packet(packet, file)<0)
+        if (next_packet(packet, source)<0)
             return 0;
 
         /* check pid is correct */
@@ -82,14 +87,14 @@ int next_data_packet(unsigned char *data, int pid, FILE *file)
 
 /* read next packet from transport stream with either video or audio pid
  * return packet length or zero on failure */
-int next_stream_packet(unsigned char *data, int vid_pid, int aud_pid, int *pid, FILE *file)
+int next_stream_packet(unsigned char *data, int vid_pid, int aud_pid, int *pid, dlsource *source)
 {
     unsigned char packet[188];
 
     /* find next whole transport stream packet with correct pid */
     while (1) {
         /* read next packet */
-        if (next_packet(packet, file)<0)
+        if (next_packet(packet, source)<0)
             return 0;
 
         /* check pid is correct */
@@ -118,7 +123,7 @@ int next_stream_packet(unsigned char *data, int vid_pid, int aud_pid, int *pid, 
 
 /* read next packet from transport which is part of a pes packet
  * return packet length or zero on failure */
-int next_pes_packet_data(unsigned char *data, long long *pts, int pid, int start, FILE *file)
+int next_pes_packet_data(unsigned char *data, long long *pts, int pid, int start, dlsource *source)
 {
     unsigned char packet[188];
 
@@ -128,7 +133,7 @@ int next_pes_packet_data(unsigned char *data, long long *pts, int pid, int start
     /* find next whole transport stream packet with correct pid */
     while (1) {
         /* read next packet */
-        if (next_packet(packet, file)<0)
+        if (next_packet(packet, source)<0)
             return 0;
 
         /* check start indicator */
@@ -178,7 +183,7 @@ int next_pes_packet_data(unsigned char *data, long long *pts, int pid, int start
     return 0;
 }
 
-int find_pid_for_stream_type(int stream_types[], int num_stream_types, const char *filename, FILE *file)
+int find_pid_for_stream_type(int stream_types[], int num_stream_types, dlsource *source)
 {
     unsigned char packet[188];
 
@@ -194,9 +199,9 @@ int find_pid_for_stream_type(int stream_types[], int num_stream_types, const cha
     do {
 
         /* find the next pat */
-        int read = next_data_packet(packet, 0, file);
+        int read = next_data_packet(packet, 0, source);
         if (read==0)
-            dlexit("failed to find a pat in input file \"%s\" (need to specify the pids)", filename);
+            dlexit("failed to find a pat in input file \"%s\" (need to specify the pids)", source->name());
 
         /* find the pmt_pids */
         int section_length = (packet[2]<<8 | packet[3]) & 0xfff;
@@ -217,7 +222,7 @@ int find_pid_for_stream_type(int stream_types[], int num_stream_types, const cha
     int pmt_index = 0;
     do {
         /* find the next pmt */
-        size_t read = next_data_packet(packet, pmt_pid[pmt_index], file);
+        size_t read = next_data_packet(packet, pmt_pid[pmt_index], source);
         if (read==0)
             return 0;
 
