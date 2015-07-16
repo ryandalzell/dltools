@@ -64,6 +64,7 @@ public:
 
     /* source operators */
     virtual int open(const char *port);
+    virtual int rewind();
     virtual size_t read(unsigned char *buffer, size_t bufsize);
 
     /* source metadata */

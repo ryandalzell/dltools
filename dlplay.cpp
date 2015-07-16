@@ -160,7 +160,7 @@ const char *describe_time(long long t)
 void usage(int exitcode)
 {
     fprintf(stderr, "%s: play raw video files\n", appname);
-    fprintf(stderr, "usage: %s [options] <file> [<file>...]\n", appname);
+    fprintf(stderr, "usage: %s [options] <file/url> [<file/url>...]\n", appname);
     fprintf(stderr, "  -f, --format        : specify display format: 480i,480p,576i,720p,1080i,1080p [optional +framerate] (default: auto)\n");
     fprintf(stderr, "  -a, --firstframe    : index of first frame in input to display (default: 0)\n");
     fprintf(stderr, "  -n, --numframes     : number of frames in input to display (default: all)\n");
@@ -370,7 +370,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    /* all non-options are input filenames */
+    /* all non-options are input filenames or urls */
     while (optind<argc) {
         if (numfiles < sizeof(filename)/sizeof(filename[0]))
             filename[numfiles++] = argv[optind++];
@@ -426,9 +426,23 @@ int main(int argc, char *argv[])
 
         /* create the input data source */
         dlsource *source = NULL;
-        //switch () {
+        if (strncmp(filename[fileindex], "udp://", 6)==0) {
+            source = new dlsock();
+            char *port = strchr(filename[fileindex]+6, ':');
+            if (port)
+                source->open(port+1);
+            else
+                source->open("1234");
+            /* FIXME need filetype detection or signalling */
+            filetype = HEVC;
+        } else if (strncmp(filename[fileindex], "file://", 7)==0) {
+            source = new dlfile();
+            source->open(filename[fileindex]+7);
+        } else if (strstr(filename[fileindex], "://")==NULL) {
             source = new dlfile();
             source->open(filename[fileindex]);
+        } else
+            dlexit("could not open url \"%s\"", filename[fileindex]);
 
         /* create the video decoder */
         if (!audioonly) {

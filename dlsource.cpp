@@ -156,7 +156,7 @@ int dlsock::open(const char *port)
     recvbufsize = 0;
     socklen_t optlen = sizeof(recvbufsize);
     getsockopt(sock, SOL_SOCKET, SO_RCVBUF, &recvbufsize, &optlen);
-    dlmessage("using socket receive buffer of %d bytes\n", recvbufsize);
+    dlmessage("using socket receive buffer of %d bytes", recvbufsize);
 
     /* join a multicast group */
     struct ip_mreqn mc_req;
@@ -178,6 +178,12 @@ int dlsock::open(const char *port)
         dlmessage("listening for data from encoder on port %s", port);
 
     return 0;
+}
+
+int dlsock::rewind()
+{
+    /* can't rewind a network stream */
+    return -1;
 }
 
 size_t dlsock::read(unsigned char *buffer, size_t bufsize)
