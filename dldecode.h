@@ -16,10 +16,11 @@ extern "C" {
 #include "dlsource.h"
 
 /* decoder data types */
-typedef long long tstamp_t;
 typedef struct {
     size_t size;
     tstamp_t timestamp;
+    unsigned long long decode_time;
+    unsigned long long render_time;
 } decode_t;
 
 
@@ -34,6 +35,9 @@ public:
     virtual int rewind(int frame);
     virtual decode_t decode(unsigned char *buffer, size_t bufsize) = 0;
 
+    /* verbose level */
+    void set_verbose(int v) { verbose = v; }
+
 protected:
     /* data source */
     dlsource *source;
@@ -44,6 +48,9 @@ protected:
 
     /* timestamp variables */
     tstamp_t timestamp;
+
+    /* verbose level */
+    int verbose;
 
 public: /* yes public, we're not designing a type library here */
     /* video parameters */

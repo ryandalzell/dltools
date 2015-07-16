@@ -18,6 +18,7 @@ dldecode::dldecode()
     size = 0;
     data = NULL;
     timestamp = 0;
+    verbose = 0;
 }
 
 dldecode::~dldecode()
@@ -744,7 +745,7 @@ int dlhevc::attach(dlsource *s)
         width  = de265_get_image_width(image,0);
         height = de265_get_image_height(image,0);
         interlaced = 0;
-        framerate = 60; // FIXME not sure how to extract this.
+        framerate = 60000.0/1001.0; // FIXME not sure how to extract this.
         switch (de265_get_chroma_format(image)) {
           //case de265_chroma_444  : pixelformat = I444; break;
             case de265_chroma_422  : pixelformat = I422; break;
@@ -768,6 +769,9 @@ int dlhevc::attach(dlsource *s)
 decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
 {
     decode_t results = {0, 0};
+
+    /* start timer */
+    unsigned long long start = get_utime();
 
     if (!interlaced) {
         /* decode the next hevc frame */
@@ -800,6 +804,10 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
             }
         }
 
+        /* timestamp decode time */
+        unsigned long long decode = get_utime();
+        results.decode_time = decode - start;
+
         /* extract data from available frame */
         if (image) {
             int stride;
@@ -813,8 +821,10 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
             results.size = width*height*2;
             results.timestamp = timestamp;
             timestamp += lround(90000.0/framerate);
-            return results;
         }
+
+        /* timestamp render time */
+        results.render_time = get_utime() - decode;
     } else {
         /* decode the next two hevc frames */
         image = de265_get_next_picture(ctx);
@@ -850,6 +860,10 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
             }
         }
 
+        /* timestamp decode time */
+        unsigned long long decode = get_utime();
+        results.decode_time = decode - start;
+
         /* extract data from available frame */
         if (image && field) {
             int stride;
@@ -866,8 +880,10 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
             results.size = width*height*2;
             results.timestamp = timestamp;
             timestamp += lround(90000.0/framerate);
-            return results;
         }
+
+        /* timestamp render time */
+        results.render_time = get_utime() - decode;
     }
 
     /* show warnings in decode */

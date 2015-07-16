@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <string.h>
 #include <stdarg.h>
+#include <sys/time.h>
 
 #include "dlutil.h"
 
@@ -196,4 +197,28 @@ int divine_video_format(const char *filename, int *width, int *height, bool *int
         }
     }
     return -1;
+}
+
+/* return current time in msecs */
+unsigned long long int get_time()
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (unsigned long long int)(tv.tv_usec/1000) + tv.tv_sec*1000ll;
+}
+
+/* return current time in usecs */
+unsigned long long int get_utime()
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (unsigned long long int)(tv.tv_usec) + tv.tv_sec*1000000ll;
+}
+
+/* return current time in 90kHz */
+tstamp_t get_stime()
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (tstamp_t)(tv.tv_usec*9/100) + tv.tv_sec+90000ll;
 }

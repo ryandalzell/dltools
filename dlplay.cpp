@@ -469,6 +469,9 @@ int main(int argc, char *argv[])
             interlaced = video->interlaced;
             framerate = video->framerate;
             pixelformat = video->pixelformat;
+
+            /* set the verbosity */
+            video->set_verbose(verbose);
         }
 
         /* create the audio encoder */
@@ -790,7 +793,7 @@ int main(int argc, char *argv[])
                 video_end_time = mmax(decode.timestamp, video_start_time);
 
                 if (verbose>=2)
-                    dlmessage("info: frame %d timestamp %s", framenum, describe_time(decode.timestamp));
+                    dlmessage("info: frame %d timestamp %s, decode %.1fms render %.1fms", framenum, describe_time(decode.timestamp), decode.decode_time/1000.0, decode.render_time/1000.0);
                 framenum++;
 
                 /* store the frame in the history buffer */
@@ -863,6 +866,10 @@ int main(int argc, char *argv[])
         /* the semaphone has to be re-initialised */
         sem_destroy(&sem);
 
+        /* report timing statistics */
+        if (verbose>=1)
+            dlmessage("\nmean decode time=%.1fms, mean render time=%.1fms", 0.0, 0.0);
+
         /* tidy up */
         delete source;
         delete video;
@@ -871,7 +878,6 @@ int main(int argc, char *argv[])
     /* tidy up */
     card->Release();
     iterator->Release();
-    delete video;
     delete audio;
     if (aud_data)
         free(aud_data);
