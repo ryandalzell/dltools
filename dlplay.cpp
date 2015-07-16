@@ -568,7 +568,8 @@ int main(int argc, char *argv[])
             /* find mode for given width and height */
             while (iterator->Next(&mode) == S_OK) {
                 mode->GetFrameRate(&framerate_duration, &framerate_scale);
-                fprintf(stderr, "%ldx%ld%c%.2f\n", mode->GetWidth(), mode->GetHeight(), mode->GetFieldDominance()!=bmdProgressiveFrame? 'i' : 'p', (double)framerate_scale/framerate_duration);
+                if (verbose>=1)
+                    dlmessage("mode available: %ldx%ld%c%.2f", mode->GetWidth(), mode->GetHeight(), mode->GetFieldDominance()!=bmdProgressiveFrame? 'i' : 'p', (double)framerate_scale/framerate_duration);
                 if (mode->GetWidth()==dis_width && mode->GetHeight()==dis_height) {
                     if ((mode->GetFieldDominance()==bmdProgressiveFrame) ^ interlaced) {
                         mode->GetFrameRate(&framerate_duration, &framerate_scale);
