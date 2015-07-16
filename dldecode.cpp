@@ -752,6 +752,14 @@ int dlhevc::attach(dlsource *s)
           //case de265_chroma_mono : pixelformat = Y800; break;
             default : dlerror("unknown chroma format");
         }
+
+        /* heuristics for determining interlaced */
+        if (width==1920 && (height==540 || height==576)) {
+            interlaced = 1;
+            height *= 2;
+            framerate /= 2.0;
+            dlmessage("interlaced: height=%d", height);
+        }
     }
 
     return 0;
@@ -761,50 +769,105 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
 {
     decode_t results = {0, 0};
 
-    /* decode the next hevc frame */
-    image = de265_get_next_picture(ctx);
-    while (!image) {
+    if (!interlaced) {
+        /* decode the next hevc frame */
+        image = de265_get_next_picture(ctx);
+        while (!image) {
 
-        /* decode some more */
-        int more = 1;
-        de265_error err = de265_decode(ctx, &more);
-        if (more && de265_isOK(err))
-            image = de265_get_next_picture(ctx);
-        else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
-            /* read a chunk of input data */
-            int read = source->read(data, size);
-            if (read==0 || source->eof()) {
-                source->rewind();
-                read = source->read(data, size);
-            }
-            if (read) {
-                err = de265_push_data(ctx, data, read, 0, NULL);
-                if (!de265_isOK(err)) {
-                    dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
+            /* decode some more */
+            int more = 1;
+            de265_error err = de265_decode(ctx, &more);
+            if (more && de265_isOK(err))
+                image = de265_get_next_picture(ctx);
+            else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
+                /* read a chunk of input data */
+                int read = source->read(data, size);
+                if (read==0 || source->eof()) {
+                    source->rewind();
+                    read = source->read(data, size);
                 }
+                if (read) {
+                    err = de265_push_data(ctx, data, read, 0, NULL);
+                    if (!de265_isOK(err)) {
+                        dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
+                    }
+                }
+            } else if (!more) {
+                /* decoding finished */
+                if (!de265_isOK(err))
+                    dlmessage("error decoding frame: %s", de265_get_error_text(err));
+                break;
             }
-        } else if (!more) {
-            /* decoding finished */
-            if (!de265_isOK(err))
-                dlmessage("error decoding frame: %s", de265_get_error_text(err));
-            break;
         }
-    }
 
-    /* extract data from available frame */
-    if (image) {
-        int stride;
+        /* extract data from available frame */
+        if (image) {
+            int stride;
 
-        /* copy frame to history buffer FIXME 4:2:0 only */
-        const unsigned char *yuv[3] = {NULL};
-        yuv[0] = de265_get_image_plane(image, 0, &stride);
-        yuv[1] = de265_get_image_plane(image, 1, &stride);
-        yuv[2] = de265_get_image_plane(image, 2, &stride);
-        convert_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
-        results.size = width*height*2;
-        results.timestamp = timestamp;
-        timestamp += lround(90000.0/framerate);
-        return results;
+            /* copy frame to history buffer FIXME 4:2:0 only */
+            const unsigned char *yuv[3] = {NULL};
+            yuv[0] = de265_get_image_plane(image, 0, &stride);
+            yuv[1] = de265_get_image_plane(image, 1, &stride);
+            yuv[2] = de265_get_image_plane(image, 2, &stride);
+            convert_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
+            results.size = width*height*2;
+            results.timestamp = timestamp;
+            timestamp += lround(90000.0/framerate);
+            return results;
+        }
+    } else {
+        /* decode the next two hevc frames */
+        image = de265_get_next_picture(ctx);
+        field = NULL;
+        while (!image || !field) {
+
+            /* decode some more */
+            int more = 1;
+            de265_error err = de265_decode(ctx, &more);
+            if (more && de265_isOK(err)) {
+                if (image==NULL)
+                    image = de265_get_next_picture(ctx);
+                else
+                    field = de265_get_next_picture(ctx);
+            } else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
+                /* read a chunk of input data */
+                int read = source->read(data, size);
+                if (read==0 || source->eof()) {
+                    source->rewind();
+                    read = source->read(data, size);
+                }
+                if (read) {
+                    err = de265_push_data(ctx, data, read, 0, NULL);
+                    if (!de265_isOK(err)) {
+                        dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
+                    }
+                }
+            } else if (!more) {
+                /* decoding finished */
+                if (!de265_isOK(err))
+                    dlmessage("error decoding frame: %s", de265_get_error_text(err));
+                break;
+            }
+        }
+
+        /* extract data from available frame */
+        if (image && field) {
+            int stride;
+
+            /* copy frame to history buffer FIXME 4:2:0 only */
+            const unsigned char *top[3], *bot[3];
+            top[0] = de265_get_image_plane(image, 0, &stride);
+            top[1] = de265_get_image_plane(image, 1, &stride);
+            top[2] = de265_get_image_plane(image, 2, &stride);
+            bot[0] = de265_get_image_plane(field, 0, &stride);
+            bot[1] = de265_get_image_plane(field, 1, &stride);
+            bot[2] = de265_get_image_plane(field, 2, &stride);
+            convert_field_yuv_uyvy(top, bot, uyvy, width, height, pixelformat);
+            results.size = width*height*2;
+            results.timestamp = timestamp;
+            timestamp += lround(90000.0/framerate);
+            return results;
+        }
     }
 
     /* show warnings in decode */
