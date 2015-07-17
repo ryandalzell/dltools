@@ -90,3 +90,48 @@ void convert_field_yuv_uyvy(const unsigned char *top[3], const unsigned char *bo
     }
 }
 
+void convert_top_field_yuv_uyvy(const unsigned char *top[3], unsigned char *uyvy, int width, int height, pixelformat_t pixelformat)
+{
+    const unsigned char *ptr[3] = {top[0]};
+    for (int y=0; y<height/2; y++) {
+        if (pixelformat==I422) {
+            ptr[1] = top[1] + (width/2)*y;
+            ptr[2] = top[2] + (width/2)*y;
+        } else {
+            ptr[1] = top[1] + (width/2)*(y/2);
+            ptr[2] = top[2] + (width/2)*(y/2);
+        }
+        /* first field */
+        for (int x=0; x<width/2; x++) {
+            *(uyvy++) = *(ptr[1]++);
+            *(uyvy++) = *(ptr[0]++);
+            *(uyvy++) = *(ptr[2]++);
+            *(uyvy++) = *(ptr[0]++);
+        }
+        /* second field */
+        uyvy += 2*width;
+    }
+}
+
+void convert_bot_field_yuv_uyvy(const unsigned char *bot[3], unsigned char *uyvy, int width, int height, pixelformat_t pixelformat)
+{
+    const unsigned char *ptr[3] = {bot[0]};
+    for (int y=0; y<height/2; y++) {
+        if (pixelformat==I422) {
+            ptr[1] = bot[1] + (width/2)*y;
+            ptr[2] = bot[2] + (width/2)*y;
+        } else {
+            ptr[1] = bot[1] + (width/2)*(y/2);
+            ptr[2] = bot[2] + (width/2)*(y/2);
+        }
+        /* first field */
+        uyvy += 2*width;
+        /* second field */
+        for (int x=0; x<width/2; x++) {
+            *(uyvy++) = *(ptr[1]++);
+            *(uyvy++) = *(ptr[0]++);
+            *(uyvy++) = *(ptr[2]++);
+            *(uyvy++) = *(ptr[0]++);
+        }
+    }
+}

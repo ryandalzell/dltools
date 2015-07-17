@@ -768,7 +768,7 @@ int dlhevc::attach(dlsource *s)
 
 decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
 {
-    decode_t results = {0, 0};
+    decode_t results = {0, 0, 0, 0};
 
     /* start timer */
     unsigned long long start = get_utime();
@@ -827,63 +827,67 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
         results.render_time = get_utime() - decode;
     } else {
         /* decode the next two hevc frames */
-        image = de265_get_next_picture(ctx);
-        field = NULL;
-        while (!image || !field) {
+        for (int field=0; field<2; field++) {
+            /* (re-)start timer */
+            start = get_utime();
 
-            /* decode some more */
-            int more = 1;
-            de265_error err = de265_decode(ctx, &more);
-            if (more && de265_isOK(err)) {
-                if (image==NULL)
+            image = de265_get_next_picture(ctx);
+            while (!image) {
+                /* decode some more */
+                int more = 1;
+                de265_error err = de265_decode(ctx, &more);
+                if (more && de265_isOK(err)) {
                     image = de265_get_next_picture(ctx);
-                else
-                    field = de265_get_next_picture(ctx);
-            } else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
-                /* read a chunk of input data */
-                int read = source->read(data, size);
-                if (read==0 || source->eof()) {
-                    source->rewind();
-                    read = source->read(data, size);
-                }
-                if (read) {
-                    err = de265_push_data(ctx, data, read, 0, NULL);
-                    if (!de265_isOK(err)) {
-                        dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
+                } else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
+                    /* read a chunk of input data */
+                    int read = source->read(data, size);
+                    if (read==0 || source->eof()) {
+                        source->rewind();
+                        read = source->read(data, size);
                     }
+                    if (read) {
+                        err = de265_push_data(ctx, data, read, 0, NULL);
+                        if (!de265_isOK(err)) {
+                            dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
+                        }
+                    }
+                } else if (!more) {
+                    /* decoding finished */
+                    if (!de265_isOK(err))
+                        dlmessage("error decoding frame: %s", de265_get_error_text(err));
+                    break;
                 }
-            } else if (!more) {
-                /* decoding finished */
-                if (!de265_isOK(err))
-                    dlmessage("error decoding frame: %s", de265_get_error_text(err));
-                break;
+            }
+
+            /* timestamp decode time */
+            unsigned long long decode = get_utime();
+            results.decode_time += decode - start;
+
+            /* extract data from available frame */
+            if (image) {
+                int stride;
+
+                /* copy frame to history buffer FIXME 4:2:0 only */
+                const unsigned char *yuv[3] = {NULL};
+                yuv[0] = de265_get_image_plane(image, 0, &stride);
+                yuv[1] = de265_get_image_plane(image, 1, &stride);
+                yuv[2] = de265_get_image_plane(image, 2, &stride);
+                if (field==0)
+                    convert_top_field_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
+                else
+                    convert_bot_field_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
+
+                /* timestamp render time */
+                results.render_time += get_utime() - decode;
             }
         }
 
-        /* timestamp decode time */
-        unsigned long long decode = get_utime();
-        results.decode_time = decode - start;
-
         /* extract data from available frame */
-        if (image && field) {
-            int stride;
-
-            /* copy frame to history buffer FIXME 4:2:0 only */
-            const unsigned char *top[3], *bot[3];
-            top[0] = de265_get_image_plane(image, 0, &stride);
-            top[1] = de265_get_image_plane(image, 1, &stride);
-            top[2] = de265_get_image_plane(image, 2, &stride);
-            bot[0] = de265_get_image_plane(field, 0, &stride);
-            bot[1] = de265_get_image_plane(field, 1, &stride);
-            bot[2] = de265_get_image_plane(field, 2, &stride);
-            convert_field_yuv_uyvy(top, bot, uyvy, width, height, pixelformat);
+        if (image) {
             results.size = width*height*2;
             results.timestamp = timestamp;
             timestamp += lround(90000.0/framerate);
         }
-
-        /* timestamp render time */
-        results.render_time = get_utime() - decode;
     }
 
     /* show warnings in decode */

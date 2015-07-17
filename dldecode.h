@@ -189,8 +189,7 @@ protected:
     /* libde265 variables */
     de265_error err;
     de265_decoder_context* ctx;
-    const struct de265_image *image;    /* frame or first field */
-    const struct de265_image *field;    /* second field */
+    const struct de265_image *image;
 };
 
 #endif
