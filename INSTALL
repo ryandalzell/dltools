@@ -1,4 +1,21 @@
-1) make
+1) Install dependencies: libmpeg2, libmpg123, liba52, libde265
 
-2) make install
-You can use PREFIX= to install the package somewhere other than /usr/local
+  On Debian/Ubuntu:
+
+  > sudo apt-get install libmpeg2-4-dev libmpg123-dev liba52-0.7.4-dev libde265-dev
+
+  Or, get the source code for each package and build,install:
+
+  > make; sudo make install
+
+2) Then, build this package:
+
+  > make
+
+3) And finally install it:
+
+  > sudo make install
+
+  You can use PREFIX= to install the package somewhere other than /usr/local
+
+  > sudo make install PREFIX=/home/ryan
