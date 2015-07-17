@@ -262,11 +262,6 @@ int main(int argc, char *argv[])
     int vid_pid = 0;
     int aud_pid = 0;
 
-    /* terminal input variables */
-#ifdef USE_TERMIOS
-    class dlterm term;
-#endif
-
     /* status thread variables */
     pthread_t status_thread;
 
@@ -637,6 +632,11 @@ int main(int argc, char *argv[])
             dlerror("failed to create status thread");
 
         dlmessage("press q to exit, p to pause...");
+
+        /* initialise terminal for user input */
+#ifdef USE_TERMIOS
+        class dlterm term;
+#endif
 
         /* main loop */
         int queuenum = 0;
