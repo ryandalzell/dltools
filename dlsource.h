@@ -77,4 +77,19 @@ protected:
     const char *multicast, *interface;
 };
 
+/* network tcp socket source class */
+class dltcpsock : public dlsock
+{
+public:
+    dltcpsock();
+    ~dltcpsock();
+
+    /* source operators */
+    virtual int open(const char *port);
+    virtual size_t read(unsigned char *buffer, size_t bufsize);
+
+protected:
+    int send_sock;
+};
+
 #endif

@@ -192,7 +192,7 @@ size_t dlsock::read(unsigned char *buffer, size_t bufsize)
     if (read<0)
         dlerror("error: failed to read from socket");
     else if (read==0)
-        dlmessage("connection closed by encoder");
+        dlmessage("zero sized packet received");
 
     return read;
 }
@@ -201,4 +201,63 @@ size_t dlsock::eof()
 {
     /* never at eof with an open socket */
     return sock>=0? 0 : 1;
+}
+
+/* network tcp socket source class */
+dltcpsock::dltcpsock()
+{
+    send_sock = -1;
+}
+
+dltcpsock::~dltcpsock()
+{
+    if (sock>=0)
+        close(sock);
+}
+
+int dltcpsock::open(const char *port)
+{
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock<0) {
+        dlerror("error creating socket");
+        exit(10);
+    }
+
+    name.sin_family = AF_INET;
+    name.sin_addr.s_addr = INADDR_ANY;
+    name.sin_port = htons(atoi(port));
+
+    /* bind the listening socket */
+    if (bind(sock, (struct sockaddr *)&name, sizeof(name))<0) {
+        dlerror("failed to bind socket");
+        exit(10);
+    }
+
+    /* mark socket passive */
+    listen(sock, 1);
+
+    /* user feedback */
+    dlmessage("waiting for connection from encoder on port %s", port);
+
+    /* wait for connection */
+    socklen_t addrlen = sizeof(sender);
+    send_sock = accept(sock, (struct sockaddr *)&sender, &addrlen);
+    if (send_sock<0) {
+        dlerror("error on connection");
+        exit(10);
+    }
+    dlmessage("connection from encoder at %s", inet_ntoa(sender.sin_addr));
+
+    return 0;
+}
+
+size_t dltcpsock::read(unsigned char *buffer, size_t bufsize)
+{
+    size_t read = recv(send_sock, buffer, sizeof(buffer), 0);
+    if (read<0)
+        dlerror("error: failed to read from socket");
+    else if (read==0)
+        dlmessage("connection closed by encoder");
+
+    return read;
 }

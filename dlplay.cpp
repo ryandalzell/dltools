@@ -430,6 +430,15 @@ int main(int argc, char *argv[])
                 source->open("1234");
             /* FIXME need filetype detection or signalling */
             filetype = HEVC;
+        } else if (strncmp(filename[fileindex], "tcp://", 6)==0) {
+            source = new dltcpsock();
+            char *port = strchr(filename[fileindex]+6, ':');
+            if (port)
+                source->open(port+1);
+            else
+                source->open("1234");
+            /* FIXME need filetype detection or signalling */
+            filetype = HEVC;
         } else if (strncmp(filename[fileindex], "file://", 7)==0) {
             source = new dlfile();
             source->open(filename[fileindex]+7);

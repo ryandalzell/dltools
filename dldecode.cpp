@@ -795,7 +795,8 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                     if (!de265_isOK(err)) {
                         dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
                     }
-                }
+                } else
+                    return results;
             } else if (!more) {
                 /* decoding finished */
                 if (!de265_isOK(err))
@@ -850,7 +851,8 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                         if (!de265_isOK(err)) {
                             dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
                         }
-                    }
+                    } else
+                        return results;
                 } else if (!more) {
                     /* decoding finished */
                     if (!de265_isOK(err))
