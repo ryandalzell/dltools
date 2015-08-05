@@ -422,17 +422,33 @@ int main(int argc, char *argv[])
         /* create the input data source */
         dlsource *source = NULL;
         if (strncmp(filename[fileindex], "udp://", 6)==0) {
-            source = new dlsock();
-            char *port = strchr(filename[fileindex]+6, ':');
-            if (port)
-                source->open(port+1);
-            else
-                source->open("1234");
+            /* determine address, if given */
+            const char *address = filename[fileindex] + 6;
+
+            /* determine port number, if given */
+            const char *port = "1234";
+            char *colon = strchr(filename[fileindex]+6, ':');
+            if (colon) {
+                port = colon+1;
+                *colon = '\0'; /* mark end of address */
+            }
+
+            /* open network socket */
+            if (strtol(address, NULL, 10)>=224 && strtol(address, NULL, 10)<=239) {
+                /* multicast */
+                source = new dlsock(address);
+                source->open(port);
+            } else {
+                /* unicast */
+                source = new dlsock();
+                source->open(port);
+            }
+
             /* FIXME need filetype detection or signalling */
             filetype = HEVC;
         } else if (strncmp(filename[fileindex], "tcp://", 6)==0) {
             source = new dltcpsock();
-            char *port = strchr(filename[fileindex]+6, ':');
+            const char *port = strchr(filename[fileindex]+6, ':');
             if (port)
                 source->open(port+1);
             else

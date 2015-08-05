@@ -126,6 +126,13 @@ dlsock::dlsock()
     interface = NULL;
 }
 
+dlsock::dlsock(const char *address)
+{
+    sock = -1;
+    multicast = address;
+    interface = NULL;
+}
+
 dlsock::~dlsock()
 {
     if (sock>=0)

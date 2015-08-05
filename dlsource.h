@@ -60,6 +60,7 @@ class dlsock : public dlsource
 {
 public:
     dlsock();
+    dlsock(const char *address); /* multicast */
     ~dlsock();
 
     /* source operators */
