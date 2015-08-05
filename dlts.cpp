@@ -35,8 +35,15 @@ int next_packet(unsigned char *packet, dlsource *source)
 {
     while (1) {
         /* read a packet sized chunk */
-        if (source->read(packet, 188)!=188)
-            return -1;
+        int read = 0;
+        while (read!=188) {
+            int ret = source->read(packet, 188-read);
+            if (ret<=0) {
+                dlmessage("failed to read %d bytes of a transport stream packet", 188-read);
+                return -1;
+            }
+            read += ret;
+        }
 
         if (packet[0]==0x47 /*&& fpeek(file)==0x47*/) // TODO lookahead in dlsource.
             /* success */
@@ -250,7 +257,9 @@ int find_pid_for_stream_type(int stream_types[], int num_stream_types, dlsource 
              * stream_type==0x80 - user private, assume mpeg2 video
              * stream_type==0x03 - mpeg1 audio
              * stream_type==0x04 - mpeg2 audio
-             * stream_type==0x81 - user private, assume ac3 audio */
+             * stream_type==0x81 - user private, assume ac3 audio
+             * stream_type==0x1b - h.264 video
+             * stream_type==0x24 - hevc video */
             index += 5 + es_info_length;
         }
 

@@ -8,11 +8,10 @@ typedef enum {
     OTHER,
     YUV,
     YUV4MPEG,
-    TS,
-    PS,
-    PES,
     M2V,
+    M2VTS,
     HEVC,
+    HEVCTS,
 } filetype_t;
 
 /* pixel formats */

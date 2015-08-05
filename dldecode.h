@@ -192,4 +192,24 @@ protected:
     const struct de265_image *image;
 };
 
+/* libde265 class for transport streams */
+class dlhevcts : public dlhevc
+{
+public:
+    dlhevcts();
+
+    virtual int attach(dlsource *source);
+    virtual decode_t decode(unsigned char *buffer, size_t bufsize);
+
+public:
+    int pid;
+
+private:
+    /* transport stream variables */
+    tstamp_t first_pts;
+    tstamp_t last_pts;
+    int frames_since_pts;
+    tstamp_t offset_pts;
+};
+
 #endif

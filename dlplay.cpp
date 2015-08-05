@@ -162,6 +162,7 @@ void usage(int exitcode)
     fprintf(stderr, "%s: play raw video files\n", appname);
     fprintf(stderr, "usage: %s [options] <file/url> [<file/url>...]\n", appname);
     fprintf(stderr, "  -f, --format        : specify display format: 480i,480p,576i,720p,1080i,1080p [optional +framerate] (default: auto)\n");
+    fprintf(stderr, "  -t, --ts            : specify network streaming will be transport stream data (default: elementary stream)\n");
     fprintf(stderr, "  -a, --firstframe    : index of first frame in input to display (default: 0)\n");
     fprintf(stderr, "  -n, --numframes     : number of frames in input to display (default: all)\n");
     fprintf(stderr, "  -m, --ntscmode      : use proper ntsc framerate, e.g. 29.97 instead of 30fps (default: on)\n");
@@ -241,6 +242,7 @@ int main(int argc, char *argv[])
 
     /* command line defaults */
     char *displayformat = NULL;
+    int ts = 0;
     int firstframe = 0;
     int numframes = -1;
     int ntscmode = 1;   /* use e.g. 29.97 instead of 30fps */
@@ -272,6 +274,8 @@ int main(int argc, char *argv[])
     while (1) {
         static struct option long_options[] = {
             {"format",    1, NULL, 'f'},
+            {"ts",        0, NULL, 't'},
+            {"transportstream", 0, NULL, 't'},
             {"firstframe",1, NULL, 'a'},
             {"numframes", 1, NULL, 'n'},
             {"ntscmode",  1, NULL, 'm'},
@@ -290,13 +294,17 @@ int main(int argc, char *argv[])
             {NULL,        0, NULL,  0 }
         };
 
-        int optchar = getopt_long(argc, argv, "f:a:n:m:l=~p:o:i:qvu", long_options, NULL);
+        int optchar = getopt_long(argc, argv, "f:ta:n:m:l=~p:o:i:qvu", long_options, NULL);
         if (optchar==-1)
             break;
 
         switch (optchar) {
             case 'f':
                 displayformat = optarg;
+                break;
+
+            case 't':
+                ts = 1;
                 break;
 
             case 'a':
@@ -413,7 +421,7 @@ int main(int argc, char *argv[])
         if (strstr(filename[fileindex], ".m2v")!=NULL || strstr(filename[fileindex], ".M2V")!=NULL)
             filetype = M2V;
         else if (strstr(filename[fileindex], ".ts")!=NULL || strstr(filename[fileindex], ".trp")!=NULL || strstr(filename[fileindex], ".mpg")!=NULL)
-            filetype = TS;
+            filetype = HEVCTS;
         else if (strstr(filename[fileindex], ".265")!=NULL || strstr(filename[fileindex], ".h265")!=NULL || strstr(filename[fileindex], ".hevc")!=NULL)
             filetype = HEVC;
         else
@@ -445,7 +453,8 @@ int main(int argc, char *argv[])
             }
 
             /* FIXME need filetype detection or signalling */
-            filetype = HEVC;
+            filetype = ts? HEVCTS : HEVC;
+            dlmessage("expecting data over udp as hevc %s stream", ts? "transport" : "elementary");
         } else if (strncmp(filename[fileindex], "tcp://", 6)==0) {
             source = new dltcpsock();
             const char *port = strchr(filename[fileindex]+6, ':');
@@ -454,7 +463,8 @@ int main(int argc, char *argv[])
             else
                 source->open("1234");
             /* FIXME need filetype detection or signalling */
-            filetype = HEVC;
+            filetype = ts? HEVCTS : HEVC;
+            dlmessage("expecting data over tcp as hevc %s stream", ts? "transport" : "elementary");
         } else if (strncmp(filename[fileindex], "file://", 7)==0) {
             source = new dlfile();
             source->open(filename[fileindex]+7);
@@ -475,9 +485,10 @@ int main(int argc, char *argv[])
 
                     break;
 
-                case TS  : video = new dlmpeg2ts; break;
                 case M2V : video = new dlmpeg2; break;
+                case M2VTS: video = new dlmpeg2ts; break;
                 case HEVC: video = new dlhevc; break;
+                case HEVCTS: video = new dlhevcts; break;
                 default: dlexit("unknown input file type");
             }
 
@@ -496,7 +507,7 @@ int main(int argc, char *argv[])
 
         /* create the audio encoder */
         switch (filetype) {
-            case TS:
+            case M2VTS:
 
                 /* try to attach a mpeg1 audio decoder */
                 if (audio==NULL && !videoonly) {
