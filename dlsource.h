@@ -24,8 +24,8 @@ public:
     virtual const char *name();
     virtual size_t size();
     virtual size_t pos();
-    virtual size_t eof();
-    virtual size_t error();
+    virtual bool eof();
+    virtual bool error();
 
 protected:
 };
@@ -46,13 +46,37 @@ public:
     virtual const char *name();
     virtual size_t size();
     virtual size_t pos();
-    virtual size_t eof();
-    virtual size_t error();
+    virtual bool eof();
+    virtual bool error();
 
 protected:
     /* file and buffer variables */
     const char *filename;
     FILE *file;
+};
+
+/* memory mapped file souce class */
+class dlmmap : public dlfile
+{
+public:
+    dlmmap();
+    ~dlmmap();
+
+    /* source operators */
+    virtual int open(const char *filename);
+    virtual int rewind();
+    virtual size_t read(unsigned char *buffer, size_t bufsize);
+
+    /* source metadata */
+    virtual size_t size();
+    virtual size_t pos();
+    virtual bool eof();
+    virtual bool error();
+
+protected:
+    /* memory map variables */
+    unsigned char *addr, *ptr;
+    size_t length;
 };
 
 /* network socket source class */
@@ -69,7 +93,7 @@ public:
     virtual size_t read(unsigned char *buffer, size_t bufsize);
 
     /* source metadata */
-    virtual size_t eof();
+    virtual bool eof();
 
 protected:
     int sock;

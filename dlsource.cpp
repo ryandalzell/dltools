@@ -9,6 +9,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/mman.h>
 
 #include "dlutil.h"
 #include "dlsource.h"
@@ -35,12 +36,12 @@ size_t dlsource::pos()
     return 0;
 }
 
-size_t dlsource::eof()
+bool dlsource::eof()
 {
     return 1;
 }
 
-size_t dlsource::error()
+bool dlsource::error()
 {
     return 0;
 }
@@ -108,14 +109,76 @@ size_t dlfile::pos()
     return ftello(file);
 }
 
-size_t dlfile::eof()
+bool dlfile::eof()
 {
     return feof(file);
 }
 
-size_t dlfile::error()
+bool dlfile::error()
 {
     return ferror(file);
+}
+
+/* memory mapped file source class */
+dlmmap::dlmmap()
+{
+    ptr = NULL;
+}
+
+dlmmap::~dlmmap()
+{
+    munmap(addr, length);
+}
+
+int dlmmap::open(const char *f)
+{
+    /* open the input file */
+    dlfile::open(f);
+
+    /* memory map the open file */
+    length = dlfile::size();
+    addr = (unsigned char *)mmap(NULL, length, PROT_READ, MAP_PRIVATE, fileno(file), 0);
+    if (!addr)
+        dlerror("error: failed to memory map input file \"%s\"", filename);
+    ptr = addr;
+
+    return 0;
+}
+
+int dlmmap::rewind()
+{
+    ptr = addr;
+
+    return 0;
+}
+
+size_t dlmmap::read(unsigned char *buffer, size_t bufsize)
+{
+    /* kind of defeats the point of mmap */
+    memcpy(buffer, ptr, bufsize);
+    ptr += bufsize;
+
+    return bufsize;
+}
+
+size_t dlmmap::size()
+{
+    return length;
+}
+
+size_t dlmmap::pos()
+{
+    return ptr-addr;
+}
+
+bool dlmmap::eof()
+{
+    return ptr>=addr+length;
+}
+
+bool dlmmap::error()
+{
+    return 0;
 }
 
 /* network socket source class */
@@ -204,7 +267,7 @@ size_t dlsock::read(unsigned char *buffer, size_t bufsize)
     return read;
 }
 
-size_t dlsock::eof()
+bool dlsock::eof()
 {
     /* never at eof with an open socket */
     return sock>=0? 0 : 1;

@@ -33,6 +33,7 @@ extern "C" {
 
 /* compile options */
 #define USE_TERMIOS
+#define USE_MMAP
 
 const char *appname = "dlplay";
 
@@ -466,10 +467,18 @@ int main(int argc, char *argv[])
             filetype = ts? HEVCTS : HEVC;
             dlmessage("expecting data over tcp as hevc %s stream", ts? "transport" : "elementary");
         } else if (strncmp(filename[fileindex], "file://", 7)==0) {
+#ifdef USE_MMAP
+            source = new dlmmap();
+#else
             source = new dlfile();
+#endif
             source->open(filename[fileindex]+7);
         } else if (strstr(filename[fileindex], "://")==NULL) {
+#ifdef USE_MMAP
+            source = new dlmmap();
+#else
             source = new dlfile();
+#endif
             source->open(filename[fileindex]);
         } else
             dlexit("could not open url \"%s\"", filename[fileindex]);
