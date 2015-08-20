@@ -219,14 +219,18 @@ int dlsock::open(const char *port)
     if (getsockname(sock, (struct sockaddr *)&name, &addr_len) < 0)
         dlerror("failed to get name of socket\n");
 
+    /* find the default receive buffer size of the socket */
+    int defbufsize = 0;
+    socklen_t optlen = sizeof(defbufsize);
+    getsockopt(sock, SOL_SOCKET, SO_RCVBUF, &defbufsize, &optlen);
+
     /* increase the receive buffer size of the socket */
-    int recvbufsize = 131071;
+    int recvbufsize = 1048576;
     if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &recvbufsize, sizeof(recvbufsize)) == -1)
         dlerror("failed to set socket receive buffer size");
     recvbufsize = 0;
-    socklen_t optlen = sizeof(recvbufsize);
     getsockopt(sock, SOL_SOCKET, SO_RCVBUF, &recvbufsize, &optlen);
-    dlmessage("using socket receive buffer of %d bytes", recvbufsize);
+    dlmessage("increasing socket receive buffer size from %d to %d bytes", defbufsize, recvbufsize); /* this will be x2 above, this a kernel fudge factor */
 
     /* join a multicast group */
     struct ip_mreqn mc_req;
@@ -258,11 +262,15 @@ int dlsock::rewind()
 
 size_t dlsock::read(unsigned char *buffer, size_t bufsize)
 {
-    size_t read = recvfrom(sock, buffer, bufsize, 0, NULL, 0);
+    size_t read = recvfrom(sock, buffer, bufsize, MSG_TRUNC, NULL, 0);
     if (read<0)
         dlerror("error: failed to read from socket");
     else if (read==0)
         dlmessage("zero sized packet received");
+    else if (read>bufsize) {
+        dlmessage("warning: %d bytes discarded", read-bufsize);
+        read = bufsize;
+    }
 
     return read;
 }
@@ -305,6 +313,19 @@ int dltcpsock::open(const char *port)
 
     /* mark socket passive */
     listen(sock, 1);
+
+    /* find the default receive buffer size of the socket */
+    int defbufsize = 0;
+    socklen_t optlen = sizeof(defbufsize);
+    getsockopt(sock, SOL_SOCKET, SO_RCVBUF, &defbufsize, &optlen);
+
+    /* increase the receive buffer size of the socket */
+    int recvbufsize = 1048576;
+    if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &recvbufsize, sizeof(recvbufsize)) == -1)
+        dlerror("failed to set socket receive buffer size");
+    recvbufsize = 0;
+    getsockopt(sock, SOL_SOCKET, SO_RCVBUF, &recvbufsize, &optlen);
+    dlmessage("increasing socket receive buffer size from %d to %d bytes", defbufsize, recvbufsize); /* this will be x2 above, this a kernel fudge factor */
 
     /* user feedback */
     dlmessage("waiting for connection from encoder on port %s", port);
