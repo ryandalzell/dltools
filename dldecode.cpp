@@ -19,6 +19,9 @@ dldecode::dldecode()
     data = NULL;
     timestamp = 0;
     verbose = 0;
+    /* debug */
+    top_field_first = 1;
+    blank_field = 0;
 }
 
 dldecode::~dldecode()
@@ -37,6 +40,16 @@ int dldecode::attach(dlsource *s)
 int dldecode::rewind(int frame)
 {
     return source->rewind();
+}
+
+void dldecode::set_field_order(int tff)
+{
+    top_field_first = !!tff;
+}
+
+void dldecode::set_blank_field(int order)
+{
+    blank_field = order;
 }
 
 int dlyuv::attach(dlsource *s)
@@ -827,8 +840,8 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
         /* timestamp render time */
         results.render_time = get_utime() - decode;
     } else {
-        /* decode the next two hevc frames */
-        for (int field=0; field<2; field++) {
+        /* decode until a top field and bottom field have been deinterlaced */
+        for (int field=0; field<2; ) {
             /* (re-)start timer */
             start = get_utime();
 
@@ -874,10 +887,20 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                 yuv[0] = de265_get_image_plane(image, 0, &stride);
                 yuv[1] = de265_get_image_plane(image, 1, &stride);
                 yuv[2] = de265_get_image_plane(image, 2, &stride);
-                if (field==0)
+                /* use poc to decide field order, this works around a potential bug in libde265 */
+                int poc = de265_get_image_picture_order_count(image);
+                //enum de265_field_order field_order = de265_get_image_field_order(image);
+                //dlmessage("%d: %s field", poc, field_order==1? "top" : field_order==2? "bottom" : "unknown");
+
+                /* deinterlace */
+                if ((poc&1)==!top_field_first) { /* works for negative poc too */
                     convert_top_field_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
-                else
+                    /* move field on if it is the correct order */
+                    field += (top_field_first ^ field);
+                } else if ((poc&1)==top_field_first) {
                     convert_bot_field_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
+                    field += !(top_field_first ^ field);
+                }
 
                 /* timestamp render time */
                 results.render_time += get_utime() - decode;

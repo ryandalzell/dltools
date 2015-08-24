@@ -59,6 +59,16 @@ public: /* yes public, we're not designing a type library here */
     bool interlaced;
     float framerate;
     pixelformat_t pixelformat;
+
+    /* decoder debug */
+public:
+    /* interactive debug */
+    virtual void set_field_order(int top_field_first);
+    virtual void set_blank_field(int order);
+
+protected:
+    int top_field_first;
+    int blank_field;
 };
 
 /* yuv class */

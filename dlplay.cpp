@@ -248,6 +248,7 @@ int main(int argc, char *argv[])
     int numframes = -1;
     int ntscmode = 1;   /* use e.g. 29.97 instead of 30fps */
     int lumaonly = 0;
+    int topfieldfirst = 1;
     int videoonly = 0;
     int audioonly = 0;
     int index = 0;
@@ -676,7 +677,7 @@ int main(int argc, char *argv[])
         if (pthread_create(&status_thread, NULL, display_status, output)<0)
             dlerror("failed to create status thread");
 
-        dlmessage("press q to exit, p to pause...");
+        dlmessage("press q to exit, p to pause, s to swap fields...");
 
         /* initialise terminal for user input */
 #ifdef USE_TERMIOS
@@ -763,6 +764,12 @@ int main(int argc, char *argv[])
 
                     /* exit pause */
                     pause_mode = 0;
+                }
+
+                if (c=='s' && video) {
+                    topfieldfirst = !topfieldfirst;
+                    video->set_field_order(topfieldfirst);
+                    dlnewline("setting deinterlace field order to %s field first", topfieldfirst? "top" : "bottom");
                 }
 
                 /* quit */
