@@ -14,14 +14,22 @@
 #include "dlutil.h"
 
 extern const char *appname;
+static int not_at_home;
 
 void dlapierror(HRESULT result, const char *format, ...)
 {
     va_list ap;
     char message[256];
+    int len = 0;
+
+    /* move cursor to home position */
+    if (not_at_home) {
+        len += snprintf(message+len, sizeof(message)-len, "\n");
+        not_at_home = 0;
+    }
 
     /* start output with application name */
-    int len = snprintf(message, sizeof(message), "%s: ", appname);
+    len += snprintf(message+len, sizeof(message)-len, "%s: ", appname);
 
     /* print message and system error message */
     va_start(ap, format);
@@ -55,10 +63,17 @@ void dlerror(const char *format, ...)
 {
     va_list ap;
     char message[256];
+    int len = 0;
     int exitcode = errno;
 
+    /* move cursor to home position */
+    if (not_at_home) {
+        len += snprintf(message+len, sizeof(message)-len, "\n");
+        not_at_home = 0;
+    }
+
     /* start output with application name */
-    int len = snprintf(message, sizeof(message), "%s: ", appname);
+    len += snprintf(message+len, sizeof(message)-len, "%s: ", appname);
 
     /* print message and system error message */
     va_start(ap, format);
@@ -73,9 +88,16 @@ void dlexit(const char *format, ...)
 {
     va_list ap;
     char message[256];
+    int len = 0;
+
+    /* move cursor to home position */
+    if (not_at_home) {
+        len += snprintf(message+len, sizeof(message)-len, "\n");
+        not_at_home = 0;
+    }
 
     /* start output with application name */
-    int len = snprintf(message, sizeof(message), "%s: ", appname);
+    len += snprintf(message+len, sizeof(message)-len, "%s: ", appname);
 
     /* print message */
     va_start(ap, format);
@@ -90,9 +112,16 @@ void dlmessage(const char *format, ...)
 {
     va_list ap;
     char message[256];
+    int len = 0;
+
+    /* move cursor to home position */
+    if (not_at_home) {
+        len += snprintf(message+len, sizeof(message)-len, "\n");
+        not_at_home = 0;
+    }
 
     /* start output with application name */
-    int len = snprintf(message, sizeof(message), "%s: ", appname);
+    len += snprintf(message+len, sizeof(message)-len, "%s: ", appname);
 
     /* print message */
     va_start(ap, format);
@@ -114,31 +143,25 @@ void dlstatus(const char *format, ...)
     vsnprintf(message+len, sizeof(message)-len, format, ap);
     fprintf(stderr, "%s", message);
     va_end(ap);
-}
 
-/* for putting a new line in while dlstatus is running */
-void dlnewline(const char *format, ...)
-{
-    va_list ap;
-    char message[256];
-
-    /* start output with carriage return and application name */
-    int len = snprintf(message, sizeof(message), "\n%s: ", appname);
-
-    /* print message */
-    va_start(ap, format);
-    vsnprintf(message+len, sizeof(message)-len, format, ap);
-    fprintf(stderr, "%s\n", message);
-    va_end(ap);
+    /* mark cursor not at home position */
+    not_at_home = 1;
 }
 
 void dlabort(const char *format, ...)
 {
     va_list ap;
     char message[256];
+    int len = 0;
+
+    /* move cursor to home position */
+    if (not_at_home) {
+        len += snprintf(message+len, sizeof(message)-len, "\n");
+        not_at_home = 0;
+    }
 
     /* start output with application name */
-    int len = snprintf(message, sizeof(message), "%s: ", appname);
+    len += snprintf(message+len, sizeof(message)-len, "%s: ", appname);
 
     /* print message */
     va_start(ap, format);

@@ -200,8 +200,7 @@ void *display_status(void *arg)
                 len += snprintf(string+len, sizeof(string)-len, " late %d frame%s", late, late>1? "s" : "");
             if (dropped)
                 len += snprintf(string+len, sizeof(string)-len, " dropped %d frame%s", dropped, dropped>1? "s" : "");
-            fprintf(stdout, "\rperformance: %s", string);
-            fflush(stdout);
+            dlstatus("performance: %s", string);
         }
 
         /* wait for stats to accumulate */
