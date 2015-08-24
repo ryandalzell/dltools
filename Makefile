@@ -53,6 +53,6 @@ dltools.tar.gz: Makefile *.cpp *.h BUGS COPYING INSTALL
 dlplay.o: dlutil.h dlterm.h dlconv.h dldecode.h
 dlterm.o: dlutil.h dlterm.h
 dlconv.o: dlutil.h dlconv.h
-dldecode.o : dlutil.h dldecode.h
+dldecode.o : dlutil.h dldecode.h dlsource.h
 dlalloc.o : dlutil.h dlalloc.h
 dlsource.o : dlutil.h dlsource.h

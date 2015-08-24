@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <sys/select.h>
 
 #include "dlutil.h"
 #include "dlsource.h"
@@ -42,6 +43,11 @@ bool dlsource::eof()
 }
 
 bool dlsource::error()
+{
+    return 0;
+}
+
+bool dlsource::timeout()
 {
     return 0;
 }
@@ -81,7 +87,7 @@ int dlfile::rewind()
     return r;
 }
 
-size_t dlfile::read(unsigned char *buffer, size_t bufsize)
+size_t dlfile::read(unsigned char *buffer, size_t bufsize, int timeout_usec)
 {
     size_t read = fread(buffer, 1, bufsize, file);
     if (read<0)
@@ -152,7 +158,7 @@ int dlmmap::rewind()
     return 0;
 }
 
-size_t dlmmap::read(unsigned char *buffer, size_t bufsize)
+size_t dlmmap::read(unsigned char *buffer, size_t bufsize, int timeout_usec)
 {
     /* kind of defeats the point of mmap */
     memcpy(buffer, ptr, bufsize);
@@ -276,8 +282,25 @@ int dlsock::rewind()
     return -1;
 }
 
-size_t dlsock::read(unsigned char *buffer, size_t bufsize)
+size_t dlsock::read(unsigned char *buffer, size_t bufsize, int timeout_usec)
 {
+    timeout = 0;
+    if (timeout_usec) {
+        /* wait until socket is ready, with timeout */
+        fd_set rfds;
+        struct timeval tv = { 0, (long)timeout_usec };
+        FD_ZERO(&rfds);
+        FD_SET(sock, &rfds);
+        int r = select(sock+1, &rfds, NULL, NULL, &tv);
+        if (r<0)
+            dlerror("error: failed to select on network socket");
+        if (r==0) {
+            dlmessage("timeout on network socket read");
+            timeout = 1;
+            return -1;
+        }
+    }
+
     size_t read = recvfrom(sock, buffer, bufsize, MSG_TRUNC, NULL, 0);
     if (read<0)
         dlerror("error: failed to read from socket");
@@ -358,7 +381,7 @@ int dltcpsock::open(const char *port)
     return 0;
 }
 
-size_t dltcpsock::read(unsigned char *buffer, size_t bufsize)
+size_t dltcpsock::read(unsigned char *buffer, size_t bufsize, int timeout_usec)
 {
     size_t read = recv(send_sock, buffer, sizeof(buffer), 0);
     if (read<0)

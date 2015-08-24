@@ -18,7 +18,7 @@ public:
     /* source operators */
     virtual int open(const char *filename) = 0;
     virtual int rewind() = 0;
-    virtual size_t read(unsigned char *buffer, size_t bufsize) = 0;
+    virtual size_t read(unsigned char *buffer, size_t bufsize, int timeout_usec = 0) = 0;
 
     /* source metadata */
     virtual const char *name();
@@ -26,6 +26,7 @@ public:
     virtual size_t pos();
     virtual bool eof();
     virtual bool error();
+    virtual bool timeout();
 
 protected:
 };
@@ -40,7 +41,7 @@ public:
     /* source operators */
     virtual int open(const char *filename);
     virtual int rewind();
-    virtual size_t read(unsigned char *buffer, size_t bufsize);
+    virtual size_t read(unsigned char *buffer, size_t bufsize, int timeout_usec = 0);
 
     /* source metadata */
     virtual const char *name();
@@ -65,7 +66,7 @@ public:
     /* source operators */
     virtual int open(const char *filename);
     virtual int rewind();
-    virtual size_t read(unsigned char *buffer, size_t bufsize);
+    virtual size_t read(unsigned char *buffer, size_t bufsize, int timeout_usec = 0);
 
     /* source metadata */
     virtual size_t size();
@@ -90,7 +91,7 @@ public:
     /* source operators */
     virtual int open(const char *port);
     virtual int rewind();
-    virtual size_t read(unsigned char *buffer, size_t bufsize);
+    virtual size_t read(unsigned char *buffer, size_t bufsize, int timeout_usec = 0);
 
     /* source metadata */
     virtual bool eof();
@@ -100,6 +101,7 @@ protected:
     socklen_t addr_len;
     struct sockaddr_in name, sender;
     const char *multicast, *interface;
+    int timeout;
 };
 
 /* network tcp socket source class */
@@ -111,7 +113,7 @@ public:
 
     /* source operators */
     virtual int open(const char *port);
-    virtual size_t read(unsigned char *buffer, size_t bufsize);
+    virtual size_t read(unsigned char *buffer, size_t bufsize, int timeout_usec = 0);
 
 protected:
     int send_sock;

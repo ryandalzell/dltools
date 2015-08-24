@@ -798,12 +798,12 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                 image = de265_get_next_picture(ctx);
             else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
                 /* read a chunk of input data */
-                int read = source->read(data, size);
+                int read = source->read(data, size, 500000); // timeout of 0.5s
                 if (read==0 || source->eof()) {
                     source->rewind();
                     read = source->read(data, size);
                 }
-                if (read) {
+                else if (read>0) {
                     err = de265_push_data(ctx, data, read, 0, NULL);
                     if (!de265_isOK(err)) {
                         dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
@@ -854,12 +854,12 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                     image = de265_get_next_picture(ctx);
                 } else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
                     /* read a chunk of input data */
-                    int read = source->read(data, size);
+                    int read = source->read(data, size, 500000);
                     if (read==0 || source->eof()) {
                         source->rewind();
                         read = source->read(data, size);
                     }
-                    if (read) {
+                    else if (read>0) {
                         err = de265_push_data(ctx, data, read, 0, NULL);
                         if (!de265_isOK(err)) {
                             dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));

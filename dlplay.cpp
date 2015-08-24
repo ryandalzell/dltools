@@ -46,16 +46,7 @@ const int PREROLL_FRAMES = 20;
 bool preroll;
 unsigned int completed;
 unsigned int late, dropped, flushed;
-
-/* video frame history buffer */
 bool pause_mode = 0;
-int num_history_frames = 0;
-const int MAX_HISTORY_FRAMES = 30;
-typedef struct {
-    IDeckLinkVideoFrame *frame;
-    tstamp_t timestamp;
-} history_frame_t;
-history_frame_t history_buffer[MAX_HISTORY_FRAMES];
 
 class callback : public IDeckLinkVideoOutputCallback, public IDeckLinkAudioOutputCallback
 {
@@ -222,8 +213,7 @@ void *display_status(void *arg)
 
 int main(int argc, char *argv[])
 {
-    char *filename[16] = {0};
-    unsigned int numfiles = 0;
+    char *filename = NULL;
     filetype_t filetype = OTHER;
 
     /* picture size variables */
@@ -371,15 +361,14 @@ int main(int argc, char *argv[])
 
     /* all non-options are input filenames or urls */
     while (optind<argc) {
-        if (numfiles < sizeof(filename)/sizeof(filename[0]))
-            filename[numfiles++] = argv[optind++];
-        else
-            dlexit("more than %d input files", numfiles);
+        if (filename==NULL)
+            filename = argv[optind++];
+        else {
+            dlexit("only one input file supported: %s", argv[optind++]);
+        }
     }
 
     /* sanity check the command line */
-    if (numfiles<1)
-        usage(1);
 
     /* initialise the DeckLink API */
     IDeckLinkIterator *iterator = CreateDeckLinkIteratorInstance();
@@ -407,31 +396,31 @@ int main(int argc, char *argv[])
         dlexit("%s: error: could not set a custom memory allocator");
 
     /* play input files sequentially */
-    unsigned int fileindex;
-    for (fileindex=0; fileindex<numfiles; fileindex++) {
+    unsigned int restart = 1, exit = 0;
+    while (restart && !exit) {
 
         /* initialise the semaphore */
         sem_init(&sem, 0, 0);
 
         /* determine the file type */
-        if (strstr(filename[fileindex], ".m2v")!=NULL || strstr(filename[fileindex], ".M2V")!=NULL)
+        if (strstr(filename, ".m2v")!=NULL || strstr(filename, ".M2V")!=NULL)
             filetype = M2V;
-        else if (strstr(filename[fileindex], ".ts")!=NULL || strstr(filename[fileindex], ".trp")!=NULL || strstr(filename[fileindex], ".mpg")!=NULL)
+        else if (strstr(filename, ".ts")!=NULL || strstr(filename, ".trp")!=NULL || strstr(filename, ".mpg")!=NULL)
             filetype = HEVCTS;
-        else if (strstr(filename[fileindex], ".265")!=NULL || strstr(filename[fileindex], ".h265")!=NULL || strstr(filename[fileindex], ".hevc")!=NULL)
+        else if (strstr(filename, ".265")!=NULL || strstr(filename, ".h265")!=NULL || strstr(filename, ".hevc")!=NULL)
             filetype = HEVC;
         else
             filetype = YUV;
 
         /* create the input data source */
         dlsource *source = NULL;
-        if (strncmp(filename[fileindex], "udp://", 6)==0) {
+        if (strncmp(filename, "udp://", 6)==0) {
             /* determine address, if given */
-            const char *address = filename[fileindex] + 6;
+            const char *address = filename + 6;
 
             /* determine port number, if given */
             const char *port = "1234";
-            char *colon = strchr(filename[fileindex]+6, ':');
+            char *colon = strchr(filename+6, ':');
             if (colon) {
                 port = colon+1;
                 *colon = '\0'; /* mark end of address */
@@ -451,9 +440,9 @@ int main(int argc, char *argv[])
             /* FIXME need filetype detection or signalling */
             filetype = ts? HEVCTS : HEVC;
             dlmessage("expecting data over udp as hevc %s stream", ts? "transport" : "elementary");
-        } else if (strncmp(filename[fileindex], "tcp://", 6)==0) {
+        } else if (strncmp(filename, "tcp://", 6)==0) {
             source = new dltcpsock();
-            const char *port = strchr(filename[fileindex]+6, ':');
+            const char *port = strchr(filename+6, ':');
             if (port)
                 source->open(port+1);
             else
@@ -461,22 +450,22 @@ int main(int argc, char *argv[])
             /* FIXME need filetype detection or signalling */
             filetype = ts? HEVCTS : HEVC;
             dlmessage("expecting data over tcp as hevc %s stream", ts? "transport" : "elementary");
-        } else if (strncmp(filename[fileindex], "file://", 7)==0) {
+        } else if (strncmp(filename, "file://", 7)==0) {
 #ifdef USE_MMAP
             source = new dlmmap();
 #else
             source = new dlfile();
 #endif
-            source->open(filename[fileindex]+7);
-        } else if (strstr(filename[fileindex], "://")==NULL) {
+            source->open(filename+7);
+        } else if (strstr(filename, "://")==NULL) {
 #ifdef USE_MMAP
             source = new dlmmap();
 #else
             source = new dlfile();
 #endif
-            source->open(filename[fileindex]);
+            source->open(filename);
         } else
-            dlexit("could not open url \"%s\"", filename[fileindex]);
+            dlexit("could not open url \"%s\"", filename);
 
         /* create the video decoder */
         if (!audioonly) {
@@ -545,7 +534,7 @@ int main(int argc, char *argv[])
 
         /* sanity check */
         if (!video && !audio)
-            dlexit("error: neither video nor audio to play in file \"%s\"", filename[fileindex]);
+            dlexit("error: neither video nor audio to play in file \"%s\"", filename);
 
         if (video && verbose>=1)
             dlmessage("info: video format is %dx%d%c%.2f %s", pic_width, pic_height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);
@@ -666,6 +655,15 @@ int main(int argc, char *argv[])
         tstamp_t audio_start_time = 1ll<<34;
         tstamp_t audio_end_time = 0ll;
 
+        /* video frame history buffer */
+        int num_history_frames = 0;
+        const int MAX_HISTORY_FRAMES = 30;
+        typedef struct {
+            IDeckLinkVideoFrame *frame;
+            tstamp_t timestamp;
+        } history_frame_t;
+        history_frame_t history_buffer[MAX_HISTORY_FRAMES];
+
         /* start the status thread */
         exit_thread = 0;
         if (pthread_create(&status_thread, NULL, display_status, output)<0)
@@ -763,13 +761,14 @@ int main(int argc, char *argv[])
                 if (c=='s' && video) {
                     topfieldfirst = !topfieldfirst;
                     video->set_field_order(topfieldfirst);
-                    dlnewline("setting deinterlace field order to %s field first", topfieldfirst? "top" : "bottom");
+                    dlmessage("setting deinterlace field order to %s field first", topfieldfirst? "top" : "bottom");
                 }
 
                 /* quit */
-                if (c=='q' || c=='\n')
+                if (c=='q' || c=='\n') {
+                    exit = 1;
                     break;
-
+                }
             }
 #endif
 
@@ -826,13 +825,17 @@ int main(int argc, char *argv[])
                     dlapierror(result, "error: failed to create video frame");
 
                 /* extract the frame buffer pointer without type punning */
-                frame->GetBytes(&voidptr);
+                result = frame->GetBytes(&voidptr);
+                if (result!=S_OK)
+                    dlapierror(result, "error: failed to get pointer to data in video frame");
                 unsigned char *uyvy = (unsigned char *)voidptr;
 
                 /* read the next frame */
                 decode = video->decode(uyvy, frame->GetRowBytes()*frame->GetHeight());
                 if (decode.size==0) {
-                    dlmessage("error: failed to decode video frame %d in file \"%s\"", framenum, filename[fileindex]);
+                    dlmessage("error: failed to decode video frame %d in file \"%s\"", framenum, filename);
+                    if (source->timeout())
+                        restart = 1; /* wait for next sequence */
                     break;
                 }
                 video_start_time = mmin(decode.timestamp, video_start_time);
@@ -909,6 +912,11 @@ int main(int argc, char *argv[])
         output->DisableVideoOutput();
         output->DisableAudioOutput();
 
+        /* release all frames in the history buffer */
+        for (i=0; i<num_history_frames; i++)
+            if (history_buffer[i].frame)
+                history_buffer[i].frame->Release();
+
         /* the semaphone has to be re-initialised */
         sem_destroy(&sem);
 
@@ -919,18 +927,18 @@ int main(int argc, char *argv[])
         /* tidy up */
         delete source;
         delete video;
+        delete audio;
     }
 
     /* tidy up */
     card->Release();
     iterator->Release();
-    delete audio;
     if (aud_data)
         free(aud_data);
 
     /* report statistics */
     if (verbose>=0)
-        fprintf(stdout, "\n%d frames: %d late, %d dropped, %d flushed\n", completed, late, dropped, flushed);
+        dlmessage("%d frames: %d late, %d dropped, %d flushed", completed, late, dropped, flushed);
 
     return 0;
 }
