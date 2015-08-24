@@ -116,6 +116,22 @@ void dlstatus(const char *format, ...)
     va_end(ap);
 }
 
+/* for putting a new line in while dlstatus is running */
+void dlnewline(const char *format, ...)
+{
+    va_list ap;
+    char message[256];
+
+    /* start output with carriage return and application name */
+    int len = snprintf(message, sizeof(message), "\n%s: ", appname);
+
+    /* print message */
+    va_start(ap, format);
+    vsnprintf(message+len, sizeof(message)-len, format, ap);
+    fprintf(stderr, "%s\n", message);
+    va_end(ap);
+}
+
 void dlabort(const char *format, ...)
 {
     va_list ap;
