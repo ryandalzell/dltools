@@ -224,8 +224,24 @@ int dlsock::open(const char *port)
     socklen_t optlen = sizeof(defbufsize);
     getsockopt(sock, SOL_SOCKET, SO_RCVBUF, &defbufsize, &optlen);
 
-    /* increase the receive buffer size of the socket */
-    int recvbufsize = 1048576;
+    /* increase the receive buffer size of the socket
+     *
+     * use these to check linux has enough space:
+     *
+     * cat /proc/sys/net/core/rmem_max
+     * cat /proc/sys/net/core/wmem_max
+     *
+     * if not you can add these lines to /etc/sysctl.conf
+     *
+     * net.core.rmem_max=52428800
+     * net.core.wmem_max=52428800
+     * net.core.rmem_default=52428800
+     * net.core.wmem_default=52428800
+     *
+     * although the read buffer size is the one of interest here.
+     *
+     * */
+    int recvbufsize = 16772100;
     if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &recvbufsize, sizeof(recvbufsize)) == -1)
         dlerror("failed to set socket receive buffer size");
     recvbufsize = 0;
