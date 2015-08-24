@@ -187,8 +187,6 @@ void *display_status(void *arg)
     sleep(1);
 
     unsigned int framerate = completed;
-    unsigned int latecount = late;
-    unsigned int dropcount = dropped;
     do {
         if (!pause_mode && !preroll) {
             char string[256];
@@ -207,14 +205,10 @@ void *display_status(void *arg)
             /* display status output */
             len += snprintf(string+len, sizeof(string)-len, "%dfps video buffer %d audio buffer %d time %s speed %.1f", completed-framerate, video_buffer, audio_buffer, describe_time(time), speed);
             framerate = completed;
-            if (late!=latecount) {
-                len += snprintf(string+len, sizeof(string)-len, " late %d frame%s", late-latecount, late-latecount>1? "s" : "");
-                latecount = late;
-            }
-            if (dropped!=dropcount) {
-                len += snprintf(string+len, sizeof(string)-len, " dropped %d frame%s", dropped-dropcount, dropped-dropcount>1? "s" : "");
-                dropcount = dropped;
-            }
+            if (late)
+                len += snprintf(string+len, sizeof(string)-len, " late %d frame%s", late, late>1? "s" : "");
+            if (dropped)
+                len += snprintf(string+len, sizeof(string)-len, " dropped %d frame%s", dropped, dropped>1? "s" : "");
             fprintf(stdout, "\rperformance: %s", string);
             fflush(stdout);
         }
