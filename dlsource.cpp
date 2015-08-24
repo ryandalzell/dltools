@@ -195,11 +195,18 @@ dlsock::dlsock()
     interface = NULL;
 }
 
-dlsock::dlsock(const char *address)
+dlsock::dlsock(const char *a)
 {
     sock = -1;
-    multicast = address;
+    multicast = a;
     interface = NULL;
+}
+
+dlsock::dlsock(const char *a, const char *i)
+{
+    sock = -1;
+    multicast = a;
+    interface = i;
 }
 
 dlsock::~dlsock()
@@ -268,7 +275,9 @@ int dlsock::open(const char *port)
     }
 
     /* user feedback */
-    if (multicast)
+    if (multicast && interface)
+        dlmessage("listening for multicast data from encoder on group %s on interface %s and port %s", multicast, interface, port);
+    else if (multicast)
         dlmessage("listening for multicast data from encoder on group %s and port %s", multicast, port);
     else
         dlmessage("listening for data from encoder on port %s", port);

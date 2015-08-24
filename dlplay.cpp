@@ -155,6 +155,7 @@ void usage(int exitcode)
     fprintf(stderr, "usage: %s [options] <file/url> [<file/url>...]\n", appname);
     fprintf(stderr, "  -f, --format        : specify display format: 480i,480p,576i,720p,1080i,1080p [optional +framerate] (default: auto)\n");
     fprintf(stderr, "  -t, --ts            : specify network streaming will be transport stream data (default: elementary stream)\n");
+    fprintf(stderr, "  -I, --interface     : address of interface to listen for multicast data (default: first network interface)\n");
     fprintf(stderr, "  -a, --firstframe    : index of first frame in input to display (default: 0)\n");
     fprintf(stderr, "  -n, --numframes     : number of frames in input to display (default: all)\n");
     fprintf(stderr, "  -m, --ntscmode      : use proper ntsc framerate, e.g. 29.97 instead of 30fps (default: on)\n");
@@ -227,6 +228,7 @@ int main(int argc, char *argv[])
     /* command line defaults */
     char *displayformat = NULL;
     int ts = 0;
+    const char *interface = NULL;
     int firstframe = 0;
     int numframes = -1;
     int ntscmode = 1;   /* use e.g. 29.97 instead of 30fps */
@@ -261,6 +263,7 @@ int main(int argc, char *argv[])
             {"format",    1, NULL, 'f'},
             {"ts",        0, NULL, 't'},
             {"transportstream", 0, NULL, 't'},
+            {"interface", 1, NULL, 'I'},
             {"firstframe",1, NULL, 'a'},
             {"numframes", 1, NULL, 'n'},
             {"ntscmode",  1, NULL, 'm'},
@@ -279,7 +282,7 @@ int main(int argc, char *argv[])
             {NULL,        0, NULL,  0 }
         };
 
-        int optchar = getopt_long(argc, argv, "f:ta:n:m:l=~p:o:i:qvu", long_options, NULL);
+        int optchar = getopt_long(argc, argv, "f:tI:a:n:m:l=~p:o:i:qvu", long_options, NULL);
         if (optchar==-1)
             break;
 
@@ -290,6 +293,11 @@ int main(int argc, char *argv[])
 
             case 't':
                 ts = 1;
+                break;
+
+            case 'I':
+                interface = optarg;
+                dlmessage("interface=%s", interface);
                 break;
 
             case 'a':
@@ -428,7 +436,7 @@ int main(int argc, char *argv[])
             /* open network socket */
             if (strtol(address, NULL, 10)>=224 && strtol(address, NULL, 10)<=239) {
                 /* multicast */
-                source = new dlsock(address);
+                source = new dlsock(address, interface);
                 source->open(port);
             } else {
                 /* unicast */
