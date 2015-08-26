@@ -50,7 +50,7 @@ dltools.tar.gz: Makefile *.cpp *.h BUGS COPYING INSTALL
 	tar zcf $@ -C .. $(foreach i,$^,dltools/$i)
 
 # dependancies
-dlplay.o: dlutil.h dlterm.h dlconv.h dldecode.h
+dlplay.o: dlutil.h dlterm.h dlconv.h dldecode.h dlsource.h
 dlterm.o: dlutil.h dlterm.h
 dlconv.o: dlutil.h dlconv.h
 dldecode.o : dlutil.h dldecode.h dlsource.h

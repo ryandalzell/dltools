@@ -17,10 +17,17 @@
 
 /* virtual base class for data sources */
 dlsource::dlsource()
-{ }
+{
+    bufsize = 32*1024; // 32K
+    buffer = (unsigned char *)malloc(bufsize);
+    bytesleft = 0;
+}
 
 dlsource::~dlsource()
-{ }
+{
+    if (buffer)
+        free(buffer);
+}
 
 const char *dlsource::name()
 {
@@ -50,6 +57,15 @@ bool dlsource::error()
 bool dlsource::timeout()
 {
     return 0;
+}
+
+/* resize buffer if size is larger than the current size */
+void dlsource::checksize(size_t size)
+{
+    if (size>bufsize) {
+        buffer = (unsigned char *) realloc(buffer, size);
+        bufsize = size;
+    }
 }
 
 /* file source class */
@@ -94,6 +110,19 @@ size_t dlfile::read(unsigned char *buffer, size_t bufsize, int timeout_usec)
         dlerror("error: failed to read from input file \"%s\"", filename);
 
     return read;
+}
+
+const unsigned char* dlfile::read(size_t *bytes, int timeout_usec)
+{
+    /* check internal buffer is large enough */
+    checksize(*bytes);
+
+    size_t read = fread(buffer, 1, *bytes, file);
+    if (read<0)
+        dlerror("error: failed to read from input file \"%s\"", filename);
+    *bytes = read;
+
+    return buffer;
 }
 
 const char *dlfile::name()
@@ -158,13 +187,28 @@ int dlmmap::rewind()
     return 0;
 }
 
+/* read with copy */
 size_t dlmmap::read(unsigned char *buffer, size_t bufsize, int timeout_usec)
 {
+    if (ptr+bufsize>addr+length)
+        bufsize = addr+length-ptr;
+
     /* kind of defeats the point of mmap */
     memcpy(buffer, ptr, bufsize);
     ptr += bufsize;
 
     return bufsize;
+}
+
+/* zero copy read using memory mapped pointer */
+const unsigned char *dlmmap::read(size_t *bytes, int timeout_usec)
+{
+    const unsigned char *ret = ptr;
+    if (ptr+*bytes>addr+length)
+        *bytes = addr+length-ptr;
+    ptr += *bytes;
+
+    return ret;
 }
 
 size_t dlmmap::size()
@@ -323,6 +367,18 @@ size_t dlsock::read(unsigned char *buffer, size_t bufsize, int timeout_usec)
     return read;
 }
 
+const unsigned char *dlsock::read(size_t *bytes, int timeout_usec)
+{
+    /* check internal buffer is large enough */
+    checksize(*bytes);
+
+    size_t read = dlsock::read(buffer, *bytes, timeout_usec);
+    if (read!=*bytes)
+        *bytes = read;
+
+    return buffer;
+}
+
 bool dlsock::eof()
 {
     /* never at eof with an open socket */
@@ -399,4 +455,17 @@ size_t dltcpsock::read(unsigned char *buffer, size_t bufsize, int timeout_usec)
         dlmessage("connection closed by encoder");
 
     return read;
+}
+
+const unsigned char* dltcpsock::read(size_t* bytes, int timeout_usec)
+{
+    /* check internal buffer is large enough */
+    checksize(*bytes);
+
+    size_t read = dltcpsock::read(buffer, *bytes, timeout_usec);
+    if (read!=*bytes)
+        *bytes = read;
+
+    return buffer;
+
 }

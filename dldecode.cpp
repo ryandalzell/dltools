@@ -92,9 +92,11 @@ decode_t dlyuv::decode(unsigned char *uyvy, size_t uyvysize)
         results.size = width*height*2;
     } else {
         /* read frame from input */
-        if (source->read(data, size)!=size)
+        size_t bytes = size;
+        const unsigned char *data = source->read(&bytes);
+        if (data==NULL || bytes!=size)
             dlerror("failed to read frame from input stream");
-        results.size = size;
+        results.size = bytes;
 
         /* convert to uyvy */
         if (!lumaonly)
