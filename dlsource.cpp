@@ -18,8 +18,9 @@
 /* virtual base class for data sources */
 dlsource::dlsource()
 {
-    bufsize = 32*1024; // 32K
+    bufsize = 64*1024; // 64K is max UDP datagram size.
     buffer = (unsigned char *)malloc(bufsize);
+    bufptr = buffer;
     bytesleft = 0;
 }
 
@@ -63,8 +64,10 @@ bool dlsource::timeout()
 void dlsource::checksize(size_t size)
 {
     if (size>bufsize) {
+        size_t offset = bufptr - buffer;
         buffer = (unsigned char *) realloc(buffer, size);
         bufsize = size;
+        bufptr = buffer + offset;
     }
 }
 
@@ -103,9 +106,9 @@ int dlfile::rewind()
     return r;
 }
 
-size_t dlfile::read(unsigned char *buffer, size_t bufsize, int timeout_usec)
+size_t dlfile::read(unsigned char *buf, size_t bytes, int timeout_usec)
 {
-    size_t read = fread(buffer, 1, bufsize, file);
+    size_t read = fread(buf, 1, bytes, file);
     if (read<0)
         dlerror("error: failed to read from input file \"%s\"", filename);
 
@@ -188,16 +191,16 @@ int dlmmap::rewind()
 }
 
 /* read with copy */
-size_t dlmmap::read(unsigned char *buffer, size_t bufsize, int timeout_usec)
+size_t dlmmap::read(unsigned char *buf, size_t bytes, int timeout_usec)
 {
-    if (ptr+bufsize>addr+length)
-        bufsize = addr+length-ptr;
+    if (ptr+bytes>addr+length)
+        bytes = addr+length-ptr;
 
     /* kind of defeats the point of mmap */
-    memcpy(buffer, ptr, bufsize);
-    ptr += bufsize;
+    memcpy(buf, ptr, bytes);
+    ptr += bytes;
 
-    return bufsize;
+    return bytes;
 }
 
 /* zero copy read using memory mapped pointer */
@@ -335,8 +338,11 @@ int dlsock::rewind()
     return -1;
 }
 
-size_t dlsock::read(unsigned char *buffer, size_t bufsize, int timeout_usec)
+size_t dlsock::read(unsigned char *buf, size_t bytes, int timeout_usec)
 {
+    /* check internal buffer is large enough */
+    checksize(bytes);
+
     timeout = 0;
     if (timeout_usec) {
         /* wait until socket is ready, with timeout */
@@ -354,15 +360,37 @@ size_t dlsock::read(unsigned char *buffer, size_t bufsize, int timeout_usec)
         }
     }
 
-    size_t read = recvfrom(sock, buffer, bufsize, MSG_TRUNC, NULL, 0);
-    if (read<0)
-        dlerror("error: failed to read from socket");
-    else if (read==0)
-        dlmessage("zero sized packet received");
-    else if (read>bufsize) {
-        dlmessage("warning: %d bytes discarded", read-bufsize);
-        read = bufsize;
+    /* fill internal buffer */
+    if (bytes>bytesleft) {
+        if (bytesleft==0)
+            bufptr = buffer;
+        else if (bytesleft>0 && bytesleft<bufsize) {
+            memmove(buffer, bufptr, bytesleft);
+            bufptr = buffer;
+        }
+
+        /* calculate number of bytes to refill buffer */
+        size_t fill = bufsize-bytesleft;
+
+        /* refill buffer */
+        size_t read = recvfrom(sock, buffer, fill, MSG_TRUNC, NULL, 0);
+        if (read<0)
+            dlerror("error: failed to read from socket");
+        else if (read==0)
+            dlmessage("zero sized packet received");
+        else if (read>fill) {
+            dlmessage("warning: %d bytes discarded", read-fill);
+            read = fill;
+        }
+
+        bytesleft += read;
     }
+
+    /* copy to caller buffer */
+    size_t read = mmin(bytes, bytesleft);
+    memcpy(buf, bufptr, read);
+    bufptr += read;
+    bytesleft -= read;
 
     return read;
 }
@@ -446,9 +474,9 @@ int dltcpsock::open(const char *port)
     return 0;
 }
 
-size_t dltcpsock::read(unsigned char *buffer, size_t bufsize, int timeout_usec)
+size_t dltcpsock::read(unsigned char *buf, size_t bytes, int timeout_usec)
 {
-    size_t read = recv(send_sock, buffer, sizeof(buffer), 0);
+    size_t read = recv(send_sock, buf, bytes, 0);
     if (read<0)
         dlerror("error: failed to read from socket");
     else if (read==0)

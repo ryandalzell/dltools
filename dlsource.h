@@ -19,7 +19,7 @@ public:
     virtual int open(const char *filename) = 0;
     virtual int rewind() = 0;
     /* copy to buffer read */
-    virtual size_t read(unsigned char *buffer, size_t bufsize, int timeout_usec = 0) = 0;
+    virtual size_t read(unsigned char *buf, size_t bytes, int timeout_usec = 0) = 0;
     /* zero copy read (depending on implementation) */
     virtual const unsigned char *read(size_t *bytes, int timeout_usec = 0) = 0;
 
@@ -33,7 +33,7 @@ public:
 
 protected:
     /* memory buffer management */
-    /*const*/ unsigned char *buffer;
+    /*const*/ unsigned char *buffer, *bufptr;
     unsigned bufsize, bytesleft;
     void checksize(size_t size);
 };
@@ -48,7 +48,7 @@ public:
     /* source operators */
     virtual int open(const char *filename);
     virtual int rewind();
-    virtual size_t read(unsigned char *buffer, size_t bufsize, int timeout_usec = 0);
+    virtual size_t read(unsigned char *buf, size_t bytes, int timeout_usec = 0);
     virtual const unsigned char *read(size_t* bytes, int timeout_usec = 0);
 
     /* source metadata */
@@ -74,7 +74,7 @@ public:
     /* source operators */
     virtual int open(const char *filename);
     virtual int rewind();
-    virtual size_t read(unsigned char *buffer, size_t bufsize, int timeout_usec = 0);
+    virtual size_t read(unsigned char *buf, size_t bytes, int timeout_usec = 0);
     virtual const unsigned char *read(size_t *bytes, int timeout_usec = 0);
 
     /* source metadata */
@@ -101,7 +101,7 @@ public:
     /* source operators */
     virtual int open(const char *port);
     virtual int rewind();
-    virtual size_t read(unsigned char *buffer, size_t bufsize, int timeout_usec = 0);
+    virtual size_t read(unsigned char *buf, size_t bytes, int timeout_usec = 0);
     virtual const unsigned char *read(size_t *bytes, int timeout_usec = 0);
 
     /* source metadata */
@@ -124,7 +124,7 @@ public:
 
     /* source operators */
     virtual int open(const char *port);
-    virtual size_t read(unsigned char *buffer, size_t bufsize, int timeout_usec = 0);
+    virtual size_t read(unsigned char *buf, size_t bytes, int timeout_usec = 0);
     virtual const unsigned char *read(size_t *bytes, int timeout_usec = 0);
 
 protected:
