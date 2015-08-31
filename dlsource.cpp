@@ -18,10 +18,12 @@
 /* virtual base class for data sources */
 dlsource::dlsource()
 {
-    bufsize = 64*1024; // 64K is max UDP datagram size.
+    bufsize = 128*1024; // 64K is max UDP datagram size.
     buffer = (unsigned char *)malloc(bufsize);
     bufptr = buffer;
     bytesleft = 0;
+    time_out = 0;
+    timed_out = 0;
 }
 
 dlsource::~dlsource()
@@ -57,7 +59,12 @@ bool dlsource::error()
 
 bool dlsource::timeout()
 {
-    return 0;
+    return timed_out;
+}
+
+void dlsource::set_timeout(int timeout_usec)
+{
+    time_out = timeout_usec;
 }
 
 /* resize buffer if size is larger than the current size */
@@ -106,7 +113,7 @@ int dlfile::rewind()
     return r;
 }
 
-size_t dlfile::read(unsigned char *buf, size_t bytes, int timeout_usec)
+size_t dlfile::read(unsigned char *buf, size_t bytes)
 {
     size_t read = fread(buf, 1, bytes, file);
     if (read<0)
@@ -115,7 +122,7 @@ size_t dlfile::read(unsigned char *buf, size_t bytes, int timeout_usec)
     return read;
 }
 
-const unsigned char* dlfile::read(size_t *bytes, int timeout_usec)
+const unsigned char* dlfile::read(size_t *bytes)
 {
     /* check internal buffer is large enough */
     checksize(*bytes);
@@ -191,7 +198,7 @@ int dlmmap::rewind()
 }
 
 /* read with copy */
-size_t dlmmap::read(unsigned char *buf, size_t bytes, int timeout_usec)
+size_t dlmmap::read(unsigned char *buf, size_t bytes)
 {
     if (ptr+bytes>addr+length)
         bytes = addr+length-ptr;
@@ -204,7 +211,7 @@ size_t dlmmap::read(unsigned char *buf, size_t bytes, int timeout_usec)
 }
 
 /* zero copy read using memory mapped pointer */
-const unsigned char *dlmmap::read(size_t *bytes, int timeout_usec)
+const unsigned char *dlmmap::read(size_t *bytes)
 {
     const unsigned char *ret = ptr;
     if (ptr+*bytes>addr+length)
@@ -338,16 +345,16 @@ int dlsock::rewind()
     return -1;
 }
 
-size_t dlsock::read(unsigned char *buf, size_t bytes, int timeout_usec)
+size_t dlsock::read(unsigned char *buf, size_t bytes)
 {
     /* check internal buffer is large enough */
     checksize(bytes);
 
-    timeout = 0;
-    if (timeout_usec) {
+    timed_out = 0;
+    if (time_out) {
         /* wait until socket is ready, with timeout */
         fd_set rfds;
-        struct timeval tv = { 0, (long)timeout_usec };
+        struct timeval tv = { 0, (long)time_out };
         FD_ZERO(&rfds);
         FD_SET(sock, &rfds);
         int r = select(sock+1, &rfds, NULL, NULL, &tv);
@@ -355,7 +362,7 @@ size_t dlsock::read(unsigned char *buf, size_t bytes, int timeout_usec)
             dlerror("error: failed to select on network socket");
         if (r==0) {
             dlmessage("timeout on network socket read");
-            timeout = 1;
+            timed_out = 1;
             return -1;
         }
     }
@@ -395,12 +402,12 @@ size_t dlsock::read(unsigned char *buf, size_t bytes, int timeout_usec)
     return read;
 }
 
-const unsigned char *dlsock::read(size_t *bytes, int timeout_usec)
+const unsigned char *dlsock::read(size_t *bytes)
 {
     /* check internal buffer is large enough */
     checksize(*bytes);
 
-    size_t read = dlsock::read(buffer, *bytes, timeout_usec);
+    size_t read = dlsock::read(buffer, *bytes);
     if (read!=*bytes)
         *bytes = read;
 
@@ -474,7 +481,7 @@ int dltcpsock::open(const char *port)
     return 0;
 }
 
-size_t dltcpsock::read(unsigned char *buf, size_t bytes, int timeout_usec)
+size_t dltcpsock::read(unsigned char *buf, size_t bytes)
 {
     size_t read = recv(send_sock, buf, bytes, 0);
     if (read<0)
@@ -485,12 +492,12 @@ size_t dltcpsock::read(unsigned char *buf, size_t bytes, int timeout_usec)
     return read;
 }
 
-const unsigned char* dltcpsock::read(size_t* bytes, int timeout_usec)
+const unsigned char* dltcpsock::read(size_t* bytes)
 {
     /* check internal buffer is large enough */
     checksize(*bytes);
 
-    size_t read = dltcpsock::read(buffer, *bytes, timeout_usec);
+    size_t read = dltcpsock::read(buffer, *bytes);
     if (read!=*bytes)
         *bytes = read;
 

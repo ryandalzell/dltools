@@ -60,7 +60,7 @@ int next_packet(unsigned char *packet, dlsource *source)
 }
 
 /* read next packet from transport stream with specified pid
- * return packet length or zero on failure */
+ * return packet length or error code on failure */
 int next_data_packet(unsigned char *data, int pid, dlsource *source)
 {
     unsigned char packet[188];
@@ -68,8 +68,9 @@ int next_data_packet(unsigned char *data, int pid, dlsource *source)
     /* find next whole transport stream packet with correct pid */
     while (1) {
         /* read next packet */
-        if (next_packet(packet, source)<0)
-            return 0;
+        int read = next_packet(packet, source);
+        if (read<0)
+            return read;
 
         /* check pid is correct */
         int packet_pid = ((packet[1]<<8) | packet[2]) & 0x1fff;
@@ -207,8 +208,10 @@ int find_pid_for_stream_type(int stream_types[], int num_stream_types, dlsource 
 
         /* find the next pat */
         int read = next_data_packet(packet, 0, source);
-        if (read==0)
-            dlexit("failed to find a pat in input file \"%s\" (need to specify the pids)", source->name());
+        if (read<=0) {
+            dlmessage("failed to find a pat in input file \"%s\" (need to specify the pids)", source->name());
+            return 0;
+        }
 
         /* find the pmt_pids */
         int section_length = (packet[2]<<8 | packet[3]) & 0xfff;
@@ -230,8 +233,10 @@ int find_pid_for_stream_type(int stream_types[], int num_stream_types, dlsource 
     do {
         /* find the next pmt */
         size_t read = next_data_packet(packet, pmt_pid[pmt_index], source);
-        if (read==0)
+        if (read<=0) {
+            dlmessage("failed to find a pmt in input file \"%s\" (need to specify the pids)", source->name());
             return 0;
+        }
 
         int section_length = (packet[2]<<8 | packet[3]) & 0xfff;
         if (section_length>1021)

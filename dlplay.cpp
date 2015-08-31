@@ -434,15 +434,13 @@ int main(int argc, char *argv[])
             }
 
             /* open network socket */
-            if (strtol(address, NULL, 10)>=224 && strtol(address, NULL, 10)<=239) {
+            if (strtol(address, NULL, 10)>=224 && strtol(address, NULL, 10)<=239)
                 /* multicast */
                 source = new dlsock(address, interface);
-                source->open(port);
-            } else {
+            else
                 /* unicast */
                 source = new dlsock();
-                source->open(port);
-            }
+            source->open(port);
 
             /* FIXME need filetype detection or signalling */
             filetype = ts? HEVCTS : HEVC;
@@ -454,6 +452,7 @@ int main(int argc, char *argv[])
                 source->open(port+1);
             else
                 source->open("1234");
+
             /* FIXME need filetype detection or signalling */
             filetype = ts? HEVCTS : HEVC;
             dlmessage("expecting data over tcp as hevc %s stream", ts? "transport" : "elementary");
@@ -682,6 +681,9 @@ int main(int argc, char *argv[])
 #ifdef USE_TERMIOS
         class dlterm term;
 #endif
+
+        /* set a timeout to catch encoder restarts */
+        source->set_timeout(500000); // timeout of 0.5s
 
         /* main loop */
         int queuenum = 0;

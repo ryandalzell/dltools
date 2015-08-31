@@ -19,9 +19,9 @@ public:
     virtual int open(const char *filename) = 0;
     virtual int rewind() = 0;
     /* copy to buffer read */
-    virtual size_t read(unsigned char *buf, size_t bytes, int timeout_usec = 0) = 0;
+    virtual size_t read(unsigned char *buf, size_t bytes) = 0;
     /* zero copy read (depending on implementation) */
-    virtual const unsigned char *read(size_t *bytes, int timeout_usec = 0) = 0;
+    virtual const unsigned char *read(size_t *bytes) = 0;
 
     /* source metadata */
     virtual const char *name();
@@ -31,11 +31,18 @@ public:
     virtual bool error();
     virtual bool timeout();
 
+    /* source configuration */
+    virtual void set_timeout(int timeout_usec);
+
 protected:
     /* memory buffer management */
     /*const*/ unsigned char *buffer, *bufptr;
     unsigned bufsize, bytesleft;
     void checksize(size_t size);
+
+    /* timeout parameters */
+    int time_out; // in usecs.
+    int timed_out;
 };
 
 /* file source class */
@@ -48,8 +55,8 @@ public:
     /* source operators */
     virtual int open(const char *filename);
     virtual int rewind();
-    virtual size_t read(unsigned char *buf, size_t bytes, int timeout_usec = 0);
-    virtual const unsigned char *read(size_t* bytes, int timeout_usec = 0);
+    virtual size_t read(unsigned char *buf, size_t bytes);
+    virtual const unsigned char *read(size_t* bytes);
 
     /* source metadata */
     virtual const char *name();
@@ -74,8 +81,8 @@ public:
     /* source operators */
     virtual int open(const char *filename);
     virtual int rewind();
-    virtual size_t read(unsigned char *buf, size_t bytes, int timeout_usec = 0);
-    virtual const unsigned char *read(size_t *bytes, int timeout_usec = 0);
+    virtual size_t read(unsigned char *buf, size_t bytes);
+    virtual const unsigned char *read(size_t *bytes);
 
     /* source metadata */
     virtual size_t size();
@@ -101,8 +108,8 @@ public:
     /* source operators */
     virtual int open(const char *port);
     virtual int rewind();
-    virtual size_t read(unsigned char *buf, size_t bytes, int timeout_usec = 0);
-    virtual const unsigned char *read(size_t *bytes, int timeout_usec = 0);
+    virtual size_t read(unsigned char *buf, size_t bytes);
+    virtual const unsigned char *read(size_t *bytes);
 
     /* source metadata */
     virtual bool eof();
@@ -112,7 +119,6 @@ protected:
     socklen_t addr_len;
     struct sockaddr_in name, sender;
     const char *multicast, *interface;
-    int timeout;
 };
 
 /* network tcp socket source class */
@@ -124,8 +130,8 @@ public:
 
     /* source operators */
     virtual int open(const char *port);
-    virtual size_t read(unsigned char *buf, size_t bytes, int timeout_usec = 0);
-    virtual const unsigned char *read(size_t *bytes, int timeout_usec = 0);
+    virtual size_t read(unsigned char *buf, size_t bytes);
+    virtual const unsigned char *read(size_t *bytes);
 
 protected:
     int send_sock;

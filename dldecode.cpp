@@ -800,7 +800,7 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                 image = de265_get_next_picture(ctx);
             else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
                 /* read a chunk of input data */
-                int read = source->read(data, size, 500000); // timeout of 0.5s
+                int read = source->read(data, size);
                 if (read==0 || source->eof()) {
                     source->rewind();
                     read = source->read(data, size);
@@ -856,7 +856,7 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                     image = de265_get_next_picture(ctx);
                 } else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
                     /* read a chunk of input data */
-                    int read = source->read(data, size, 500000);
+                    int read = source->read(data, size);
                     if (read==0 || source->eof()) {
                         source->rewind();
                         read = source->read(data, size);
@@ -1046,7 +1046,7 @@ decode_t dlhevcts::decode(unsigned char *uyvy, size_t uyvysize)
                     source->rewind();
                     read = next_pes_packet_data(data, &pts, pid, 0, source);
                 }
-                if (read) {
+                if (read>0) {
                     err = de265_push_data(ctx, data, read, (de265_PTS)pts, NULL);
                     if (!de265_isOK(err)) {
                         dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
@@ -1103,7 +1103,7 @@ decode_t dlhevcts::decode(unsigned char *uyvy, size_t uyvysize)
                         source->rewind();
                         read = next_pes_packet_data(data, &pts, pid, 0, source);
                     }
-                    if (read) {
+                    if (read>0) {
                         err = de265_push_data(ctx, data, read, (de265_PTS)pts, NULL);
                         if (!de265_isOK(err)) {
                             dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
