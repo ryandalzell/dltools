@@ -896,10 +896,9 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                 yuv[0] = de265_get_image_plane(image, 0, &stride);
                 yuv[1] = de265_get_image_plane(image, 1, &stride);
                 yuv[2] = de265_get_image_plane(image, 2, &stride);
+
                 /* use poc to decide field order, this works around a potential bug in libde265 */
                 int poc = de265_get_image_picture_order_count(image);
-                //enum de265_field_order field_order = de265_get_image_field_order(image);
-                //dlmessage("%d: %s field", poc, field_order==1? "top" : field_order==2? "bottom" : "unknown");
 
                 /* deinterlace */
                 if ((poc&1)==!top_field_first) { /* works for negative poc too */
@@ -1144,10 +1143,19 @@ decode_t dlhevcts::decode(unsigned char *uyvy, size_t uyvysize)
                 yuv[0] = de265_get_image_plane(image, 0, &stride);
                 yuv[1] = de265_get_image_plane(image, 1, &stride);
                 yuv[2] = de265_get_image_plane(image, 2, &stride);
-                if (field==0)
+
+                /* use poc to decide field order, this works around a potential bug in libde265 */
+                int poc = de265_get_image_picture_order_count(image);
+
+                /* deinterlace */
+                if ((poc&1)==!top_field_first) { /* works for negative poc too */
                     convert_top_field_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
-                else
+                    /* move field on if it is the correct order */
+                    field += (top_field_first ^ field);
+                } else if ((poc&1)==top_field_first) {
                     convert_bot_field_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
+                    field += !(top_field_first ^ field);
+                }
 
                 /* timestamp render time */
                 results.render_time += get_utime() - decode;
