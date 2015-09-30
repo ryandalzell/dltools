@@ -962,7 +962,7 @@ int dlhevcts::attach(dlsource *s)
 
     /* skip psi parsing if video pid specified */
     if (pid==0) {
-        int stream_types[] = { 0x24, 0x06 };
+        int stream_types[] = { 0x1B, 0x24, 0x06 }; // included h.264 stream type for development compatibility.
         pid = find_pid_for_stream_type(stream_types, sizeof(stream_types)/sizeof(int), source);
     }
 
