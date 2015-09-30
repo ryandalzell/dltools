@@ -115,6 +115,7 @@ class dlmpeg2ts : public dlmpeg2
 {
 public:
     dlmpeg2ts();
+    dlmpeg2ts(int pid);
 
     virtual int attach(dlsource *source);
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
@@ -207,6 +208,7 @@ class dlhevcts : public dlhevc
 {
 public:
     dlhevcts();
+    dlhevcts(int pid);
 
     virtual int attach(dlsource *source);
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);

@@ -376,6 +376,8 @@ int main(int argc, char *argv[])
     }
 
     /* sanity check the command line */
+    if (!filename)
+        usage(1);
 
     /* initialise the DeckLink API */
     IDeckLinkIterator *iterator = CreateDeckLinkIteratorInstance();
@@ -485,9 +487,9 @@ int main(int argc, char *argv[])
                     break;
 
                 case M2V : video = new dlmpeg2; break;
-                case M2VTS: video = new dlmpeg2ts; break;
+                case M2VTS: video = new dlmpeg2ts(vid_pid); break;
                 case HEVC: video = new dlhevc; break;
-                case HEVCTS: video = new dlhevcts; break;
+                case HEVCTS: video = new dlhevcts(vid_pid); break;
                 default: dlexit("unknown input file type");
             }
 

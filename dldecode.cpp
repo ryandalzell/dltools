@@ -214,6 +214,13 @@ dlmpeg2ts::dlmpeg2ts()
     offset_pts = 0;
 }
 
+dlmpeg2ts::dlmpeg2ts(int p)
+{
+    dlmpeg2();
+    dlmpeg2ts();
+    pid = p;
+}
+
 int dlmpeg2ts::attach(dlsource *s)
 {
     /* attach the input source */
@@ -936,6 +943,12 @@ dlhevcts::dlhevcts()
     last_pts = -1;
     frames_since_pts = 0;
     offset_pts = 0;
+}
+
+dlhevcts::dlhevcts(int p)
+{
+    dlhevcts();
+    pid = p;
 }
 
 int dlhevcts::attach(dlsource *s)
