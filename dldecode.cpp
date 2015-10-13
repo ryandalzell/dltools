@@ -180,7 +180,10 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
                     format->get_source()->rewind();
                     read = format->read(data, size);
                 }
-                mpeg2_buffer(mpeg2dec, data, data+read);
+                if (read>0)
+                    mpeg2_buffer(mpeg2dec, data, data+read);
+                else
+                    return results;
                 break;
 
             case STATE_SLICE:
@@ -661,7 +664,7 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                     format->get_source()->rewind();
                     read = format->read(data, size);
                 }
-                else if (read>0) {
+                if (read>0) {
                     err = de265_push_data(ctx, data, read, 0, NULL);
                     if (!de265_isOK(err)) {
                         dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
@@ -717,7 +720,7 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                         format->get_source()->rewind();
                         read = format->read(data, size);
                     }
-                    else if (read>0) {
+                    if (read>0) {
                         err = de265_push_data(ctx, data, read, 0, NULL);
                         if (!de265_isOK(err)) {
                             dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
