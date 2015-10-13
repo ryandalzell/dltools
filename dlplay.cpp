@@ -971,6 +971,7 @@ int main(int argc, char *argv[])
 
         /* tidy up */
         delete source;
+        delete format;
         delete video;
         delete audio;
     }
