@@ -10,7 +10,7 @@ PLATFORM = $(shell uname -p)
 APPS = dlskel dltest dlcap
 
 # Common files
-OBJS = dlutil.o dlterm.o dlconv.o dlts.o dlalloc.o dlsource.o DeckLinkAPIDispatch.o
+OBJS = dlutil.o dlterm.o dlconv.o dlts.o dlalloc.o dlsource.o dlformat.o DeckLinkAPIDispatch.o
 
 # Flags
 CXXFLAGS = -Wall -g -I $(SDKDIR)
@@ -19,11 +19,13 @@ CXXFLAGS += -D_FILE_OFFSET_BITS=64
 endif
 all  : CXXFLAGS += -O2 -ffast-math -fomit-frame-pointer
 debug: CXXFLAGS +=
+depend:CXXFLAGS += -MMD
 LFLAGS = -lm -ldl -lpthread
 
 # Targets
 all   : $(APPS) dlplay
 debug : $(APPS) dlplay
+depend: $(APPS) dlplay
 clean :
 	rm -f $(APPS) $(foreach i,$(APPS),$i.o) dlplay dlplay.o dldecode.o $(OBJS)
 
@@ -49,10 +51,96 @@ dist: dltools.tar.gz
 dltools.tar.gz: Makefile *.cpp *.h BUGS COPYING INSTALL
 	tar zcf $@ -C .. $(foreach i,$^,dltools/$i)
 
-# dependancies
-dlplay.o: dlutil.h dlterm.h dlconv.h dldecode.h dlsource.h
-dlterm.o: dlutil.h dlterm.h
-dlconv.o: dlutil.h dlconv.h
-dldecode.o : dlutil.h dldecode.h dlsource.h
-dlalloc.o : dlutil.h dlalloc.h
-dlsource.o : dlutil.h dlsource.h
+# dependencies
+DeckLinkAPIDispatch.o: \
+ /usr/local/decklink/include/DeckLinkAPIDispatch.cpp \
+ /usr/local/decklink/include/DeckLinkAPI.h \
+ /usr/local/decklink/include/LinuxCOM.h \
+ /usr/local/decklink/include/DeckLinkAPITypes.h \
+ /usr/local/decklink/include/DeckLinkAPIModes.h \
+ /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
+ /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
+ /usr/local/decklink/include/DeckLinkAPIDeckControl.h
+dlalloc.o: dlalloc.cpp dlutil.h /usr/local/decklink/include/DeckLinkAPI.h \
+ /usr/local/decklink/include/LinuxCOM.h \
+ /usr/local/decklink/include/DeckLinkAPITypes.h \
+ /usr/local/decklink/include/DeckLinkAPIModes.h \
+ /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
+ /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
+ /usr/local/decklink/include/DeckLinkAPIDeckControl.h dlalloc.h
+dlcap.o: dlcap.cpp /usr/local/decklink/include/DeckLinkAPI.h \
+ /usr/local/decklink/include/LinuxCOM.h \
+ /usr/local/decklink/include/DeckLinkAPITypes.h \
+ /usr/local/decklink/include/DeckLinkAPIModes.h \
+ /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
+ /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
+ /usr/local/decklink/include/DeckLinkAPIDeckControl.h dlutil.h
+dlconv.o: dlconv.cpp dlutil.h /usr/local/decklink/include/DeckLinkAPI.h \
+ /usr/local/decklink/include/LinuxCOM.h \
+ /usr/local/decklink/include/DeckLinkAPITypes.h \
+ /usr/local/decklink/include/DeckLinkAPIModes.h \
+ /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
+ /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
+ /usr/local/decklink/include/DeckLinkAPIDeckControl.h
+dldecode.o: dldecode.cpp dldecode.h dlutil.h \
+ /usr/local/decklink/include/DeckLinkAPI.h \
+ /usr/local/decklink/include/LinuxCOM.h \
+ /usr/local/decklink/include/DeckLinkAPITypes.h \
+ /usr/local/decklink/include/DeckLinkAPIModes.h \
+ /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
+ /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
+ /usr/local/decklink/include/DeckLinkAPIDeckControl.h dlformat.h \
+ dlsource.h dlconv.h
+dlformat.o: dlformat.cpp dlformat.h dlutil.h \
+ /usr/local/decklink/include/DeckLinkAPI.h \
+ /usr/local/decklink/include/LinuxCOM.h \
+ /usr/local/decklink/include/DeckLinkAPITypes.h \
+ /usr/local/decklink/include/DeckLinkAPIModes.h \
+ /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
+ /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
+ /usr/local/decklink/include/DeckLinkAPIDeckControl.h dlsource.h dlts.h
+dlplay.o: dlplay.cpp /usr/local/decklink/include/DeckLinkAPI.h \
+ /usr/local/decklink/include/LinuxCOM.h \
+ /usr/local/decklink/include/DeckLinkAPITypes.h \
+ /usr/local/decklink/include/DeckLinkAPIModes.h \
+ /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
+ /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
+ /usr/local/decklink/include/DeckLinkAPIDeckControl.h dlutil.h dlterm.h \
+ dldecode.h dlformat.h dlsource.h dlalloc.h dlts.h
+dlskel.o: dlskel.cpp /usr/local/decklink/include/DeckLinkAPI.h \
+ /usr/local/decklink/include/LinuxCOM.h \
+ /usr/local/decklink/include/DeckLinkAPITypes.h \
+ /usr/local/decklink/include/DeckLinkAPIModes.h \
+ /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
+ /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
+ /usr/local/decklink/include/DeckLinkAPIDeckControl.h dlutil.h
+dlsource.o: dlsource.cpp dlutil.h \
+ /usr/local/decklink/include/DeckLinkAPI.h \
+ /usr/local/decklink/include/LinuxCOM.h \
+ /usr/local/decklink/include/DeckLinkAPITypes.h \
+ /usr/local/decklink/include/DeckLinkAPIModes.h \
+ /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
+ /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
+ /usr/local/decklink/include/DeckLinkAPIDeckControl.h dlsource.h
+dlterm.o: dlterm.cpp dlterm.h
+dltest.o: dltest.cpp /usr/local/decklink/include/DeckLinkAPI.h \
+ /usr/local/decklink/include/LinuxCOM.h \
+ /usr/local/decklink/include/DeckLinkAPITypes.h \
+ /usr/local/decklink/include/DeckLinkAPIModes.h \
+ /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
+ /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
+ /usr/local/decklink/include/DeckLinkAPIDeckControl.h
+dlts.o: dlts.cpp dlutil.h /usr/local/decklink/include/DeckLinkAPI.h \
+ /usr/local/decklink/include/LinuxCOM.h \
+ /usr/local/decklink/include/DeckLinkAPITypes.h \
+ /usr/local/decklink/include/DeckLinkAPIModes.h \
+ /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
+ /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
+ /usr/local/decklink/include/DeckLinkAPIDeckControl.h dlts.h dlsource.h
+dlutil.o: dlutil.cpp dlutil.h /usr/local/decklink/include/DeckLinkAPI.h \
+ /usr/local/decklink/include/LinuxCOM.h \
+ /usr/local/decklink/include/DeckLinkAPITypes.h \
+ /usr/local/decklink/include/DeckLinkAPIModes.h \
+ /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
+ /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
+ /usr/local/decklink/include/DeckLinkAPIDeckControl.h

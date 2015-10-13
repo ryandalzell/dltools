@@ -1,6 +1,7 @@
 #ifndef DLSOURCE_H
 #define DLSOURCE_H
 
+#include <stdio.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -18,12 +19,15 @@ public:
     /* source operators */
     virtual int open(const char *filename) = 0;
     virtual int rewind() = 0;
+    virtual filetype_t autodetect() = 0;
+
     /* copy to buffer read */
     virtual size_t read(unsigned char *buf, size_t bytes) = 0;
     /* zero copy read (depending on implementation) */
     virtual const unsigned char *read(size_t *bytes) = 0;
 
     /* source metadata */
+    virtual const char *description() { return "unknown"; }
     virtual const char *name();
     virtual size_t size();
     virtual size_t pos();
@@ -55,10 +59,12 @@ public:
     /* source operators */
     virtual int open(const char *filename);
     virtual int rewind();
+    virtual filetype_t autodetect();
     virtual size_t read(unsigned char *buf, size_t bytes);
     virtual const unsigned char *read(size_t* bytes);
 
     /* source metadata */
+    virtual const char *description() { return "file"; }
     virtual const char *name();
     virtual size_t size();
     virtual size_t pos();
@@ -108,10 +114,12 @@ public:
     /* source operators */
     virtual int open(const char *port);
     virtual int rewind();
+    virtual filetype_t autodetect();
     virtual size_t read(unsigned char *buf, size_t bytes);
     virtual const unsigned char *read(size_t *bytes);
 
     /* source metadata */
+    virtual const char *description() { return "udp"; }
     virtual bool eof();
 
 protected:
@@ -132,6 +140,9 @@ public:
     virtual int open(const char *port);
     virtual size_t read(unsigned char *buf, size_t bytes);
     virtual const unsigned char *read(size_t *bytes);
+
+    /* source metadata */
+    virtual const char *description() { return "tcp"; }
 
 protected:
     int send_sock;

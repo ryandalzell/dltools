@@ -13,7 +13,7 @@ extern "C" {
 #include <mpg123.h>
 
 #include "dlutil.h"
-#include "dlsource.h"
+#include "dlformat.h"
 
 /* decoder data types */
 typedef struct {
@@ -31,7 +31,7 @@ public:
     dldecode();
     virtual ~dldecode();
 
-    virtual int attach(dlsource *source);
+    virtual int attach(dlformat *format);
     virtual int rewind(int frame);
     virtual decode_t decode(unsigned char *buffer, size_t bufsize) = 0;
 
@@ -40,7 +40,7 @@ public:
 
 protected:
     /* data source */
-    dlsource *source;
+    dlformat *format;
 
     /* buffer variables */
     size_t size;
@@ -62,6 +62,8 @@ public: /* yes public, we're not designing a type library here */
 
     /* decoder debug */
 public:
+    virtual const char *description() { return "unknown"; }
+
     /* interactive debug */
     virtual void set_field_order(int top_field_first);
     virtual void set_blank_field(int order);
@@ -78,11 +80,12 @@ public:
     dlyuv() { lumaonly = 0; }
     dlyuv(int l) { lumaonly = l; }
 
-    virtual int attach(dlsource *source);
+    virtual int attach(dlformat *format);
     bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
+    virtual const char *description() { return "yuv video"; }
 
 private:
     unsigned maxframes;
@@ -98,37 +101,17 @@ public:
     dlmpeg2();
     ~dlmpeg2();
 
-    virtual int attach(dlsource *source);
+    virtual int attach(dlformat *format);
     bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
+    virtual const char *description() { return "mpeg2 video"; }
 
 protected:
     /* libmpeg2 variables */
     mpeg2dec_t *mpeg2dec;
     const mpeg2_info_t *info;
-};
-
-/* libmpeg2 class for transport streams */
-class dlmpeg2ts : public dlmpeg2
-{
-public:
-    dlmpeg2ts();
-    dlmpeg2ts(int pid);
-
-    virtual int attach(dlsource *source);
-    virtual decode_t decode(unsigned char *buffer, size_t bufsize);
-
-public:
-    int pid;
-
-private:
-    /* transport stream variables */
-    tstamp_t first_pts;
-    tstamp_t last_pts;
-    int frames_since_pts;
-    tstamp_t offset_pts;
 };
 
 /* mpg123 class */
@@ -138,10 +121,11 @@ public:
     dlmpg123();
     ~dlmpg123();
 
-    virtual int attach(dlsource *source);
+    virtual int attach(dlformat *format);
     virtual decode_t decode(unsigned char *frame, size_t size);
 
 public:
+    virtual const char *description() { return "mpeg1 audio"; }
     int pid;
     long long pts;
 
@@ -162,10 +146,11 @@ public:
     dlliba52();
     ~dlliba52();
 
-    virtual int attach(dlsource *source);
+    virtual int attach(dlformat *format);
     virtual decode_t decode(unsigned char *frame, size_t size);
 
 public:
+    virtual const char *description() { return "mpeg2 audio"; }
     int pid;
 
 private:
@@ -190,38 +175,18 @@ public:
     dlhevc();
     ~dlhevc();
 
-    virtual int attach(dlsource *source);
+    virtual int attach(dlformat *format);
     bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
+    virtual const char *description() { return "hevc video"; }
 
 protected:
     /* libde265 variables */
     de265_error err;
     de265_decoder_context* ctx;
     const struct de265_image *image;
-};
-
-/* libde265 class for transport streams */
-class dlhevcts : public dlhevc
-{
-public:
-    dlhevcts();
-    dlhevcts(int pid);
-
-    virtual int attach(dlsource *source);
-    virtual decode_t decode(unsigned char *buffer, size_t bufsize);
-
-public:
-    int pid;
-
-private:
-    /* transport stream variables */
-    tstamp_t first_pts;
-    tstamp_t last_pts;
-    int frames_since_pts;
-    tstamp_t offset_pts;
 };
 
 #endif

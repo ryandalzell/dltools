@@ -191,7 +191,7 @@ int next_pes_packet_data(unsigned char *data, long long *pts, int pid, int start
     return 0;
 }
 
-int find_pid_for_stream_type(int stream_types[], int num_stream_types, dlsource *source)
+int find_pid_for_stream_type(int stream_types[], int num_stream_types, int *found_type, dlsource *source)
 {
     unsigned char packet[188];
 
@@ -256,8 +256,10 @@ int find_pid_for_stream_type(int stream_types[], int num_stream_types, dlsource 
             int es_info_length = (packet[index+3]<<8 | packet[index+4]) & 0xfff;
             /* try to match stream type */
             for (int i=0; i<num_stream_types; i++)
-                if (stream_types[i]==stream_type)
+                if (stream_types[i]==stream_type) {
+                    *found_type = stream_type;
                     return pid;
+                }
             /* stream_type==0x02 - mpeg2 video
              * stream_type==0x80 - user private, assume mpeg2 video
              * stream_type==0x03 - mpeg1 audio

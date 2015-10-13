@@ -30,6 +30,7 @@ extern "C" {
 #include "dlterm.h"
 #include "dldecode.h"
 #include "dlalloc.h"
+#include "dlts.h"
 
 /* compile options */
 #define USE_TERMIOS
@@ -42,7 +43,7 @@ sem_t sem;
 int exit_thread;
 
 /* display statistics */
-const int PREROLL_FRAMES = 20;
+const int PREROLL_FRAMES = 60;
 bool preroll;
 unsigned int completed;
 unsigned int late, dropped, flushed;
@@ -154,7 +155,6 @@ void usage(int exitcode)
     fprintf(stderr, "%s: play raw video files\n", appname);
     fprintf(stderr, "usage: %s [options] <file/url> [<file/url>...]\n", appname);
     fprintf(stderr, "  -f, --format        : specify display format: 480i,480p,576i,720p,1080i,1080p [optional +framerate] (default: auto)\n");
-    fprintf(stderr, "  -t, --ts            : specify network streaming will be transport stream data (default: elementary stream)\n");
     fprintf(stderr, "  -I, --interface     : address of interface to listen for multicast data (default: first network interface)\n");
     fprintf(stderr, "  -a, --firstframe    : index of first frame in input to display (default: 0)\n");
     fprintf(stderr, "  -n, --numframes     : number of frames in input to display (default: all)\n");
@@ -227,7 +227,6 @@ int main(int argc, char *argv[])
 
     /* command line defaults */
     char *displayformat = NULL;
-    int ts = 0;
     const char *interface = NULL;
     int firstframe = 0;
     int numframes = -1;
@@ -292,7 +291,7 @@ int main(int argc, char *argv[])
                 break;
 
             case 't':
-                ts = 1;
+                /* left for command line compatibility, but not required */
                 break;
 
             case 'I':
@@ -411,16 +410,6 @@ int main(int argc, char *argv[])
         /* initialise the semaphore */
         sem_init(&sem, 0, 0);
 
-        /* determine the file type */
-        if (strstr(filename, ".m2v")!=NULL || strstr(filename, ".M2V")!=NULL)
-            filetype = M2V;
-        else if (strstr(filename, ".ts")!=NULL || strstr(filename, ".trp")!=NULL || strstr(filename, ".mpg")!=NULL)
-            filetype = HEVCTS;
-        else if (strstr(filename, ".265")!=NULL || strstr(filename, ".h265")!=NULL || strstr(filename, ".hevc")!=NULL)
-            filetype = HEVC;
-        else
-            filetype = YUV;
-
         /* create the input data source */
         dlsource *source = NULL;
         if (strncmp(filename, "udp://", 6)==0) {
@@ -444,9 +433,7 @@ int main(int argc, char *argv[])
                 source = new dlsock();
             source->open(port);
 
-            /* FIXME need filetype detection or signalling */
-            filetype = ts? HEVCTS : HEVC;
-            dlmessage("expecting data over udp as hevc %s stream", ts? "transport" : "elementary");
+            filetype = source->autodetect();
         } else if (strncmp(filename, "tcp://", 6)==0) {
             source = new dltcpsock();
             const char *port = strchr(filename+6, ':');
@@ -455,9 +442,7 @@ int main(int argc, char *argv[])
             else
                 source->open("1234");
 
-            /* FIXME need filetype detection or signalling */
-            filetype = ts? HEVCTS : HEVC;
-            dlmessage("expecting data over tcp as hevc %s stream", ts? "transport" : "elementary");
+            filetype = source->autodetect();
         } else if (strncmp(filename, "file://", 7)==0) {
 #ifdef USE_MMAP
             source = new dlmmap();
@@ -465,6 +450,7 @@ int main(int argc, char *argv[])
             source = new dlfile();
 #endif
             source->open(filename+7);
+            filetype = source->autodetect();
         } else if (strstr(filename, "://")==NULL) {
 #ifdef USE_MMAP
             source = new dlmmap();
@@ -472,29 +458,75 @@ int main(int argc, char *argv[])
             source = new dlfile();
 #endif
             source->open(filename);
+            filetype = source->autodetect();
         } else
             dlexit("could not open url \"%s\"", filename);
 
-        /* create the video decoder */
-        if (!audioonly) {
-            switch (filetype) {
-                case YUV: video = new dlyuv(lumaonly);
+        /* create the file format decoder and video decoder */
+        dlformat *format = NULL;
+        switch (filetype) {
+            case TS :
+            {
+                /* look for a video pid */
+                int stream_type, stream_types[] = { 0x02, 0x80, 0x1B, 0x24, 0x06 };
+                int pid = find_pid_for_stream_type(stream_types, sizeof(stream_types)/sizeof(int), &stream_type, source);
+                source->rewind();
 
-                    /* skip to the first frame */
-                    if (firstframe)
-                        video->rewind(firstframe);
+                if (pid) {
+                    vid_pid = pid;
+                    switch (stream_type) {
+                        case 0x02:
+                        case 0x80:
+                            format = new dltstream(pid);
+                            video = new dlmpeg2;
+                            break;
 
-                    break;
+                        case 0x24:
+                        case 0x1b: // included h.264 stream type for development compatibility.
+                        case 0x06:
+                            format = new dltstream(pid);
+                            video = new dlhevc;
+                            break;
+                    }
+                } else
+                    audioonly = 1;
 
-                case M2V : video = new dlmpeg2; break;
-                case M2VTS: video = new dlmpeg2ts(vid_pid); break;
-                case HEVC: video = new dlhevc; break;
-                case HEVCTS: video = new dlhevcts(vid_pid); break;
-                default: dlexit("unknown input file type");
+                /* TODO look for an audio pid */
+                break;
             }
 
+            case YUV:
+                format = new dlformat;
+                video = new dlyuv(lumaonly);
+
+                /* skip to the first frame */
+                if (firstframe)
+                    video->rewind(firstframe);
+
+                break;
+
+            case M2V :
+                format = new dlestream;
+                video = new dlmpeg2;
+                break;
+
+            case HEVC:
+                format = new dlestream;
+                video = new dlhevc;
+                break;
+
+            default: dlexit("unknown input file type");
+        }
+        /* attach the source */
+        if (!format || format->attach(source)<0)
+            dlexit("failed to initialise the file format decoder");
+
+        dlmessage("found %s %s from %s source", video->description(), format->description(), source->description());
+
+        /* initialise the video decoder */
+        if (!audioonly) {
             /* figure out the mode to set */
-            if (video->attach(source)<0)
+            if (video->attach(format)<0)
                 dlexit("failed to initialise the video decoder");
             pic_width = video->width;
             pic_height = video->height;
@@ -507,6 +539,7 @@ int main(int argc, char *argv[])
         }
 
         /* create the audio encoder */
+#if 0
         switch (filetype) {
             case M2VTS:
 
@@ -514,7 +547,7 @@ int main(int argc, char *argv[])
                 if (audio==NULL && !videoonly) {
                     audio = new dlmpg123;
                     aud_size = 32768;
-                    if (audio->attach(source)<0) {
+                    if (audio->attach(format)<0) {
                         delete audio;
                         audio = NULL;
                     }
@@ -524,7 +557,7 @@ int main(int argc, char *argv[])
                 if (audio==NULL && !videoonly) {
                     audio = new dlliba52;
                     aud_size = 6*256*2*sizeof(uint16_t);
-                    if (audio->attach(source)<0) {
+                    if (audio->attach(format)<0) {
                         delete audio;
                         audio = NULL;
                     }
@@ -539,6 +572,7 @@ int main(int argc, char *argv[])
 
             default: break;
         }
+#endif
 
         /* sanity check */
         if (!video && !audio)
@@ -850,7 +884,7 @@ int main(int argc, char *argv[])
                     break;
                 }
                 video_start_time = mmin(decode.timestamp, video_start_time);
-                video_end_time = mmax(decode.timestamp, video_start_time);
+                video_end_time = mmax(decode.timestamp, video_end_time);
 
                 if (verbose>=2)
                     dlmessage("info: frame %d timestamp %s, decode %.1fms render %.1fms", framenum, describe_time(decode.timestamp), decode.decode_time/1000.0, decode.render_time/1000.0);
@@ -886,7 +920,7 @@ int main(int argc, char *argv[])
                         audio_start_time = decode.timestamp;
                         dlmessage("info: start time of audio is %lld, %s", audio_start_time, describe_time(audio_start_time));
                     }
-                    audio_end_time = mmax(decode.timestamp, audio_start_time);
+                    audio_end_time = mmax(decode.timestamp, audio_end_time);
 
 
                     /* buffer decoded audio */
