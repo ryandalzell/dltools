@@ -6,6 +6,10 @@
 
 #include "dlutil.h"
 
+#ifdef HAVE_LIBYUV
+#include <libyuv.h>
+#endif
+
 void convert_i420_uyvy(const unsigned char *i420, unsigned char *uyvy, int width, int height, pixelformat_t pixelformat)
 {
     const unsigned char *yuv[3] = {i420};
@@ -92,6 +96,7 @@ void convert_field_yuv_uyvy(const unsigned char *top[3], const unsigned char *bo
 
 void convert_top_field_yuv_uyvy(const unsigned char *top[3], unsigned char *uyvy, int width, int height, pixelformat_t pixelformat)
 {
+#ifndef HAVE_LIBYUV
     const unsigned char *ptr[3] = {top[0]};
     for (int y=0; y<height/2; y++) {
         if (pixelformat==I422) {
@@ -111,10 +116,18 @@ void convert_top_field_yuv_uyvy(const unsigned char *top[3], unsigned char *uyvy
         /* second field */
         uyvy += 2*width;
     }
+#else
+    libyuv::I420ToUYVY(top[0], width,
+               top[1], width/2,
+               top[2], width/2,
+               uyvy, 4*width,
+               width, height/2);
+#endif
 }
 
 void convert_bot_field_yuv_uyvy(const unsigned char *bot[3], unsigned char *uyvy, int width, int height, pixelformat_t pixelformat)
 {
+#ifndef HAVE_LIBYUV
     const unsigned char *ptr[3] = {bot[0]};
     for (int y=0; y<height/2; y++) {
         if (pixelformat==I422) {
@@ -134,4 +147,11 @@ void convert_bot_field_yuv_uyvy(const unsigned char *bot[3], unsigned char *uyvy
             *(uyvy++) = *(ptr[0]++);
         }
     }
+#else
+    libyuv::I420ToUYVY(bot[0], width,
+               bot[1], width/2,
+               bot[2], width/2,
+               uyvy+2*width, 4*width,
+               width, height/2);
+#endif
 }

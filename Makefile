@@ -1,6 +1,9 @@
 # Makefile for dltools
 # Ryan Dalzell, 13th Sep 2010
 
+# Build options
+LIBYUV = 1
+
 # Build configuration
 BINDIR = /usr/local/bin
 SDKDIR = /usr/local/decklink/include
@@ -17,10 +20,17 @@ CXXFLAGS = -Wall -g -I $(SDKDIR)
 ifeq ($(PLATFORM),i686)
 CXXFLAGS += -D_FILE_OFFSET_BITS=64
 endif
+
 all  : CXXFLAGS += -O2 -ffast-math -fomit-frame-pointer
 debug: CXXFLAGS +=
 depend:CXXFLAGS += -MMD
 LFLAGS = -lm -ldl -lpthread
+
+# Options
+ifeq ($(LIBYUV),1)
+CXXFLAGS += -DHAVE_LIBYUV
+LFLAGS += -lyuv
+endif
 
 # Targets
 all   : $(APPS) dlplay
