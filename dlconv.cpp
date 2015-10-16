@@ -32,6 +32,7 @@ void convert_i420_uyvy(const unsigned char *i420, unsigned char *uyvy, int width
 
 void convert_yuv_uyvy(const unsigned char *yuv[3], unsigned char *uyvy, int width, int height, pixelformat_t pixelformat)
 {
+#ifdef HAVE_LIBYUV
     const unsigned char *ptr[3] = {yuv[0]};
     for (int y=0; y<height; y++) {
         if (pixelformat==I422) {
@@ -48,6 +49,13 @@ void convert_yuv_uyvy(const unsigned char *yuv[3], unsigned char *uyvy, int widt
             *(uyvy++) = *(ptr[0]++);
         }
     }
+#else
+    libyuv::I420ToUYVY(yuv[0], width,
+               yuv[1], width/2,
+               yuv[2], width/2,
+               uyvy, 2*width,
+               width, height);
+#endif
 }
 
 void convert_i420_uyvy_lumaonly(const unsigned char *i420, unsigned char *uyvy, int width, int height)
