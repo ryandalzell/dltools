@@ -48,6 +48,7 @@ protected:
 
     /* timestamp variables */
     tstamp_t timestamp;
+    long long last_pts;
 
     /* verbose level */
     int verbose;
@@ -135,7 +136,6 @@ private:
     int ret;
 
     /* transport stream variables */
-    long long last_pts;
     int frames_since_pts;
 };
 
@@ -163,7 +163,6 @@ private:
     int16_t *ac3_block;
 
     /* transport stream variables */
-    long long last_pts;
     int frames_since_pts;
 
 };

@@ -39,6 +39,12 @@ const unsigned char *dlformat::read(size_t *bytes)
     return source->read(bytes);
 }
 
+long long dlformat::get_timestamp()
+{
+    /* only implemented in sub-classes */
+    return -1ll;
+}
+
 dlsource* dlformat::get_source()
 {
     return source;
@@ -74,13 +80,24 @@ int dltstream::attach(dlsource *s)
 
 size_t dltstream::read(unsigned char *buf, size_t bytes)
 {
-    long long pts;
-    return next_pes_packet_data(buf, &pts, pid, 0, source);
+    long long new_pts;
+    size_t size = next_pes_packet_data(buf, &new_pts, pid, 0, source);
+    if (new_pts>=0)
+        pts = new_pts;
+    return size;
 }
 
 const unsigned char *dltstream::read(size_t *bytes)
 {
-    long long pts;
-    *bytes = next_pes_packet_data(data, &pts, pid, 0, source);
+    long long new_pts;
+    *bytes = next_pes_packet_data(data, &new_pts, pid, 0, source);
+    if (new_pts>=0)
+        pts = new_pts;
     return data;
 }
+
+long long int dltstream::get_timestamp()
+{
+    return pts;
+}
+

@@ -19,6 +19,9 @@ public:
     /* zero copy read (depending on implementation) */
     virtual const unsigned char *read(size_t *bytes);
 
+    /* return most recent timestamp */
+    virtual long long get_timestamp();
+
     /* expose source interfaces */
     dlsource *get_source();
 
@@ -63,11 +66,15 @@ public:
     /* zero copy read (depending on implementation) */
     virtual const unsigned char *read(size_t *bytes);
 
+    /* return most recent pts */
+    virtual long long get_timestamp();
+
     /* format metadata */
     virtual const char *description() { return "transport stream"; }
 
 protected:
     int pid;
+    long long pts;
 };
 
 #endif

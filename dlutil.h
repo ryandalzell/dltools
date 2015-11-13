@@ -41,5 +41,6 @@ int divine_video_format(const char *filename, int *width, int *height, bool *int
 unsigned long long int get_time();
 unsigned long long int get_utime();
 tstamp_t get_stime();
+const char *describe_timestamp(tstamp_t t);
 
 #endif

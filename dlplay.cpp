@@ -132,24 +132,6 @@ HRESULT callback::RenderAudioSamples(bool preroll)
 
 /*****************************************/
 
-const char *describe_time(long long t)
-{
-    static char s[32];
-
-    t /= 90;
-    int msec = t % 1000;
-    t /= 1000;
-    int sec = t % 60;
-    t /= 60;
-    int min = t % 60;
-    t /= 60;
-    int hour = t % 60;
-
-    snprintf(s, sizeof(s), "%02d:%02d:%02d.%03d", hour, min, sec, msec);
-
-    return s;
-}
-
 void usage(int exitcode)
 {
     fprintf(stderr, "%s: play raw video files\n", appname);
@@ -195,7 +177,7 @@ void *display_status(void *arg)
             output->GetScheduledStreamTime(90000, &time, &speed);
 
             /* display status output */
-            len += snprintf(string+len, sizeof(string)-len, "%dfps video buffer %d audio buffer %d time %s speed %.1f", completed-framerate, video_buffer, audio_buffer, describe_time(time), speed);
+            len += snprintf(string+len, sizeof(string)-len, "%dfps video buffer %d audio buffer %d time %s speed %.1f", completed-framerate, video_buffer, audio_buffer, describe_timestamp(time), speed);
             framerate = completed;
             if (late)
                 len += snprintf(string+len, sizeof(string)-len, " late %d frame%s", late, late>1? "s" : "");
@@ -755,7 +737,7 @@ int main(int argc, char *argv[])
                         }
 
                     if (verbose>=1)
-                        dlmessage("current time is %s, pause timestamp %s", describe_time(time), describe_time(history_buffer[pause_index].timestamp));
+                        dlmessage("current time is %s, pause timestamp %s", describe_timestamp(time), describe_timestamp(history_buffer[pause_index].timestamp));
 
                     /* stop the playback */
                     if (output->StopScheduledPlayback(0, NULL, 0) != S_OK)
@@ -809,6 +791,12 @@ int main(int argc, char *argv[])
                     dlmessage("setting deinterlace field order to %s field first", topfieldfirst? "top" : "bottom");
                 }
 
+                /* verbose */
+                if (c=='v') {
+                    verbose++;
+                    break;
+                }
+
                 /* quit */
                 if (c=='q' || c=='\n') {
                     exit = 1;
@@ -834,7 +822,7 @@ int main(int argc, char *argv[])
                         case E_ACCESSDENIED : fprintf(stderr, "%s: error: frame %d: video output disabled when queueing video frame\n", appname, queuenum); break;
                         case E_OUTOFMEMORY  : fprintf(stderr, "%s: error: frame %d: too many frames are scheduled when queueing video frame\n", appname, queuenum);
                         case E_INVALIDARG   : fprintf(stderr, "%s: error: frame %d: frame attributes are invalid when queueing video frame\n", appname, queuenum); break;
-                        default             : fprintf(stderr, "%s: error: frame %d: failed to schedule video frame, timestamp %s\n", appname, queuenum, describe_time(decode.timestamp)); break;
+                        default             : fprintf(stderr, "%s: error: frame %d: failed to schedule video frame, timestamp %s\n", appname, queuenum, describe_timestamp(decode.timestamp)); break;
                     }
                     break;
                 }
@@ -859,7 +847,7 @@ int main(int argc, char *argv[])
                 if (verbose>=1)
                     dlmessage("info: pre-rolled %d frames", queuenum);
                 if (verbose>=1)
-                    dlmessage("info: start time of video is %lld, %s", video_start_time, describe_time(video_start_time));
+                    dlmessage("info: start time of video is %lld, %s", video_start_time, describe_timestamp(video_start_time));
             }
 
             /* decode the next frame */
@@ -887,7 +875,7 @@ int main(int argc, char *argv[])
                 video_end_time = mmax(decode.timestamp, video_end_time);
 
                 if (verbose>=2)
-                    dlmessage("info: frame %d timestamp %s, decode %.1fms render %.1fms", framenum, describe_time(decode.timestamp), decode.decode_time/1000.0, decode.render_time/1000.0);
+                    dlmessage("info: frame %d timestamp %s, decode %.1fms render %.1fms", framenum, describe_timestamp(decode.timestamp), decode.decode_time/1000.0, decode.render_time/1000.0);
                 framenum++;
 
                 /* store the frame in the history buffer */
@@ -918,7 +906,7 @@ int main(int argc, char *argv[])
                     decode_t decode = audio->decode(aud_data, aud_size);
                     if (verbose>=1 && blocknum==0) {
                         audio_start_time = decode.timestamp;
-                        dlmessage("info: start time of audio is %lld, %s", audio_start_time, describe_time(audio_start_time));
+                        dlmessage("info: start time of audio is %lld, %s", audio_start_time, describe_timestamp(audio_start_time));
                     }
                     audio_end_time = mmax(decode.timestamp, audio_end_time);
 

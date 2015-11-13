@@ -261,3 +261,23 @@ tstamp_t get_stime()
     gettimeofday(&tv, NULL);
     return (tstamp_t)(tv.tv_usec*9/100) + tv.tv_sec+90000ll;
 }
+
+/* breakdown a 90kHz timestamp in human readable terms */
+const char *describe_timestamp(tstamp_t t)
+{
+    /* not thread safe */
+    static char s[32];
+
+    t /= 90;
+    int msec = t % 1000;
+    t /= 1000;
+    int sec = t % 60;
+    t /= 60;
+    int min = t % 60;
+    t /= 60;
+    int hour = t % 60;
+
+    snprintf(s, sizeof(s), "%02d:%02d:%02d.%03d", hour, min, sec, msec);
+
+    return s;
+}

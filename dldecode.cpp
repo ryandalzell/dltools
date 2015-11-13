@@ -16,8 +16,10 @@ dldecode::dldecode()
 {
     size = 0;
     data = NULL;
-    timestamp = 0;
     verbose = 0;
+    /* timestamp */
+    last_pts = 0;
+    timestamp = 0;
     /* debug */
     top_field_first = 1;
     blank_field = 0;
@@ -106,7 +108,7 @@ decode_t dlyuv::decode(unsigned char *uyvy, size_t uyvysize)
     }
 
     results.timestamp = timestamp;
-    timestamp += lround(90000.0/framerate);
+    timestamp += llround(90000.0/framerate);
 
     return results;
 }
@@ -193,7 +195,7 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
                     convert_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
                     results.size = width*height*2;
                     results.timestamp = timestamp;
-                    timestamp += lround(90000.0/framerate);
+                    timestamp += llround(90000.0/framerate);
                     return results;
                 }
                 break;
@@ -220,7 +222,6 @@ dlmpg123::dlmpg123()
 
     /* initialise the transport stream parser */
     pid = 0;
-    last_pts = -1;
 }
 
 dlmpg123::~dlmpg123()
@@ -359,7 +360,6 @@ dlliba52::dlliba52()
 
     /* initialise the transport stream parser */
     pid = 0;
-    last_pts = -1;
 }
 
 dlliba52::~dlliba52()
@@ -597,7 +597,8 @@ int dlhevc::attach(dlformat *f)
             /* read a chunk of input data */
             int n = format->read(data, size);
             if (n) {
-                err = de265_push_data(ctx, data, n, 0, NULL);
+                tstamp_t timestamp = format->get_timestamp();
+                err = de265_push_data(ctx, data, n, timestamp, NULL);
                 if (!de265_isOK(err)) {
                     dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
                 }
@@ -665,7 +666,9 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                     read = format->read(data, size);
                 }
                 if (read>0) {
-                    err = de265_push_data(ctx, data, read, 0, NULL);
+                    /* use most recent available timestamp */
+                    tstamp_t timestamp = format->get_timestamp();
+                    err = de265_push_data(ctx, data, read, timestamp, NULL);
                     if (!de265_isOK(err)) {
                         dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
                     }
@@ -694,11 +697,18 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
             yuv[2] = de265_get_image_plane(image, 2, &stride);
             convert_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
             results.size = width*height*2;
-            results.timestamp = timestamp;
-            timestamp += lround(90000.0/framerate);
+            tstamp_t pts = de265_get_image_PTS(image);
+            if (pts<0 || pts<=last_pts) {
+                /* extrapolate a timestamp if necessary */
+                pts = last_pts + llround(90000.0/framerate);
+            }
+            results.timestamp = pts;
+            last_pts = pts;
+
+            timestamp += llround(90000.0/framerate);
         }
 
-        /* timestamp render time */
+        /* measure render time */
         results.render_time = get_utime() - decode;
     } else {
         /* decode until a top field and bottom field have been deinterlaced */
@@ -721,7 +731,9 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                         read = format->read(data, size);
                     }
                     if (read>0) {
-                        err = de265_push_data(ctx, data, read, 0, NULL);
+                        /* use most recent available timestamp */
+                        tstamp_t timestamp = format->get_timestamp();
+                        err = de265_push_data(ctx, data, read, timestamp, NULL);
                         if (!de265_isOK(err)) {
                             dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
                         }
@@ -735,7 +747,7 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                 }
             }
 
-            /* timestamp decode time */
+            /* sum decode time */
             unsigned long long decode = get_utime();
             results.decode_time += decode - start;
 
@@ -762,16 +774,21 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                     field += !(top_field_first ^ field);
                 }
 
-                /* timestamp render time */
+                /* use timestamp from first field for display of deinterlaced frame */
+                if ((poc&1)==!top_field_first) {
+                    results.size = width*height*2;
+                    tstamp_t pts = de265_get_image_PTS(image);
+                    if (pts<0 || pts<=last_pts) {
+                        /* extrapolate a timestamp if necessary */
+                        pts = last_pts + llround(90000.0/framerate);
+                    }
+                    results.timestamp = pts;
+                    last_pts = pts;
+                }
+
+                /* sum render time */
                 results.render_time += get_utime() - decode;
             }
-        }
-
-        /* extract data from available frame */
-        if (image) {
-            results.size = width*height*2;
-            results.timestamp = timestamp;
-            timestamp += lround(90000.0/framerate);
         }
     }
 
