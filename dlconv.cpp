@@ -32,7 +32,7 @@ void convert_i420_uyvy(const unsigned char *i420, unsigned char *uyvy, int width
 
 void convert_yuv_uyvy(const unsigned char *yuv[3], unsigned char *uyvy, int width, int height, pixelformat_t pixelformat)
 {
-#ifdef HAVE_LIBYUV
+#ifndef HAVE_LIBYUV
     const unsigned char *ptr[3] = {yuv[0]};
     for (int y=0; y<height; y++) {
         if (pixelformat==I422) {
@@ -50,11 +50,11 @@ void convert_yuv_uyvy(const unsigned char *yuv[3], unsigned char *uyvy, int widt
         }
     }
 #else
-    libyuv::I420ToUYVY(yuv[0], width,
-               yuv[1], width/2,
-               yuv[2], width/2,
-               uyvy, 2*width,
-               width, height);
+    switch (pixelformat) {
+        case I420: libyuv::I420ToUYVY(yuv[0], width, yuv[1], width/2, yuv[2], width/2, uyvy, 2*width, width, height); break;
+        case I422: libyuv::I422ToUYVY(yuv[0], width, yuv[1], width/2, yuv[2], width/2, uyvy, 2*width, width, height); break;
+        default  : dlerror("unknown pixel format in conversion: %s", pixelformatname[pixelformat]);
+    }
 #endif
 }
 
@@ -125,11 +125,11 @@ void convert_top_field_yuv_uyvy(const unsigned char *top[3], unsigned char *uyvy
         uyvy += 2*width;
     }
 #else
-    libyuv::I420ToUYVY(top[0], width,
-               top[1], width/2,
-               top[2], width/2,
-               uyvy, 4*width,
-               width, height/2);
+    switch (pixelformat) {
+        case I420: libyuv::I420ToUYVY(top[0], width, top[1], width/2, top[2], width/2, uyvy, 4*width, width, height/2); break;
+        case I422: libyuv::I422ToUYVY(top[0], width, top[1], width/2, top[2], width/2, uyvy, 4*width, width, height/2); break;
+        default  : dlerror("unknown pixel format in conversion: %s", pixelformatname[pixelformat]);
+    }
 #endif
 }
 
@@ -156,10 +156,10 @@ void convert_bot_field_yuv_uyvy(const unsigned char *bot[3], unsigned char *uyvy
         }
     }
 #else
-    libyuv::I420ToUYVY(bot[0], width,
-               bot[1], width/2,
-               bot[2], width/2,
-               uyvy+2*width, 4*width,
-               width, height/2);
+    switch (pixelformat) {
+        case I420: libyuv::I420ToUYVY(bot[0], width, bot[1], width/2, bot[2], width/2, uyvy+2*width, 4*width, width, height/2); break;
+        case I422: libyuv::I422ToUYVY(bot[0], width, bot[1], width/2, bot[2], width/2, uyvy+2*width, 4*width, width, height/2); break;
+        default  : dlerror("unknown pixel format in conversion: %s", pixelformatname[pixelformat]);
+    }
 #endif
 }
