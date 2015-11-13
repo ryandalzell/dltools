@@ -592,6 +592,7 @@ int main(int argc, char *argv[])
             }
             switch (pic_height) {
                 case 480 : dis_height = 486; break;
+                case 744 : dis_height = 720; break; /* work around a bug in libde265 in 4:2:2 mode */
                 case 1088: dis_height = 1080; break;
             }
             if (pic_width<704 && pic_height<480) {
