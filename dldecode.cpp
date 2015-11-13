@@ -630,7 +630,7 @@ int dlhevc::attach(dlformat *f)
         }
 
         /* heuristics for determining interlaced */
-        if (width==1920 && (height==540 || height==576)) {
+        if (width==1920 && (height==540 || height==558 || height==576)) {
             interlaced = 1;
             height *= 2;
             framerate /= 2.0;

@@ -594,6 +594,7 @@ int main(int argc, char *argv[])
                 case 480 : dis_height = 486; break;
                 case 744 : dis_height = 720; break; /* work around a bug in libde265 in 4:2:2 mode */
                 case 1088: dis_height = 1080; break;
+                case 1116: dis_height = 1080; break; /* work around a bug in libde265 in 4:2:2 mode */
             }
             if (pic_width<704 && pic_height<480) {
                 if (framerate<29.0) {
