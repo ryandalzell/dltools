@@ -30,7 +30,7 @@ public:
     virtual const char *description() { return "unknown"; }
     virtual const char *name();
     virtual size_t size();
-    virtual size_t pos();
+    virtual off_t pos();
     virtual bool eof();
     virtual bool error();
     virtual bool timeout();
@@ -67,14 +67,17 @@ public:
     virtual const char *description() { return "file"; }
     virtual const char *name();
     virtual size_t size();
-    virtual size_t pos();
+    virtual off_t pos();
     virtual bool eof();
     virtual bool error();
 
 protected:
     /* file and buffer variables */
     const char *filename;
-    FILE *file;
+    int file;
+
+    /* status flags */
+    int eof_flag, error_flag;
 };
 
 /* memory mapped file souce class */
@@ -92,7 +95,7 @@ public:
 
     /* source metadata */
     virtual size_t size();
-    virtual size_t pos();
+    virtual off_t pos();
     virtual bool eof();
     virtual bool error();
 

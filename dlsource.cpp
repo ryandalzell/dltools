@@ -8,9 +8,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/select.h>
+#include <fcntl.h>
 
 #include "dlutil.h"
 #include "dlsource.h"
@@ -42,7 +44,7 @@ size_t dlsource::size()
     return 0;
 }
 
-size_t dlsource::pos()
+off_t dlsource::pos()
 {
     return 0;
 }
@@ -82,13 +84,15 @@ void dlsource::checksize(size_t size)
 dlfile::dlfile()
 {
     filename = NULL;
-    file = NULL;
+    file = -1;
+    eof_flag = 0;
+    error_flag = 0;
 }
 
 dlfile::~dlfile()
 {
-    if (file)
-        fclose(file);
+    if (file>2)
+        close(file);
 }
 
 int dlfile::open(const char *f)
@@ -97,8 +101,8 @@ int dlfile::open(const char *f)
     filename = f;
 
     /* open the input file */
-    file = fopen(filename, "rb");
-    if (!file)
+    file = ::open(filename, O_RDONLY | O_LARGEFILE);
+    if (file<0)
         dlerror("error: failed to open input file \"%s\"", filename);
 
     return 0;
@@ -106,7 +110,7 @@ int dlfile::open(const char *f)
 
 int dlfile::rewind()
 {
-    int r = fseek(file, 0, SEEK_SET);
+    int r = lseek(file, 0, SEEK_SET);
     if (r<0)
         dlerror("failed to seek in file \"%s\"", filename);
 
@@ -128,9 +132,11 @@ filetype_t dlfile::autodetect()
 
 size_t dlfile::read(unsigned char *buf, size_t bytes)
 {
-    size_t read = fread(buf, 1, bytes, file);
+    size_t read = ::read(file, buf, bytes);
     if (read<0)
         dlerror("error: failed to read from input file \"%s\"", filename);
+    else if (read==0)
+        eof_flag = 1;
 
     return read;
 }
@@ -140,9 +146,11 @@ const unsigned char* dlfile::read(size_t *bytes)
     /* check internal buffer is large enough */
     checksize(*bytes);
 
-    size_t read = fread(buffer, 1, *bytes, file);
+    size_t read = ::read(file, buffer, *bytes);
     if (read<0)
         dlerror("error: failed to read from input file \"%s\"", filename);
+    else if (read==0)
+        eof_flag = 1;
     *bytes = read;
 
     return buffer;
@@ -157,24 +165,27 @@ size_t dlfile::size()
 {
     /* stat the input file */
     struct stat stat;
-    fstat(fileno(file), &stat);
+    fstat(file, &stat);
 
     return stat.st_size;
 }
 
-size_t dlfile::pos()
+off_t dlfile::pos()
 {
-    return ftello(file);
+    off_t r = lseek(file, 0, SEEK_CUR);
+    if (r<0)
+        error_flag = 1;
+    return r;
 }
 
 bool dlfile::eof()
 {
-    return feof(file);
+    return eof_flag;
 }
 
 bool dlfile::error()
 {
-    return ferror(file);
+    return error_flag;
 }
 
 /* memory mapped file source class */
@@ -197,7 +208,7 @@ int dlmmap::open(const char *f)
     length = dlfile::size();
     if (length==0)
         dlexit("error: input file is empty");
-    addr = (unsigned char *)mmap(NULL, length, PROT_READ, MAP_PRIVATE, fileno(file), 0);
+    addr = (unsigned char *)mmap(NULL, length, PROT_READ, MAP_PRIVATE, file, 0);
     if (addr==MAP_FAILED)
         dlerror("error: failed to memory map input file \"%s\"", filename);
     ptr = addr;
@@ -241,7 +252,7 @@ size_t dlmmap::size()
     return length;
 }
 
-size_t dlmmap::pos()
+off_t dlmmap::pos()
 {
     return ptr-addr;
 }
