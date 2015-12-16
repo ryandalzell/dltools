@@ -761,21 +761,46 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                 yuv[1] = de265_get_image_plane(image, 1, &stride);
                 yuv[2] = de265_get_image_plane(image, 2, &stride);
 
-                /* use poc to decide field order, this works around a potential bug in libde265 */
+                /* get poc and field order info from decoder */
                 int poc = de265_get_image_picture_order_count(image);
+                enum de265_field_order field_order = de265_get_image_field_order(image);
+
+                /* determine field order of current picture */
+                int top_field;
+                switch (field_order) {
+                    case de265_top_field:
+                    case de265_bottom_field:
+                        top_field = field_order==de265_top_field;
+                        break;
+
+                    case de265_top_field_prev_bottom_field:
+                    case de265_bottom_field_prev_top_field:
+                        top_field = field_order==de265_top_field_prev_bottom_field;
+                        break;
+
+                    case de265_top_field_next_bottom_field:
+                    case de265_bottom_field_next_top_field:
+                        top_field = field_order==de265_top_field_next_bottom_field;
+                        break;
+
+                    default:
+                        /* guess using poc */
+                        top_field = (poc&1)==0;
+                        break;
+                }
 
                 /* deinterlace */
-                if ((poc&1)==!top_field_first) { /* works for negative poc too */
+                if (top_field==top_field_first) {
                     convert_top_field_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
                     /* move field on if it is the correct order */
                     field += (top_field_first ^ field);
-                } else if ((poc&1)==top_field_first) {
+                } else if (top_field==!top_field_first) {
                     convert_bot_field_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
                     field += !(top_field_first ^ field);
                 }
 
                 /* use timestamp from first field for display of deinterlaced frame */
-                if ((poc&1)==!top_field_first) {
+                if (top_field==top_field_first) {
                     results.size = width*height*2;
                     tstamp_t pts = de265_get_image_PTS(image);
                     if (pts<0 || pts<=last_pts) {
