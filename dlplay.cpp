@@ -396,11 +396,12 @@ int main(int argc, char *argv[])
         dlsource *source = NULL;
         if (strncmp(filename, "udp://", 6)==0) {
             /* determine address, if given */
-            const char *address = filename + 6;
+            char address[32];
+            strncpy(address, filename + 6, sizeof(address));
 
             /* determine port number, if given */
             const char *port = "1234";
-            char *colon = strchr(filename+6, ':');
+            char *colon = strchr(address, ':');
             if (colon) {
                 port = colon+1;
                 *colon = '\0'; /* mark end of address */
