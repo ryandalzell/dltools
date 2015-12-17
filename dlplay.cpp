@@ -396,11 +396,12 @@ int main(int argc, char *argv[])
         dlsource *source = NULL;
         if (strncmp(filename, "udp://", 6)==0) {
             /* determine address, if given */
-            const char *address = filename + 6;
+            char address[32];
+            strncpy(address, filename + 6, sizeof(address));
 
             /* determine port number, if given */
             const char *port = "1234";
-            char *colon = strchr(filename+6, ':');
+            char *colon = strchr(address, ':');
             if (colon) {
                 port = colon+1;
                 *colon = '\0'; /* mark end of address */
@@ -444,36 +445,75 @@ int main(int argc, char *argv[])
         } else
             dlexit("could not open url \"%s\"", filename);
 
-        /* create the file format decoder and video decoder */
+        /* create the file format filter and video and audio decoders */
         dlformat *format = NULL;
         switch (filetype) {
             case TS :
             {
-                /* look for a video pid */
-                int stream_type, stream_types[] = { 0x02, 0x80, 0x1B, 0x24, 0x06 };
-                int pid = find_pid_for_stream_type(stream_types, sizeof(stream_types)/sizeof(int), &stream_type, source);
-                source->rewind();
+                /* create a format filter for transport stream */
+                dltstream *ts = new dltstream;
 
-                if (pid) {
-                    vid_pid = pid;
+                /* look for a video pid */
+                int stream_type = 0;
+                if (!audioonly) {
+                    int video_stream_types[] = { 0x02, 0x80, 0x1B, 0x24, 0x06 };
+                    vid_pid = find_pid_for_stream_type(video_stream_types, sizeof(video_stream_types)/sizeof(int), &stream_type, source);
+                    source->rewind();
+                }
+
+                if (vid_pid) {
+                    /* found something we can decode */
+                    ts->register_pid(vid_pid);
+
                     switch (stream_type) {
                         case 0x02:
                         case 0x80:
-                            format = new dltstream(pid);
                             video = new dlmpeg2;
                             break;
 
                         case 0x24:
                         case 0x1b: // included h.264 stream type for development compatibility.
                         case 0x06:
-                            format = new dltstream(pid);
                             video = new dlhevc;
                             break;
                     }
                 } else
                     audioonly = 1;
 
-                /* TODO look for an audio pid */
+                /* look for an audio pid */
+                if (!videoonly) {
+                    //int audio_stream_types[] = { 0x03, 0x04, 0x81, 0x1C };
+                    int audio_stream_types[] = { 0x03, 0x04 };
+                    aud_pid = find_pid_for_stream_type(audio_stream_types, sizeof(audio_stream_types)/sizeof(int), &stream_type, source);
+                    source->rewind();
+                }
+
+                if (aud_pid) {
+                    /* found something we can decode */
+                    ts->register_pid(aud_pid);
+
+                    switch (stream_type) {
+                        case 0x03:
+                        case 0x04:
+                            audio = new dlmpg123;
+                            aud_size = 32768;
+                            break;
+
+                        case 0x1c:
+                        case 0x81:
+                            audio = new dlliba52;
+                            aud_size = 6*256*2*sizeof(uint16_t);
+                            break;
+                    }
+                } else
+                    videoonly = 1;
+
+                if (verbose>=0)
+                    dlmessage("video pid is %d and audio pid is %d", vid_pid, aud_pid);
+
+                /* cast down to format pointer */
+                format = (dlformat *)ts;
+
                 break;
             }
 
@@ -485,16 +525,19 @@ int main(int argc, char *argv[])
                 if (firstframe)
                     video->rewind(firstframe);
 
+                videoonly = 1;
                 break;
 
             case M2V :
                 format = new dlestream;
                 video = new dlmpeg2;
+                videoonly = 1;
                 break;
 
             case HEVC:
                 format = new dlestream;
                 video = new dlhevc;
+                videoonly = 1;
                 break;
 
             default: dlexit("unknown input file type");
@@ -503,12 +546,12 @@ int main(int argc, char *argv[])
         if (!format || format->attach(source)<0)
             dlexit("failed to initialise the file format decoder");
 
-        dlmessage("found %s %s from %s source", video->description(), format->description(), source->description());
+        dlmessage("found %s and %s in %s from %s source", video? video->description() : "no video", audio? audio->description() : "no audio", format->description(), source->description());
 
         /* initialise the video decoder */
         if (!audioonly) {
             /* figure out the mode to set */
-            if (video->attach(format)<0)
+            if (video->attach(format, vid_pid)<0)
                 dlexit("failed to initialise the video decoder");
             pic_width = video->width;
             pic_height = video->height;
@@ -520,41 +563,17 @@ int main(int argc, char *argv[])
             video->set_verbose(verbose);
         }
 
-        /* create the audio encoder */
-#if 0
-        switch (filetype) {
-            case M2VTS:
-
-                /* try to attach a mpeg1 audio decoder */
-                if (audio==NULL && !videoonly) {
-                    audio = new dlmpg123;
-                    aud_size = 32768;
-                    if (audio->attach(format)<0) {
-                        delete audio;
-                        audio = NULL;
-                    }
-                }
-
-                /* try to attach an ac3 audio decoder */
-                if (audio==NULL && !videoonly) {
-                    audio = new dlliba52;
-                    aud_size = 6*256*2*sizeof(uint16_t);
-                    if (audio->attach(format)<0) {
-                        delete audio;
-                        audio = NULL;
-                    }
-                }
-
-                /* note there may not be an audio stream in the file
-                 * in which case the audio decoder will be null */
-                if (audio)
-                    aud_data = (unsigned char *) malloc(aud_size);
-
-                break;
-
-            default: break;
+        /* initialise the audio encoder */
+        if (!videoonly && aud_pid) {
+            if (audio->attach(format, aud_pid)<0) {
+                delete audio;
+                audio = NULL;
+            }
+            /* note there may not be an audio stream in the file
+             * in which case the audio decoder will be null */
+            if (audio)
+                aud_data = (unsigned char *) malloc(aud_size);
         }
-#endif
 
         /* sanity check */
         if (!video && !audio)
@@ -673,7 +692,7 @@ int main(int argc, char *argv[])
         /* preroll as many video frames as possible */
         preroll = 1;
         IDeckLinkMutableVideoFrame *frame = NULL;
-        decode_t decode = {0, 0};
+        decode_t vid, aud;
 
         /* playback timestamp boundaries */
         tstamp_t video_start_time = 1ll<<34;
@@ -818,13 +837,13 @@ int main(int argc, char *argv[])
 
             /* enqueue previous frame */
             if (frame && video) {
-                HRESULT result = output->ScheduleVideoFrame(frame, decode.timestamp, lround(90000.0/framerate), 90000);
+                HRESULT result = output->ScheduleVideoFrame(frame, vid.timestamp, lround(90000.0/framerate), 90000);
                 if (result != S_OK) {
                     switch (result) {
                         case E_ACCESSDENIED : fprintf(stderr, "%s: error: frame %d: video output disabled when queueing video frame\n", appname, queuenum); break;
                         case E_OUTOFMEMORY  : fprintf(stderr, "%s: error: frame %d: too many frames are scheduled when queueing video frame\n", appname, queuenum);
                         case E_INVALIDARG   : fprintf(stderr, "%s: error: frame %d: frame attributes are invalid when queueing video frame\n", appname, queuenum); break;
-                        default             : fprintf(stderr, "%s: error: frame %d: failed to schedule video frame, timestamp %s\n", appname, queuenum, describe_timestamp(decode.timestamp)); break;
+                        default             : fprintf(stderr, "%s: error: frame %d: failed to schedule video frame, timestamp %s\n", appname, queuenum, describe_timestamp(vid.timestamp)); break;
                     }
                     break;
                 }
@@ -866,30 +885,30 @@ int main(int argc, char *argv[])
                 unsigned char *uyvy = (unsigned char *)voidptr;
 
                 /* read the next frame */
-                decode = video->decode(uyvy, frame->GetRowBytes()*frame->GetHeight());
-                if (decode.size==0) {
+                vid = video->decode(uyvy, frame->GetRowBytes()*frame->GetHeight());
+                if (vid.size==0) {
                     dlmessage("error: failed to decode video frame %d in file \"%s\"", framenum, filename);
                     if (source->timeout())
                         restart = 1; /* wait for next sequence */
                     break;
                 }
-                video_start_time = mmin(decode.timestamp, video_start_time);
-                video_end_time = mmax(decode.timestamp, video_end_time);
+                video_start_time = mmin(vid.timestamp, video_start_time);
+                video_end_time = mmax(vid.timestamp, video_end_time);
 
-                if (verbose>=2)
-                    dlmessage("info: frame %d timestamp %s, decode %.1fms render %.1fms", framenum, describe_timestamp(decode.timestamp), decode.decode_time/1000.0, decode.render_time/1000.0);
+                if (verbose>=3)
+                    dlmessage("info: frame %d timestamp %s, decode %.1fms render %.1fms", framenum, describe_timestamp(vid.timestamp), vid.decode_time/1000.0, vid.render_time/1000.0);
                 framenum++;
 
                 /* store the frame in the history buffer */
                 if (num_history_frames<MAX_HISTORY_FRAMES) {
                     history_buffer[num_history_frames].frame = frame;
-                    history_buffer[num_history_frames].timestamp = decode.timestamp;
+                    history_buffer[num_history_frames].timestamp = vid.timestamp;
                     num_history_frames++;
                 } else {
                     history_buffer[0].frame->Release();
                     memmove(&history_buffer[0], &history_buffer[1], (MAX_HISTORY_FRAMES-1)*sizeof(history_frame_t));
                     history_buffer[MAX_HISTORY_FRAMES-1].frame = frame;
-                    history_buffer[MAX_HISTORY_FRAMES-1].timestamp = decode.timestamp;
+                    history_buffer[MAX_HISTORY_FRAMES-1].timestamp = vid.timestamp;
                 }
             }
 
@@ -901,26 +920,31 @@ int main(int argc, char *argv[])
                     if (output->GetBufferedAudioSampleFrameCount(&buffered) != S_OK)
                         dlexit("failed to get audio buffer level");
 
-                    if (buffered >= 48000)
+                    /* maintain audio buffer at >=0.5 secs */
+                    if (buffered >= 24000)
                         break;
 
                     /* decode audio */
-                    decode_t decode = audio->decode(aud_data, aud_size);
+                    aud = audio->decode(aud_data, aud_size);
                     if (verbose>=1 && blocknum==0) {
-                        audio_start_time = decode.timestamp;
+                        audio_start_time = aud.timestamp;
                         dlmessage("info: start time of audio is %lld, %s", audio_start_time, describe_timestamp(audio_start_time));
                     }
-                    audio_end_time = mmax(decode.timestamp, audio_end_time);
+                    audio_end_time = mmax(aud.timestamp, audio_end_time);
 
 
                     /* buffer decoded audio */
                     uint32_t scheduled;
-                    HRESULT result = output->ScheduleAudioSamples(aud_data, decode.size/2, decode.timestamp, 90000, &scheduled);
-                    //dlmessage("buffer level %d: decoded %d bytes at timestamp %lld and scheduled %d samples", buffered, decode.size, decode.timestamp, scheduled);
+                    HRESULT result = output->ScheduleAudioSamples(aud_data, aud.size/2, aud.timestamp, 90000, &scheduled);
+                    //dlmessage("buffer level %d: decoded %d bytes at timestamp %s and scheduled %d samples", buffered, aud.size, describe_timestamp(aud.timestamp), scheduled);
                     if (result != S_OK) {
                         dlmessage("error: block %d: failed to schedule audio data", blocknum);
                         delete audio;
                         audio = NULL;
+                        break;
+                    }
+                    if (scheduled!=aud.size/2) {
+                        dlmessage("error: failed to schedule all the audio data: %d/%d samples", scheduled, aud.size/2);
                         break;
                     }
                     blocknum++;
@@ -935,6 +959,31 @@ int main(int argc, char *argv[])
                 /* start the playback */
                 if (output->StartScheduledPlayback(audio_start_time, 90000, 1.0) != S_OK)
                     dlexit("error: failed to start audio playback");
+            }
+
+            /* loop debugging */
+            if (verbose>=2) {
+                static tstamp_t last_vid, last_aud;
+                if (last_vid && last_aud) {
+                    tstamp_t vdiff = vid.timestamp - last_vid;
+                    tstamp_t adiff = aud.timestamp - last_aud;
+                    char v[32], a[32];
+                    strncpy(v, describe_timestamp(vdiff), sizeof(v));
+                    strncpy(a, describe_timestamp(adiff), sizeof(a));
+                    dlmessage("loop: vid=%s aud=%s", v, a);
+                    if (video && vdiff<=0)
+                        dlexit("video went back in time: %s", describe_timestamp(vdiff));
+                    if (audio && adiff<0)
+                        dlexit("audio went back in time: %s", describe_timestamp(adiff));
+                }
+                else if (last_vid) {
+                    tstamp_t vdiff = vid.timestamp - last_vid;
+                    dlmessage("loop: vid=%s", describe_timestamp(vdiff));
+                    if (vdiff<=0)
+                        dlexit("video went back in time: %s", describe_timestamp(vdiff));
+                }
+                last_vid = vid.timestamp;
+                last_aud = aud.timestamp;
             }
         }
 

@@ -14,12 +14,17 @@
 
 dldecode::dldecode()
 {
+    /* source */
+    format = NULL;
+    mux = 0;
+    /* buffer */
     size = 0;
     data = NULL;
     verbose = 0;
     /* timestamp */
     last_pts = 0;
     timestamp = 0;
+    frames_since_pts = 0;
     /* debug */
     top_field_first = 1;
     blank_field = 0;
@@ -31,10 +36,11 @@ dldecode::~dldecode()
         free(data);
 }
 
-int dldecode::attach(dlformat *f)
+int dldecode::attach(dlformat *f, int m)
 {
     /* attach the input format */
     format = f;
+    mux = m;
     return 0;
 }
 
@@ -53,10 +59,11 @@ void dldecode::set_blank_field(int order)
     blank_field = order;
 }
 
-int dlyuv::attach(dlformat *f)
+int dlyuv::attach(dlformat *f, int m)
 {
     /* attach the input source */
     format = f;
+    mux = m;
 
     /* determine the video format */
     if (divine_video_format(format->get_source()->name(), &width, &height, &interlaced, &framerate, &pixelformat)<0)
@@ -129,10 +136,11 @@ dlmpeg2::~dlmpeg2()
         mpeg2_close(mpeg2dec);
 }
 
-int dlmpeg2::attach(dlformat *f)
+int dlmpeg2::attach(dlformat *f, int m)
 {
     /* attach the input source */
     format = f;
+    mux = m;
 
     /* allocate the read buffer */
     size = 32*1024;
@@ -145,9 +153,14 @@ int dlmpeg2::attach(dlformat *f)
         mpeg2_state_t state = mpeg2_parse(mpeg2dec);
         switch (state) {
             case STATE_BUFFER:
-                /* for elementary stream we can just read a chunk of data from input */
-                read = format->read(data, size);
-                mpeg2_buffer(mpeg2dec, data, data+read);
+                /* read a chunk of data from input */
+                read = format->read(data, size, mux);
+                if (read>0) {
+                    mpeg2_buffer(mpeg2dec, data, data+read);
+                    /* tag with most recent available timestamp */
+                    tstamp_t pts = format->get_timestamp(mux);
+                    mpeg2_tag_picture(mpeg2dec, (uint32_t)pts, uint32_t(pts>>32));
+                }
                 break;
 
             case STATE_SEQUENCE:
@@ -169,22 +182,25 @@ int dlmpeg2::attach(dlformat *f)
 
 decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
 {
-    decode_t results = {0, 0};
+    decode_t results = {0, -1ll, 0ll, 0ll};
 
     int read;
     do {
         mpeg2_state_t state = mpeg2_parse(mpeg2dec);
         switch (state) {
             case STATE_BUFFER:
-                /* for elementary stream we can just read a chunk of data from input */
-                read = format->read(data, size);
+                /* read a chunk of data from input */
+                read = format->read(data, size, mux);
                 if (read==0 || format->get_source()->eof()) {
                     format->get_source()->rewind();
-                    read = format->read(data, size);
+                    read = format->read(data, size, mux);
                 }
-                if (read>0)
+                if (read>0) {
                     mpeg2_buffer(mpeg2dec, data, data+read);
-                else
+                    /* tag with most recent available timestamp */
+                    tstamp_t pts = format->get_timestamp(mux);
+                    mpeg2_tag_picture(mpeg2dec, (uint32_t)pts, uint32_t(pts>>32));
+                } else
                     return results;
                 break;
 
@@ -194,8 +210,13 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
                     const unsigned char *yuv[3] = {info->display_fbuf->buf[0], info->display_fbuf->buf[1], info->display_fbuf->buf[2]};
                     convert_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
                     results.size = width*height*2;
-                    results.timestamp = timestamp;
-                    timestamp += llround(90000.0/framerate);
+                    tstamp_t pts = ((tstamp_t)(info->current_picture->tag2)<<32) | (tstamp_t)info->current_picture->tag;
+                    if (pts<0 || pts<=last_pts) {
+                        /* extrapolate a timestamp if necessary */
+                        pts = last_pts + llround(90000.0/framerate);
+                    }
+                    results.timestamp = last_pts = pts;
+
                     return results;
                 }
                 break;
@@ -219,9 +240,6 @@ dlmpg123::dlmpg123()
         dlexit("failed to create mpg123 handle");
     //mpg123_param(m, MPG123_VERBOSE, 2, 0);
     mpg123_open_feed(m);
-
-    /* initialise the transport stream parser */
-    pid = 0;
 }
 
 dlmpg123::~dlmpg123()
@@ -230,57 +248,28 @@ dlmpg123::~dlmpg123()
     mpg123_exit();
 }
 
-int dlmpg123::attach(dlformat *f)
+int dlmpg123::attach(dlformat *f, int x)
 {
     /* attach the input source */
     format = f;
+    mux = x;
 
     /* allocate the read buffer */
     size = 184;
     data = (unsigned char *) malloc(size);
-#if 0
-    /* skip psi parsing if audio pid specified */
-    if (pid==0) {
-        int stream_types[] = { 0x03, 0x04 };
-        pid = find_pid_for_stream_type(stream_types, sizeof(stream_types)/sizeof(int), source);
-    }
-
-    if (pid==0)
-        /* no mpeg audio pid found */
-        return -1;
-    dlmessage("mpeg audio pid is %d", pid);
-
-    /* find the first pes with a pts */
-    do {
-        int read = next_pes_packet_data(data, &pts, pid, 1, source);
-        if (read==0) {
-            if (format->get_source()->eof() || format->get_source()->error()) {
-                dlmessage("failed to sync mpa audio");
-                pid = 0;
-                return -1;
-            }
-        }
-
-        /* look for first pts */
-        if (pts>=0) {
-            last_pts = pts;
-            frames_since_pts = 0;
-        }
-    }
-    while (last_pts<0);
 
     /* find the audio format */
     do {
         size_t bytes;
-        int read = next_pes_packet_data(data, &pts, pid, 0, source);
+        int read = format->read(data, size, mux);
         if (read==0) {
             if (format->get_source()->eof() || format->get_source()->error()) {
                 dlmessage("failed to sync mpa audio");
-                pid = 0;
                 return -1;
             }
         }
 
+        long long pts = format->get_timestamp(mux);
         if (pts>=0) {
             last_pts = pts;
             frames_since_pts = 0;
@@ -291,7 +280,6 @@ int dlmpg123::attach(dlformat *f)
         //ret = mpg123_feed(m, data, read);
         if (ret==MPG123_ERR || ret==MPG123_DONE) {
             dlmessage("failed to determine format of audio data: %s", mpg123_strerror(m));
-            pid = 0;
             return -1;
         }
     } while (ret!=MPG123_NEW_FORMAT);
@@ -300,21 +288,20 @@ int dlmpg123::attach(dlformat *f)
     int channels, enc;
     mpg123_getformat(m, &rate, &channels, &enc);
     dlmessage("audio format is  %ldHz x%d channels", rate, channels);
-#endif
+
     return 0;
 }
 
 decode_t dlmpg123::decode(unsigned char *samples, size_t sampsize)
 {
-    decode_t results = {0, -1};
+    decode_t results = {0, -1, 0ll, 0ll};
 
     /* feed the audio decoder */
     do {
-        int read = format->read(data, size);
+        int read = format->read(data, size, mux);
         if (read==0) {
             if (format->get_source()->error()) {
                 dlmessage("error reading input stream \"%s\": %s", format->get_source()->name(), strerror(errno));
-                pid = 0;
                 results.size = 0;
                 return results;
             }
@@ -328,8 +315,9 @@ decode_t dlmpg123::decode(unsigned char *samples, size_t sampsize)
             }
         }
 
-        if (pts>=0) {
-            last_pts = pts;
+        long long pts = format->get_timestamp(mux);
+        if (pts>=0 && pts>last_pts) {
+            results.timestamp = last_pts = pts;
             frames_since_pts = 0;
         }
 
@@ -356,10 +344,11 @@ dlliba52::dlliba52()
 
     /* initialise the buffers */
     ac3_length = 0;
+    ac3_size = 0;
     ac3_frame = NULL;
 
     /* initialise the transport stream parser */
-    pid = 0;
+    last_pts = -1;
 }
 
 dlliba52::~dlliba52()
@@ -368,47 +357,37 @@ dlliba52::~dlliba52()
         a52_free(a52_state);
 }
 
-int dlliba52::attach(dlformat *f)
+int dlliba52::attach(dlformat *f, int m)
 {
     /* attach the input source */
     format = f;
+    mux = m;
 
     /* allocate the read buffer */
     size = 184;
     data = (unsigned char *) malloc(size);
-#if 0
-    /* skip psi parsing if audio pid specified */
-    if (pid==0) {
-        int stream_types[] = { 0x81 };
-        pid = find_pid_for_stream_type(stream_types, sizeof(stream_types)/sizeof(int), source);
-    }
-
-    if (pid==0)
-        /* no ac3 audio pid found */
-        return -1;
-    dlmessage("ac3 audio pid is %d", pid);
 
     /* find the ac3 audio format */
     int flags = 0, sample_rate = 0, bit_rate = 0;
 
     /* allocate the audio buffers */
-    ac3_frame = (unsigned char *)malloc(3840+188);
+    ac3_size = 3840+188;
+    ac3_frame = (unsigned char *)malloc(ac3_size);
 
     unsigned int sync = 0;
     size_t read;
     int ret = 0;
     do {
-        long long pts;
-        read = next_pes_packet_data(data, &pts, pid, 1, source);
+        read = format->read(data, size, mux);
         if (read==0) {
             if (format->get_source()->eof() || format->get_source()->error()) {
                 dlmessage("failed to sync ac3 audio");
-                pid = 0;
                 break;
             }
         }
 
         /* look for first pts */
+        tstamp_t pts = format->get_timestamp(mux);
         if (pts>=0) {
             last_pts = pts;
             frames_since_pts = 0;
@@ -420,11 +399,12 @@ int dlliba52::attach(dlformat *f)
             if (ret)
                 break;
         }
-    } while (ret==0 && last_pts<0);
+    } while (ret==0 || last_pts<0);
 
     /* queue the synchronised data */
     memcpy(ac3_frame, data+sync, read-sync);
     ac3_length = read-sync;
+    dlmessage("found a52 frame of %d bytes, %d in buffer, initial pts=%s", ret, ac3_length, describe_timestamp(last_pts));
 
     /* report the format parameters */
     int channels = 0;
@@ -443,26 +423,33 @@ int dlliba52::attach(dlformat *f)
     }
     int lfe_channel = flags&A52_LFE? 1 : 0;
     dlmessage("audio format is %.1fkHz %d.%d channels @%dbps", sample_rate/1000.0, channels, lfe_channel, bit_rate);
-#endif
+
     return 0;
+}
+
+static inline int blah (int32_t i)
+{
+    if (i > 0x43c07fff)
+        return 32767;
+    else if (i < 0x43bf8000)
+        return -32768;
+    return i - 0x43c00000;
 }
 
 decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
 {
-    decode_t results = {0, -1};
+    decode_t results = {0, -1ll, 0ll, 0ll};
     int read;
-    long long pts;
 
     /* sync to next frame */
     int length = 0;
     int flags, sample_rate, bit_rate;
     do {
         if (ac3_length<7) {
-            read = format->read(data, size);
+            read = format->read(data, size, mux);
             if (read==0) {
                 if (format->get_source()->error()) {
                     dlmessage("error reading input stream \"%s\": %s", format->get_source()->name(), strerror(errno));
-                    pid = 0;
                     results.size = 0;
                     return results;
                 }
@@ -471,9 +458,12 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
                     continue;
                 }
             }
-            if (pts>=0) {
+
+            tstamp_t pts = format->get_timestamp(mux);
+            if (pts>=0 && pts>last_pts) {
                 last_pts = pts;
                 frames_since_pts = 0;
+                dlmessage("audio pts=%s", describe_timestamp(pts));
             }
             memcpy(ac3_frame+ac3_length, data, read);
             ac3_length += read;
@@ -481,26 +471,31 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
 
         /* look for sync in ac3 stream */
         int sync;
-        for (sync=0; sync<ac3_length-7; sync++) {
+        for (sync=0; sync<=ac3_length-7; sync++) {
             length = a52_syncinfo(ac3_frame+sync, &flags, &sample_rate, &bit_rate);
             if (length)
                 break;
+            //else
+            //    dlmessage("ac_length=%d ac3_frame=%02x %02x %02x %02x", ac3_length, *(ac3_frame+sync+0), *(ac3_frame+sync+1), *(ac3_frame+sync+2), *(ac3_frame+sync+3));
         }
 
-        //length = a52_syncinfo(ac3_frame, &flags, &sample_rate, &bit_rate);
-        //if (length==0)
-        //    fprintf(stderr, "length=%d ac_length=%d ac3_frame=%02x %02x %02x %02x\n", length, ac3_length, ac3_frame[0], ac3_frame[1], ac3_frame[2], ac3_frame[3]);
-    } while (0);
+        /* if no luck */
+        if (length==0) {
+            /* reset buffer for next loop */
+            memmove(ac3_frame, ac3_frame+sync, ac3_length-sync);
+            ac3_length = ac3_length-sync;
+        }
+
+    } while (length==0);
 
     /* prepare the next frame for decoding */
     do {
         /* read data from transport stream to complete frame */
         while (ac3_length < length) {
-            read = format->read(data, size);
+            read = format->read(data, size, mux);
             if (read==0) {
                 if (format->get_source()->error()) {
                     dlmessage("error reading input stream \"%s\": %s", format->get_source()->name(), strerror(errno));
-                    pid = 0;
                     break;
                 }
                 if (format->get_source()->eof()) {
@@ -522,28 +517,26 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
     /* decode audio frame */
     int i, j;
     for (i=0; i<6; i++) {
-        uint16_t *ac3_frame = (uint16_t *) frame;
+        int32_t *f = (int32_t *)sample;
 
         a52_block(a52_state);
 
         /* convert decoded samples to integer and interleave */
         for (j=0; j<256; j++) {
-            ac3_frame[i*512+j*2  ] = (int16_t) lround(sample[j    ]);
-            ac3_frame[i*512+j*2+1] = (int16_t) lround(sample[j+256]);
+            frame[i*512+j*2  ] = (int16_t) blah(f[j    ]); //lround(sample[j    ]);
+            frame[i*512+j*2+1] = (int16_t) blah(f[j+256]); //lround(sample[j+256]);
         }
     }
     results.size = 6*256*2;
 
     /* keep leftover data for next frame */
     if (ac3_length-length)
-        memcpy(ac3_frame, ac3_frame+length, ac3_length-length);
+        memmove(ac3_frame, ac3_frame+length, ac3_length-length);
     ac3_length = ac3_length-length;
 
-    /* extrapolate a timestamp if necessary */
-    if (results.timestamp<0) {
-        frames_since_pts++;
-        results.timestamp = last_pts + (tstamp_t)(frames_since_pts*90000ll/48000ll*6ll*256ll);
-    }
+    /* extrapolate a timestamp as necessary */
+    results.timestamp = last_pts + (tstamp_t)(frames_since_pts*90000ll/48000ll*6ll*256ll);
+    frames_since_pts++;
 
     return results;
 }
@@ -573,10 +566,11 @@ dlhevc::~dlhevc()
         de265_free_decoder(ctx);
 }
 
-int dlhevc::attach(dlformat *f)
+int dlhevc::attach(dlformat *f, int m)
 {
     /* attach the input source */
     format = f;
+    mux = m;
 
     /* allocate the read buffer */
     size = 32*1024;
@@ -595,9 +589,9 @@ int dlhevc::attach(dlformat *f)
             image = de265_peek_next_picture(ctx);
         else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
             /* read a chunk of input data */
-            int n = format->read(data, size);
+            int n = format->read(data, size, mux);
             if (n) {
-                tstamp_t timestamp = format->get_timestamp();
+                tstamp_t timestamp = format->get_timestamp(mux);
                 err = de265_push_data(ctx, data, n, timestamp, NULL);
                 if (!de265_isOK(err)) {
                     dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
@@ -660,14 +654,14 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                 image = de265_get_next_picture(ctx);
             else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
                 /* read a chunk of input data */
-                int read = format->read(data, size);
+                int read = format->read(data, size, mux);
                 if (read==0 || format->get_source()->eof()) {
                     format->get_source()->rewind();
-                    read = format->read(data, size);
+                    read = format->read(data, size, mux);
                 }
                 if (read>0) {
                     /* use most recent available timestamp */
-                    tstamp_t timestamp = format->get_timestamp();
+                    tstamp_t timestamp = format->get_timestamp(mux);
                     err = de265_push_data(ctx, data, read, timestamp, NULL);
                     if (!de265_isOK(err)) {
                         dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
@@ -702,10 +696,7 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                 /* extrapolate a timestamp if necessary */
                 pts = last_pts + llround(90000.0/framerate);
             }
-            results.timestamp = pts;
-            last_pts = pts;
-
-            timestamp += llround(90000.0/framerate);
+            results.timestamp = last_pts = pts;
         }
 
         /* measure render time */
@@ -725,14 +716,14 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                     image = de265_get_next_picture(ctx);
                 } else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
                     /* read a chunk of input data */
-                    int read = format->read(data, size);
+                    int read = format->read(data, size, mux);
                     if (read==0 || format->get_source()->eof()) {
                         format->get_source()->rewind();
-                        read = format->read(data, size);
+                        read = format->read(data, size, mux);
                     }
                     if (read>0) {
                         /* use most recent available timestamp */
-                        tstamp_t timestamp = format->get_timestamp();
+                        tstamp_t timestamp = format->get_timestamp(mux);
                         err = de265_push_data(ctx, data, read, timestamp, NULL);
                         if (!de265_isOK(err)) {
                             dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
@@ -761,29 +752,53 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                 yuv[1] = de265_get_image_plane(image, 1, &stride);
                 yuv[2] = de265_get_image_plane(image, 2, &stride);
 
-                /* use poc to decide field order, this works around a potential bug in libde265 */
+                /* get poc and field order info from decoder */
                 int poc = de265_get_image_picture_order_count(image);
+                enum de265_field_order field_order = de265_get_image_field_order(image);
+
+                /* determine field order of current picture */
+                int top_field;
+                switch (field_order) {
+                    case de265_top_field:
+                    case de265_bottom_field:
+                        top_field = field_order==de265_top_field;
+                        break;
+
+                    case de265_top_field_prev_bottom_field:
+                    case de265_bottom_field_prev_top_field:
+                        top_field = field_order==de265_top_field_prev_bottom_field;
+                        break;
+
+                    case de265_top_field_next_bottom_field:
+                    case de265_bottom_field_next_top_field:
+                        top_field = field_order==de265_top_field_next_bottom_field;
+                        break;
+
+                    default:
+                        /* guess using poc */
+                        top_field = (poc&1)==0;
+                        break;
+                }
 
                 /* deinterlace */
-                if ((poc&1)==!top_field_first) { /* works for negative poc too */
+                if (top_field==top_field_first) {
                     convert_top_field_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
                     /* move field on if it is the correct order */
                     field += (top_field_first ^ field);
-                } else if ((poc&1)==top_field_first) {
+                } else if (top_field==!top_field_first) {
                     convert_bot_field_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
                     field += !(top_field_first ^ field);
                 }
 
                 /* use timestamp from first field for display of deinterlaced frame */
-                if ((poc&1)==!top_field_first) {
+                if (top_field==top_field_first) {
                     results.size = width*height*2;
                     tstamp_t pts = de265_get_image_PTS(image);
                     if (pts<0 || pts<=last_pts) {
                         /* extrapolate a timestamp if necessary */
                         pts = last_pts + llround(90000.0/framerate);
                     }
-                    results.timestamp = pts;
-                    last_pts = pts;
+                    results.timestamp = last_pts = pts;
                 }
 
                 /* sum render time */
