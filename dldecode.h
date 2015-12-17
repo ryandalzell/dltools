@@ -31,7 +31,7 @@ public:
     dldecode();
     virtual ~dldecode();
 
-    virtual int attach(dlformat *format);
+    virtual int attach(dlformat *format, int mux=0);
     virtual int rewind(int frame);
     virtual decode_t decode(unsigned char *buffer, size_t bufsize) = 0;
 
@@ -41,6 +41,7 @@ public:
 protected:
     /* data source */
     dlformat *format;
+    int mux;
 
     /* buffer variables */
     size_t size;
@@ -49,6 +50,7 @@ protected:
     /* timestamp variables */
     tstamp_t timestamp;
     long long last_pts;
+    int frames_since_pts;
 
     /* verbose level */
     int verbose;
@@ -81,7 +83,7 @@ public:
     dlyuv() { lumaonly = 0; }
     dlyuv(int l) { lumaonly = l; }
 
-    virtual int attach(dlformat *format);
+    virtual int attach(dlformat *format, int mux=0);
     bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
@@ -102,7 +104,7 @@ public:
     dlmpeg2();
     ~dlmpeg2();
 
-    virtual int attach(dlformat *format);
+    virtual int attach(dlformat *format, int mux=0);
     bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
@@ -122,36 +124,30 @@ public:
     dlmpg123();
     ~dlmpg123();
 
-    virtual int attach(dlformat *format);
+    virtual int attach(dlformat *format, int mux=0);
     virtual decode_t decode(unsigned char *frame, size_t size);
 
 public:
     virtual const char *description() { return "mpeg1 audio"; }
-    int pid;
-    long long pts;
 
 private:
     /* mpg123 variables */
     mpg123_handle *m;
     int ret;
-
-    /* transport stream variables */
-    int frames_since_pts;
 };
 
-/* libmpeg2 class */
+/* liba52 class */
 class dlliba52 : public dldecode
 {
 public:
     dlliba52();
     ~dlliba52();
 
-    virtual int attach(dlformat *format);
+    virtual int attach(dlformat *format, int mux=0);
     virtual decode_t decode(unsigned char *frame, size_t size);
 
 public:
-    virtual const char *description() { return "mpeg2 audio"; }
-    int pid;
+    virtual const char *description() { return "mpeg2 ac3 audio"; }
 
 private:
     /* liba52 variables */
@@ -174,7 +170,7 @@ public:
     dlhevc();
     ~dlhevc();
 
-    virtual int attach(dlformat *format);
+    virtual int attach(dlformat *format, int mux=0);
     bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 

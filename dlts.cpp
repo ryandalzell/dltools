@@ -107,7 +107,7 @@ int next_stream_packet(unsigned char *data, int vid_pid, int aud_pid, int *pid, 
 
         /* check pid is correct */
         int packet_pid = ((packet[1]<<8) | packet[2]) & 0x1fff;
-        if (packet_pid>1 && packet_pid!=vid_pid && packet_pid!=aud_pid)
+        if (packet_pid!=vid_pid && packet_pid!=aud_pid)
             continue;
         *pid = packet_pid;
 
