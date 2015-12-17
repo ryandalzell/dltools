@@ -208,7 +208,7 @@ int dlmmap::open(const char *f)
     length = dlfile::size();
     if (length==0)
         dlexit("error: input file is empty");
-    addr = (unsigned char *)mmap(NULL, length, PROT_READ, MAP_PRIVATE, file, 0);
+    addr = (unsigned char *)mmap(NULL, length, PROT_READ, MAP_SHARED, file, 0);
     if (addr==MAP_FAILED)
         dlerror("error: failed to memory map input file \"%s\"", filename);
     ptr = addr;
