@@ -319,6 +319,7 @@ decode_t dlmpg123::decode(unsigned char *samples, size_t sampsize)
         if (pts>=0 && pts>last_pts) {
             results.timestamp = last_pts = pts;
             frames_since_pts = 0;
+            dlmessage("new audio pts=%s", describe_timestamp(pts));
         }
 
         ret = mpg123_decode(m, data, read, samples, sampsize, &results.size);
@@ -427,7 +428,13 @@ int dlliba52::attach(dlformat *f, int m)
     return 0;
 }
 
-static inline int blah (int32_t i)
+/*
+ * this conversion from 32-bit floating point (single precision)
+ * to 32-bit int relies on some specific behaviour of the IEEE
+ * floating point standard, the input needs to be denormalised
+ * to 384+/-1 to this to work
+ */
+static inline int float32_to_int32_hack(int32_t i)
 {
     if (i > 0x43c07fff)
         return 32767;
@@ -463,7 +470,7 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
             if (pts>=0 && pts>last_pts) {
                 last_pts = pts;
                 frames_since_pts = 0;
-                dlmessage("audio pts=%s", describe_timestamp(pts));
+                dlmessage("new audio pts=%s", describe_timestamp(pts));
             }
             memcpy(ac3_frame+ac3_length, data, read);
             ac3_length += read;
@@ -471,7 +478,7 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
 
         /* look for sync in ac3 stream */
         int sync;
-        for (sync=0; sync<=ac3_length-7; sync++) {
+        for (sync=0; sync<ac3_length-7; sync++) {
             length = a52_syncinfo(ac3_frame+sync, &flags, &sample_rate, &bit_rate);
             if (length)
                 break;
@@ -493,7 +500,7 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
         /* read data from transport stream to complete frame */
         while (ac3_length < length) {
             read = format->read(data, size, mux);
-            if (read==0) {
+            if (read<=0) {
                 if (format->get_source()->error()) {
                     dlmessage("error reading input stream \"%s\": %s", format->get_source()->name(), strerror(errno));
                     break;
@@ -509,22 +516,25 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
     } while (0);
 
     /* feed the frame to the audio decoder */
-    flags = A52_STEREO;
-    sample_t level = 32767.0;
-    sample_t bias = 0.0;
-    a52_frame(a52_state, ac3_frame, &flags, &level, bias);
+    flags = A52_STEREO | A52_ADJUST_LEVEL;
+    sample_t level = 1.0;
+    sample_t bias = 384.0;
+    if (a52_frame(a52_state, ac3_frame, &flags, &level, bias))
+        dlmessage("failed: a52_block");
 
     /* decode audio frame */
     int i, j;
     for (i=0; i<6; i++) {
         int32_t *f = (int32_t *)sample;
+        int16_t *s = (int16_t *)frame;
 
-        a52_block(a52_state);
+        if (a52_block(a52_state))
+            dlmessage("failed: a52_block");
 
         /* convert decoded samples to integer and interleave */
         for (j=0; j<256; j++) {
-            frame[i*512+j*2  ] = (int16_t) blah(f[j    ]); //lround(sample[j    ]);
-            frame[i*512+j*2+1] = (int16_t) blah(f[j+256]); //lround(sample[j+256]);
+            s[i*512+j*2  ] = (int16_t) float32_to_int32_hack(f[j    ]);
+            s[i*512+j*2+1] = (int16_t) float32_to_int32_hack(f[j+256]);
         }
     }
     results.size = 6*256*2;
@@ -535,7 +545,9 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
     ac3_length = ac3_length-length;
 
     /* extrapolate a timestamp as necessary */
-    results.timestamp = last_pts + (tstamp_t)(frames_since_pts*90000ll/48000ll*6ll*256ll);
+    results.timestamp = last_pts + (tstamp_t)(frames_since_pts*90000ll/48000ll*6ll*256ll*4ll);
+    if (frames_since_pts>0)
+        dlmessage("extrapolated pts=%s", describe_timestamp(results.timestamp));
     frames_since_pts++;
 
     return results;

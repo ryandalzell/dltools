@@ -944,7 +944,7 @@ int main(int argc, char *argv[])
                         break;
                     }
                     if (scheduled!=aud.size/2) {
-                        dlmessage("error: failed to schedule all the audio data: %d/%d samples", scheduled, aud.size/2);
+                        dlexit("error: failed to schedule all the audio data: %d/%d samples", scheduled, aud.size/2);
                         break;
                     }
                     blocknum++;
