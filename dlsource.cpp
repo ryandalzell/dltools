@@ -17,6 +17,8 @@
 #include "dlutil.h"
 #include "dlsource.h"
 
+using namespace std;
+
 /* virtual base class for data sources */
 dlsource::dlsource()
 {
@@ -44,17 +46,17 @@ size_t dlsource::size()
     return 0;
 }
 
-off_t dlsource::pos()
+off_t dlsource::pos(dltoken_t t)
 {
     return 0;
 }
 
-bool dlsource::eof()
+bool dlsource::eof(dltoken_t t)
 {
     return 1;
 }
 
-bool dlsource::error()
+bool dlsource::error(dltoken_t t)
 {
     return 0;
 }
@@ -84,33 +86,33 @@ void dlsource::checksize(size_t size)
 dlfile::dlfile()
 {
     filename = NULL;
-    file = -1;
-    eof_flag = 0;
-    error_flag = 0;
 }
 
 dlfile::~dlfile()
 {
-    if (file>2)
-        close(file);
+    for (unsigned i=0; i<file.size(); i++)
+        close(file[i]);
 }
 
-int dlfile::open(const char *f)
+int dlfile::open(const char *name)
 {
     /* attach the input file */
-    filename = f;
+    filename = name;
 
-    /* open the input file */
-    file = ::open(filename, O_RDONLY | O_LARGEFILE);
-    if (file<0)
+    /* open the input file FIXME just use attach() */
+    int f = ::open(filename, O_RDONLY | O_LARGEFILE);
+    if (f<0)
         dlerror("error: failed to open input file \"%s\"", filename);
+    file.push_back(f);
+    eof_flag.push_back(0);
+    error_flag.push_back(0);
 
     return 0;
 }
 
-int dlfile::rewind()
+int dlfile::rewind(dltoken_t t)
 {
-    int r = lseek(file, 0, SEEK_SET);
+    int r = lseek(file[t], 0, SEEK_SET);
     if (r<0)
         dlerror("failed to seek in file \"%s\"", filename);
 
@@ -130,27 +132,40 @@ filetype_t dlfile::autodetect()
     return YUV;
 }
 
-size_t dlfile::read(unsigned char *buf, size_t bytes)
+dltoken_t dlfile::attach()
 {
-    size_t read = ::read(file, buf, bytes);
+    /* open the input file again */
+    int f = ::open(filename, O_RDONLY | O_LARGEFILE);
+    if (f<0)
+        dlerror("error: failed to open input file \"%s\"", filename);
+    file.push_back(f);
+    eof_flag.push_back(0);
+    error_flag.push_back(0);
+
+    return (dltoken_t) file.size()-1;
+}
+
+size_t dlfile::read(unsigned char *buf, size_t bytes, dltoken_t t)
+{
+    size_t read = ::read(file[t], buf, bytes);
     if (read<0)
         dlerror("error: failed to read from input file \"%s\"", filename);
     else if (read==0)
-        eof_flag = 1;
+        eof_flag[t] = 1;
 
     return read;
 }
 
-const unsigned char* dlfile::read(size_t *bytes)
+const unsigned char* dlfile::read(size_t *bytes, dltoken_t t)
 {
     /* check internal buffer is large enough */
     checksize(*bytes);
 
-    size_t read = ::read(file, buffer, *bytes);
+    size_t read = ::read(file[t], buffer, *bytes);
     if (read<0)
         dlerror("error: failed to read from input file \"%s\"", filename);
     else if (read==0)
-        eof_flag = 1;
+        eof_flag[t] = 1;
     *bytes = read;
 
     return buffer;
@@ -165,27 +180,27 @@ size_t dlfile::size()
 {
     /* stat the input file */
     struct stat stat;
-    fstat(file, &stat);
+    fstat(file[0], &stat);
 
     return stat.st_size;
 }
 
-off_t dlfile::pos()
+off_t dlfile::pos(dltoken_t t)
 {
-    off_t r = lseek(file, 0, SEEK_CUR);
+    off_t r = lseek(file[t], 0, SEEK_CUR);
     if (r<0)
-        error_flag = 1;
+        error_flag[t] = 1;
     return r;
 }
 
-bool dlfile::eof()
+bool dlfile::eof(dltoken_t t)
 {
-    return eof_flag;
+    return eof_flag[t];
 }
 
-bool dlfile::error()
+bool dlfile::error(dltoken_t t)
 {
-    return error_flag;
+    return error_flag[t];
 }
 
 /* memory mapped file source class */
@@ -208,7 +223,7 @@ int dlmmap::open(const char *f)
     length = dlfile::size();
     if (length==0)
         dlexit("error: input file is empty");
-    addr = (unsigned char *)mmap(NULL, length, PROT_READ, MAP_PRIVATE, file, 0);
+    addr = (unsigned char *)mmap(NULL, length, PROT_READ, MAP_PRIVATE, file[0], 0);
     if (addr==MAP_FAILED)
         dlerror("error: failed to memory map input file \"%s\"", filename);
     ptr = addr;
@@ -216,7 +231,7 @@ int dlmmap::open(const char *f)
     return 0;
 }
 
-int dlmmap::rewind()
+int dlmmap::rewind(dltoken_t t)
 {
     ptr = addr;
 
@@ -224,7 +239,7 @@ int dlmmap::rewind()
 }
 
 /* read with copy */
-size_t dlmmap::read(unsigned char *buf, size_t bytes)
+size_t dlmmap::read(unsigned char *buf, size_t bytes, dltoken_t t)
 {
     if (ptr+bytes>addr+length)
         bytes = addr+length-ptr;
@@ -237,7 +252,7 @@ size_t dlmmap::read(unsigned char *buf, size_t bytes)
 }
 
 /* zero copy read using memory mapped pointer */
-const unsigned char *dlmmap::read(size_t *bytes)
+const unsigned char *dlmmap::read(size_t *bytes, dltoken_t t)
 {
     const unsigned char *ret = ptr;
     if (ptr+*bytes>addr+length)
@@ -252,17 +267,17 @@ size_t dlmmap::size()
     return length;
 }
 
-off_t dlmmap::pos()
+off_t dlmmap::pos(dltoken_t t)
 {
     return ptr-addr;
 }
 
-bool dlmmap::eof()
+bool dlmmap::eof(dltoken_t t)
 {
     return ptr>=addr+length;
 }
 
-bool dlmmap::error()
+bool dlmmap::error(dltoken_t t)
 {
     return 0;
 }
@@ -365,7 +380,7 @@ int dlsock::open(const char *port)
     return 0;
 }
 
-int dlsock::rewind()
+int dlsock::rewind(dltoken_t t)
 {
     /* can't rewind a network stream */
     return -1;
@@ -401,7 +416,12 @@ filetype_t dlsock::autodetect()
     return OTHER;
 }
 
-size_t dlsock::read(unsigned char *buf, size_t bytes)
+dltoken_t dlsock::attach()
+{
+    return (dltoken_t) 0;
+}
+
+size_t dlsock::read(unsigned char *buf, size_t bytes, dltoken_t t)
 {
     /* check internal buffer is large enough */
     checksize(bytes);
@@ -458,7 +478,7 @@ size_t dlsock::read(unsigned char *buf, size_t bytes)
     return read;
 }
 
-const unsigned char *dlsock::read(size_t *bytes)
+const unsigned char *dlsock::read(size_t *bytes, dltoken_t t)
 {
     /* check internal buffer is large enough */
     checksize(*bytes);
@@ -470,7 +490,7 @@ const unsigned char *dlsock::read(size_t *bytes)
     return buffer;
 }
 
-bool dlsock::eof()
+bool dlsock::eof(dltoken_t token)
 {
     /* never at eof with an open socket */
     return sock>=0? 0 : 1;
@@ -537,7 +557,7 @@ int dltcpsock::open(const char *port)
     return 0;
 }
 
-size_t dltcpsock::read(unsigned char *buf, size_t bytes)
+size_t dltcpsock::read(unsigned char *buf, size_t bytes, dltoken_t t)
 {
     size_t read = recv(send_sock, buf, bytes, 0);
     if (read<0)
@@ -548,7 +568,7 @@ size_t dltcpsock::read(unsigned char *buf, size_t bytes)
     return read;
 }
 
-const unsigned char* dltcpsock::read(size_t* bytes)
+const unsigned char* dltcpsock::read(size_t* bytes, dltoken_t t)
 {
     /* check internal buffer is large enough */
     checksize(*bytes);

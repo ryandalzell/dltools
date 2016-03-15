@@ -31,6 +31,7 @@ public:
 protected:
     /* data source */
     dlsource *source;
+    dltoken_t token;
 
     /* buffer variables */
     size_t size;

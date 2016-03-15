@@ -34,7 +34,7 @@ extern "C" {
 
 /* compile options */
 #define USE_TERMIOS
-#define USE_MMAP
+//#define USE_MMAP
 
 const char *appname = "dlplay";
 
@@ -445,26 +445,25 @@ int main(int argc, char *argv[])
         } else
             dlexit("could not open url \"%s\"", filename);
 
-        /* create the file format filter and video and audio decoders */
-        dlformat *format = NULL;
+        /* create the video and audio format filters and decoders */
+        dlformat *vid_fmt = NULL, *aud_fmt = NULL;
         switch (filetype) {
             case TS :
             {
-                /* create a format filter for transport stream */
-                dltstream *ts = new dltstream;
-
                 /* look for a video pid */
                 int stream_type = 0;
                 if (!audioonly) {
                     int video_stream_types[] = { 0x02, 0x80, 0x1B, 0x24, 0x06 };
-                    vid_pid = find_pid_for_stream_type(video_stream_types, sizeof(video_stream_types)/sizeof(int), &stream_type, source);
+                    vid_pid = find_pid_for_stream_type(video_stream_types, sizeof(video_stream_types)/sizeof(int), &stream_type, source, 0);
                     source->rewind();
                 }
 
                 if (vid_pid) {
-                    /* found something we can decode */
-                    ts->register_pid(vid_pid);
+                    /* create a format filter for transport stream */
+                    dltstream *ts = new dltstream(vid_pid);
+                    ts->attach(source);
 
+                    /* create a video decoder */
                     switch (stream_type) {
                         case 0x02:
                         case 0x80:
@@ -477,21 +476,26 @@ int main(int argc, char *argv[])
                             video = new dlhevc;
                             break;
                     }
+
+                    /* cast down to format pointer */
+                    vid_fmt = (dlformat *)ts;
                 } else
                     audioonly = 1;
 
                 /* look for an audio pid */
                 if (!videoonly) {
-                    //int audio_stream_types[] = { 0x03, 0x04, 0x81, 0x1C };
-                    int audio_stream_types[] = { 0x03, 0x04 };
-                    aud_pid = find_pid_for_stream_type(audio_stream_types, sizeof(audio_stream_types)/sizeof(int), &stream_type, source);
+                    int audio_stream_types[] = { 0x03, 0x04, 0x81, 0x1C };
+                    //int audio_stream_types[] = { 0x03, 0x04 };
+                    aud_pid = find_pid_for_stream_type(audio_stream_types, sizeof(audio_stream_types)/sizeof(int), &stream_type, source, 0);
                     source->rewind();
                 }
 
                 if (aud_pid) {
-                    /* found something we can decode */
-                    ts->register_pid(aud_pid);
+                    /* create a format filter for transport stream */
+                    dltstream *ts = new dltstream(aud_pid);
+                    ts->attach(source);
 
+                    /* create an audio decoder */
                     switch (stream_type) {
                         case 0x03:
                         case 0x04:
@@ -505,53 +509,49 @@ int main(int argc, char *argv[])
                             aud_size = 6*256*2*sizeof(uint16_t);
                             break;
                     }
+
+                    /* cast down to format pointer */
+                    aud_fmt = (dlformat *)ts;
                 } else
                     videoonly = 1;
 
                 if (verbose>=0)
                     dlmessage("video pid is %d and audio pid is %d", vid_pid, aud_pid);
 
-                /* cast down to format pointer */
-                format = (dlformat *)ts;
-
                 break;
             }
 
             case YUV:
-                format = new dlformat;
+                vid_fmt = new dlformat;
+                vid_fmt->attach(source);
                 video = new dlyuv(lumaonly);
-
-                /* skip to the first frame */
-                if (firstframe)
-                    video->rewind(firstframe);
 
                 videoonly = 1;
                 break;
 
             case M2V :
-                format = new dlestream;
+                vid_fmt = new dlestream;
+                vid_fmt->attach(source);
                 video = new dlmpeg2;
                 videoonly = 1;
                 break;
 
             case HEVC:
-                format = new dlestream;
+                vid_fmt = new dlestream;
+                vid_fmt->attach(source);
                 video = new dlhevc;
                 videoonly = 1;
                 break;
 
             default: dlexit("unknown input file type");
         }
-        /* attach the source */
-        if (!format || format->attach(source)<0)
-            dlexit("failed to initialise the file format decoder");
 
-        dlmessage("found %s and %s in %s from %s source", video? video->description() : "no video", audio? audio->description() : "no audio", format->description(), source->description());
+        dlmessage("found %s and %s in %s from %s source", video? video->description() : "no video", audio? audio->description() : "no audio", vid_fmt->description(), source->description());
 
         /* initialise the video decoder */
         if (!audioonly) {
             /* figure out the mode to set */
-            if (video->attach(format, vid_pid)<0)
+            if (video->attach(vid_fmt)<0)
                 dlexit("failed to initialise the video decoder");
             pic_width = video->width;
             pic_height = video->height;
@@ -565,7 +565,7 @@ int main(int argc, char *argv[])
 
         /* initialise the audio encoder */
         if (!videoonly && aud_pid) {
-            if (audio->attach(format, aud_pid)<0) {
+            if (audio->attach(aud_fmt)<0) {
                 delete audio;
                 audio = NULL;
             }
@@ -1010,7 +1010,8 @@ int main(int argc, char *argv[])
 
         /* tidy up */
         delete source;
-        delete format;
+        delete vid_fmt;
+        delete aud_fmt;
         delete video;
         delete audio;
     }

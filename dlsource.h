@@ -7,7 +7,12 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include <vector>
+
 #include "dlutil.h"
+
+/* type of token returned when attaching format decoders */
+typedef int dltoken_t;
 
 /* virtual base class for data sources */
 class dlsource
@@ -18,21 +23,22 @@ public:
 
     /* source operators */
     virtual int open(const char *filename) = 0;
-    virtual int rewind() = 0;
+    virtual int rewind(dltoken_t token=0) = 0;
     virtual filetype_t autodetect() = 0;
+    virtual dltoken_t attach() = 0;
 
     /* copy to buffer read */
-    virtual size_t read(unsigned char *buf, size_t bytes) = 0;
+    virtual size_t read(unsigned char *buf, size_t bytes, dltoken_t token=0) = 0;
     /* zero copy read (depending on implementation) */
-    virtual const unsigned char *read(size_t *bytes) = 0;
+    virtual const unsigned char *read(size_t *bytes, dltoken_t token=0) = 0;
 
     /* source metadata */
     virtual const char *description() { return "unknown"; }
     virtual const char *name();
     virtual size_t size();
-    virtual off_t pos();
-    virtual bool eof();
-    virtual bool error();
+    virtual off_t pos(dltoken_t token=0);
+    virtual bool eof(dltoken_t token=0);
+    virtual bool error(dltoken_t token=0);
     virtual bool timeout();
 
     /* source configuration */
@@ -58,26 +64,27 @@ public:
 
     /* source operators */
     virtual int open(const char *filename);
-    virtual int rewind();
+    virtual int rewind(dltoken_t token=0);
     virtual filetype_t autodetect();
-    virtual size_t read(unsigned char *buf, size_t bytes);
-    virtual const unsigned char *read(size_t* bytes);
+    virtual dltoken_t attach();
+    virtual size_t read(unsigned char *buf, size_t bytes, dltoken_t token=0);
+    virtual const unsigned char *read(size_t* bytes, dltoken_t token=0);
 
     /* source metadata */
     virtual const char *description() { return "file"; }
     virtual const char *name();
     virtual size_t size();
-    virtual off_t pos();
-    virtual bool eof();
-    virtual bool error();
+    virtual off_t pos(dltoken_t token);
+    virtual bool eof(dltoken_t token);
+    virtual bool error(dltoken_t token);
 
 protected:
     /* file and buffer variables */
     const char *filename;
-    int file;
+    std::vector<int> file;
 
     /* status flags */
-    int eof_flag, error_flag;
+    std::vector<int> eof_flag, error_flag;
 };
 
 /* memory mapped file souce class */
@@ -89,15 +96,15 @@ public:
 
     /* source operators */
     virtual int open(const char *filename);
-    virtual int rewind();
-    virtual size_t read(unsigned char *buf, size_t bytes);
-    virtual const unsigned char *read(size_t *bytes);
+    virtual int rewind(dltoken_t token=0);
+    virtual size_t read(unsigned char *buf, size_t bytes, dltoken_t token=0);
+    virtual const unsigned char *read(size_t *bytes, dltoken_t token=0);
 
     /* source metadata */
     virtual size_t size();
-    virtual off_t pos();
-    virtual bool eof();
-    virtual bool error();
+    virtual off_t pos(dltoken_t token);
+    virtual bool eof(dltoken_t token);
+    virtual bool error(dltoken_t token);
 
 protected:
     /* memory map variables */
@@ -116,14 +123,15 @@ public:
 
     /* source operators */
     virtual int open(const char *port);
-    virtual int rewind();
+    virtual int rewind(dltoken_t token=0);
     virtual filetype_t autodetect();
-    virtual size_t read(unsigned char *buf, size_t bytes);
-    virtual const unsigned char *read(size_t *bytes);
+    virtual dltoken_t attach();
+    virtual size_t read(unsigned char *buf, size_t bytes, dltoken_t token=0);
+    virtual const unsigned char *read(size_t *bytes, dltoken_t token=0);
 
     /* source metadata */
     virtual const char *description() { return "udp"; }
-    virtual bool eof();
+    virtual bool eof(dltoken_t token);
 
 protected:
     int sock;
@@ -141,8 +149,8 @@ public:
 
     /* source operators */
     virtual int open(const char *port);
-    virtual size_t read(unsigned char *buf, size_t bytes);
-    virtual const unsigned char *read(size_t *bytes);
+    virtual size_t read(unsigned char *buf, size_t bytes, dltoken_t token=0);
+    virtual const unsigned char *read(size_t *bytes, dltoken_t token=0);
 
     /* source metadata */
     virtual const char *description() { return "tcp"; }

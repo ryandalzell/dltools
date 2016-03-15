@@ -31,8 +31,7 @@ public:
     dldecode();
     virtual ~dldecode();
 
-    virtual int attach(dlformat *format, int mux=0);
-    virtual int rewind(int frame);
+    virtual int attach(dlformat *format);
     virtual decode_t decode(unsigned char *buffer, size_t bufsize) = 0;
 
     /* verbose level */
@@ -41,7 +40,6 @@ public:
 protected:
     /* data source */
     dlformat *format;
-    int mux;
 
     /* buffer variables */
     size_t size;
@@ -83,7 +81,7 @@ public:
     dlyuv() { lumaonly = 0; }
     dlyuv(int l) { lumaonly = l; }
 
-    virtual int attach(dlformat *format, int mux=0);
+    virtual int attach(dlformat *format);
     bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
@@ -104,7 +102,7 @@ public:
     dlmpeg2();
     ~dlmpeg2();
 
-    virtual int attach(dlformat *format, int mux=0);
+    virtual int attach(dlformat *format);
     bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
@@ -124,7 +122,7 @@ public:
     dlmpg123();
     ~dlmpg123();
 
-    virtual int attach(dlformat *format, int mux=0);
+    virtual int attach(dlformat *format);
     virtual decode_t decode(unsigned char *frame, size_t size);
 
 public:
@@ -143,7 +141,7 @@ public:
     dlliba52();
     ~dlliba52();
 
-    virtual int attach(dlformat *format, int mux=0);
+    virtual int attach(dlformat *format);
     virtual decode_t decode(unsigned char *frame, size_t size);
 
 public:
@@ -170,7 +168,7 @@ public:
     dlhevc();
     ~dlhevc();
 
-    virtual int attach(dlformat *format, int mux=0);
+    virtual int attach(dlformat *format);
     bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 

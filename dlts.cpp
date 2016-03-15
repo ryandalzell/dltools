@@ -31,13 +31,13 @@ int ffind(int f, FILE *file)
 }
 
 /* read next data packet from transport stream */
-int next_packet(unsigned char *packet, dlsource *source)
+int next_packet(unsigned char *packet, dlsource *source, dltoken_t token)
 {
     while (1) {
         /* read a packet sized chunk */
         int read = 0;
         while (read!=188) {
-            int ret = source->read(packet, 188-read);
+            int ret = source->read(packet, 188-read, token);
             if (ret<=0) {
                 dlmessage("failed to read %d bytes of a transport stream packet", 188-read);
                 return -1;
@@ -53,7 +53,7 @@ int next_packet(unsigned char *packet, dlsource *source)
         for (int i=1; i<188; i++) {
             if (packet[i]==0x47) {
                 memmove(packet, packet+i, 188-i);
-                source->read(packet+188-i, i);
+                source->read(packet+188-i, i, token);
             }
         }
     }
@@ -61,14 +61,14 @@ int next_packet(unsigned char *packet, dlsource *source)
 
 /* read next packet from transport stream with specified pid
  * return packet length or error code on failure */
-int next_data_packet(unsigned char *data, int pid, dlsource *source)
+int next_data_packet(unsigned char *data, int pid, dlsource *source, dltoken_t token)
 {
     unsigned char packet[188];
 
     /* find next whole transport stream packet with correct pid */
     while (1) {
         /* read next packet */
-        int read = next_packet(packet, source);
+        int read = next_packet(packet, source, token);
         if (read<0)
             return read;
 
@@ -95,14 +95,14 @@ int next_data_packet(unsigned char *data, int pid, dlsource *source)
 
 /* read next packet from transport stream with either video or audio pid
  * return packet length or zero on failure */
-int next_stream_packet(unsigned char *data, int vid_pid, int aud_pid, int *pid, dlsource *source)
+int next_stream_packet(unsigned char *data, int vid_pid, int aud_pid, int *pid, dlsource *source, dltoken_t token)
 {
     unsigned char packet[188];
 
     /* find next whole transport stream packet with correct pid */
     while (1) {
         /* read next packet */
-        if (next_packet(packet, source)<0)
+        if (next_packet(packet, source, token)<0)
             return 0;
 
         /* check pid is correct */
@@ -131,7 +131,7 @@ int next_stream_packet(unsigned char *data, int vid_pid, int aud_pid, int *pid, 
 
 /* read next packet from transport which is part of a pes packet
  * return packet length or zero on failure */
-int next_pes_packet_data(unsigned char *data, long long *pts, int pid, int start, dlsource *source)
+int next_pes_packet_data(unsigned char *data, long long *pts, int pid, int start, dlsource *source, dltoken_t token)
 {
     unsigned char packet[188];
 
@@ -141,7 +141,7 @@ int next_pes_packet_data(unsigned char *data, long long *pts, int pid, int start
     /* find next whole transport stream packet with correct pid */
     while (1) {
         /* read next packet */
-        if (next_packet(packet, source)<0)
+        if (next_packet(packet, source, token)<0)
             return 0;
 
         /* check start indicator */
@@ -191,7 +191,7 @@ int next_pes_packet_data(unsigned char *data, long long *pts, int pid, int start
     return 0;
 }
 
-int find_pid_for_stream_type(int stream_types[], int num_stream_types, int *found_type, dlsource *source)
+int find_pid_for_stream_type(int stream_types[], int num_stream_types, int *found_type, dlsource *source, dltoken_t token)
 {
     unsigned char packet[188];
 
@@ -207,7 +207,7 @@ int find_pid_for_stream_type(int stream_types[], int num_stream_types, int *foun
     do {
 
         /* find the next pat */
-        int read = next_data_packet(packet, 0, source);
+        int read = next_data_packet(packet, 0, source, token);
         if (read<=0) {
             dlmessage("failed to find a pat in input file \"%s\" (need to specify the pids)", source->name());
             return 0;
@@ -232,7 +232,7 @@ int find_pid_for_stream_type(int stream_types[], int num_stream_types, int *foun
     int pmt_index = 0;
     do {
         /* find the next pmt */
-        size_t read = next_data_packet(packet, pmt_pid[pmt_index], source);
+        size_t read = next_data_packet(packet, pmt_pid[pmt_index], source, token);
         if (read<=0) {
             dlmessage("failed to find a pmt in input file \"%s\" (need to specify the pids)", source->name());
             return 0;

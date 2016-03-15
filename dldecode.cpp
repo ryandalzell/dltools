@@ -16,7 +16,6 @@ dldecode::dldecode()
 {
     /* source */
     format = NULL;
-    mux = 0;
     /* buffer */
     size = 0;
     data = NULL;
@@ -36,17 +35,11 @@ dldecode::~dldecode()
         free(data);
 }
 
-int dldecode::attach(dlformat *f, int m)
+int dldecode::attach(dlformat *f)
 {
     /* attach the input format */
     format = f;
-    mux = m;
     return 0;
-}
-
-int dldecode::rewind(int frame)
-{
-    return format->get_source()->rewind();
 }
 
 void dldecode::set_field_order(int tff)
@@ -59,11 +52,10 @@ void dldecode::set_blank_field(int order)
     blank_field = order;
 }
 
-int dlyuv::attach(dlformat *f, int m)
+int dlyuv::attach(dlformat *f)
 {
     /* attach the input source */
     format = f;
-    mux = m;
 
     /* determine the video format */
     if (divine_video_format(format->get_source()->name(), &width, &height, &interlaced, &framerate, &pixelformat)<0)
@@ -87,11 +79,6 @@ bool dlyuv::atend()
 decode_t dlyuv::decode(unsigned char *uyvy, size_t uyvysize)
 {
     decode_t results = {0, 0};
-
-    /* loop input stream */
-    if (atend()) {
-        rewind(0);
-    }
 
     if (pixelformat==UYVY) {
         /* read directly into frame */
@@ -136,11 +123,10 @@ dlmpeg2::~dlmpeg2()
         mpeg2_close(mpeg2dec);
 }
 
-int dlmpeg2::attach(dlformat *f, int m)
+int dlmpeg2::attach(dlformat *f)
 {
     /* attach the input source */
     format = f;
-    mux = m;
 
     /* allocate the read buffer */
     size = 32*1024;
@@ -154,11 +140,11 @@ int dlmpeg2::attach(dlformat *f, int m)
         switch (state) {
             case STATE_BUFFER:
                 /* read a chunk of data from input */
-                read = format->read(data, size, mux);
+                read = format->read(data, size);
                 if (read>0) {
                     mpeg2_buffer(mpeg2dec, data, data+read);
                     /* tag with most recent available timestamp */
-                    tstamp_t pts = format->get_timestamp(mux);
+                    tstamp_t pts = format->get_timestamp();
                     mpeg2_tag_picture(mpeg2dec, (uint32_t)pts, uint32_t(pts>>32));
                 }
                 break;
@@ -190,15 +176,15 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
         switch (state) {
             case STATE_BUFFER:
                 /* read a chunk of data from input */
-                read = format->read(data, size, mux);
+                read = format->read(data, size);
                 if (read==0 || format->get_source()->eof()) {
                     format->get_source()->rewind();
-                    read = format->read(data, size, mux);
+                    read = format->read(data, size);
                 }
                 if (read>0) {
                     mpeg2_buffer(mpeg2dec, data, data+read);
                     /* tag with most recent available timestamp */
-                    tstamp_t pts = format->get_timestamp(mux);
+                    tstamp_t pts = format->get_timestamp();
                     mpeg2_tag_picture(mpeg2dec, (uint32_t)pts, uint32_t(pts>>32));
                 } else
                     return results;
@@ -214,7 +200,8 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
                     if (pts<0 || pts<=last_pts) {
                         /* extrapolate a timestamp if necessary */
                         pts = last_pts + llround(90000.0/framerate);
-                    }
+                    } //else
+                        //dlmessage("new vidio pts=%s", describe_timestamp(pts));
                     results.timestamp = last_pts = pts;
 
                     return results;
@@ -248,11 +235,10 @@ dlmpg123::~dlmpg123()
     mpg123_exit();
 }
 
-int dlmpg123::attach(dlformat *f, int x)
+int dlmpg123::attach(dlformat *f)
 {
     /* attach the input source */
     format = f;
-    mux = x;
 
     /* allocate the read buffer */
     size = 184;
@@ -261,7 +247,7 @@ int dlmpg123::attach(dlformat *f, int x)
     /* find the audio format */
     do {
         size_t bytes;
-        int read = format->read(data, size, mux);
+        int read = format->read(data, size);
         if (read==0) {
             if (format->get_source()->eof() || format->get_source()->error()) {
                 dlmessage("failed to sync mpa audio");
@@ -269,7 +255,7 @@ int dlmpg123::attach(dlformat *f, int x)
             }
         }
 
-        long long pts = format->get_timestamp(mux);
+        long long pts = format->get_timestamp();
         if (pts>=0) {
             last_pts = pts;
             frames_since_pts = 0;
@@ -298,7 +284,7 @@ decode_t dlmpg123::decode(unsigned char *samples, size_t sampsize)
 
     /* feed the audio decoder */
     do {
-        int read = format->read(data, size, mux);
+        int read = format->read(data, size);
         if (read==0) {
             if (format->get_source()->error()) {
                 dlmessage("error reading input stream \"%s\": %s", format->get_source()->name(), strerror(errno));
@@ -315,11 +301,11 @@ decode_t dlmpg123::decode(unsigned char *samples, size_t sampsize)
             }
         }
 
-        long long pts = format->get_timestamp(mux);
+        long long pts = format->get_timestamp();
         if (pts>=0 && pts>last_pts) {
             results.timestamp = last_pts = pts;
             frames_since_pts = 0;
-            dlmessage("new audio pts=%s", describe_timestamp(pts));
+            //dlmessage("new audio pts=%s", describe_timestamp(pts));
         }
 
         ret = mpg123_decode(m, data, read, samples, sampsize, &results.size);
@@ -358,11 +344,10 @@ dlliba52::~dlliba52()
         a52_free(a52_state);
 }
 
-int dlliba52::attach(dlformat *f, int m)
+int dlliba52::attach(dlformat *f)
 {
     /* attach the input source */
     format = f;
-    mux = m;
 
     /* allocate the read buffer */
     size = 184;
@@ -379,7 +364,7 @@ int dlliba52::attach(dlformat *f, int m)
     size_t read;
     int ret = 0;
     do {
-        read = format->read(data, size, mux);
+        read = format->read(data, size);
         if (read==0) {
             if (format->get_source()->eof() || format->get_source()->error()) {
                 dlmessage("failed to sync ac3 audio");
@@ -388,7 +373,7 @@ int dlliba52::attach(dlformat *f, int m)
         }
 
         /* look for first pts */
-        tstamp_t pts = format->get_timestamp(mux);
+        tstamp_t pts = format->get_timestamp();
         if (pts>=0) {
             last_pts = pts;
             frames_since_pts = 0;
@@ -453,7 +438,7 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
     int flags, sample_rate, bit_rate;
     do {
         if (ac3_length<7) {
-            read = format->read(data, size, mux);
+            read = format->read(data, size);
             if (read==0) {
                 if (format->get_source()->error()) {
                     dlmessage("error reading input stream \"%s\": %s", format->get_source()->name(), strerror(errno));
@@ -466,11 +451,11 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
                 }
             }
 
-            tstamp_t pts = format->get_timestamp(mux);
+            tstamp_t pts = format->get_timestamp();
             if (pts>=0 && pts>last_pts) {
                 last_pts = pts;
                 frames_since_pts = 0;
-                dlmessage("new audio pts=%s", describe_timestamp(pts));
+                //dlmessage("new audio pts=%s", describe_timestamp(pts));
             }
             memcpy(ac3_frame+ac3_length, data, read);
             ac3_length += read;
@@ -499,7 +484,7 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
     do {
         /* read data from transport stream to complete frame */
         while (ac3_length < length) {
-            read = format->read(data, size, mux);
+            read = format->read(data, size);
             if (read<=0) {
                 if (format->get_source()->error()) {
                     dlmessage("error reading input stream \"%s\": %s", format->get_source()->name(), strerror(errno));
@@ -546,8 +531,6 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
 
     /* extrapolate a timestamp as necessary */
     results.timestamp = last_pts + (tstamp_t)(frames_since_pts*90000ll/48000ll*6ll*256ll*4ll);
-    if (frames_since_pts>0)
-        dlmessage("extrapolated pts=%s", describe_timestamp(results.timestamp));
     frames_since_pts++;
 
     return results;
@@ -578,11 +561,10 @@ dlhevc::~dlhevc()
         de265_free_decoder(ctx);
 }
 
-int dlhevc::attach(dlformat *f, int m)
+int dlhevc::attach(dlformat *f)
 {
     /* attach the input source */
     format = f;
-    mux = m;
 
     /* allocate the read buffer */
     size = 32*1024;
@@ -601,9 +583,9 @@ int dlhevc::attach(dlformat *f, int m)
             image = de265_peek_next_picture(ctx);
         else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
             /* read a chunk of input data */
-            int n = format->read(data, size, mux);
+            int n = format->read(data, size);
             if (n) {
-                tstamp_t timestamp = format->get_timestamp(mux);
+                tstamp_t timestamp = format->get_timestamp();
                 err = de265_push_data(ctx, data, n, timestamp, NULL);
                 if (!de265_isOK(err)) {
                     dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
@@ -666,14 +648,14 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                 image = de265_get_next_picture(ctx);
             else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
                 /* read a chunk of input data */
-                int read = format->read(data, size, mux);
+                int read = format->read(data, size);
                 if (read==0 || format->get_source()->eof()) {
                     format->get_source()->rewind();
-                    read = format->read(data, size, mux);
+                    read = format->read(data, size);
                 }
                 if (read>0) {
                     /* use most recent available timestamp */
-                    tstamp_t timestamp = format->get_timestamp(mux);
+                    tstamp_t timestamp = format->get_timestamp();
                     err = de265_push_data(ctx, data, read, timestamp, NULL);
                     if (!de265_isOK(err)) {
                         dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
@@ -728,14 +710,14 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                     image = de265_get_next_picture(ctx);
                 } else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
                     /* read a chunk of input data */
-                    int read = format->read(data, size, mux);
+                    int read = format->read(data, size);
                     if (read==0 || format->get_source()->eof()) {
                         format->get_source()->rewind();
-                        read = format->read(data, size, mux);
+                        read = format->read(data, size);
                     }
                     if (read>0) {
                         /* use most recent available timestamp */
-                        tstamp_t timestamp = format->get_timestamp(mux);
+                        tstamp_t timestamp = format->get_timestamp();
                         err = de265_push_data(ctx, data, read, timestamp, NULL);
                         if (!de265_isOK(err)) {
                             dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
