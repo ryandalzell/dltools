@@ -205,6 +205,7 @@ int main(int argc, char *argv[])
     int dis_height = 0;
     bool interlaced = 0;
     float framerate = 0.0;
+    bool halfframerate = false;
     pixelformat_t pixelformat;
 
     /* command line defaults */
@@ -648,6 +649,13 @@ int main(int argc, char *argv[])
                         /* look for an integer frame rate match */
                         if ((framerate_scale / framerate_duration)==(int)floor(framerate))
                             break;
+                        /* also look for a half-rate match, to support 1080p60 in a hacky way */
+                        if ((framerate_scale / framerate_duration)==(int)floor(framerate/2)) {
+                            halfframerate = true;
+                            framerate /= 2;
+                            video->framerate /= 2;
+                            break;
+                        }
                     }
                 }
             }
@@ -659,7 +667,7 @@ int main(int argc, char *argv[])
             /* display mode name */
             const char *name;
             if (mode->GetName(&name)==S_OK)
-                dlmessage("info: video mode %s", name);
+                dlmessage("info: video mode %s %s", name, halfframerate?"(half rate)":"");
         }
 
         /* set the video output mode */
