@@ -196,7 +196,9 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
                     const unsigned char *yuv[3] = {info->display_fbuf->buf[0], info->display_fbuf->buf[1], info->display_fbuf->buf[2]};
                     convert_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
                     results.size = width*height*2;
-                    tstamp_t pts = ((tstamp_t)(info->current_picture->tag2)<<32) | (tstamp_t)info->current_picture->tag;
+                    tstamp_t pts = -1;
+                    if (info->current_picture)
+                        pts = ((tstamp_t)(info->current_picture->tag2)<<32) | (tstamp_t)info->current_picture->tag;
                     if (pts<0 || pts<=last_pts) {
                         /* extrapolate a timestamp if necessary */
                         pts = last_pts + llround(90000.0/framerate);
