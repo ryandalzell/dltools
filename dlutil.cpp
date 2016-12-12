@@ -182,6 +182,10 @@ const char *pixelformatname[] = {
 
 int divine_video_format(const char *filename, int *width, int *height, bool *interlaced, float *framerate, pixelformat_t *pixelformat)
 {
+    /* sanity check */
+    if (!filename)
+        return -1;
+
     struct format_t {
         const char *name;
         int width;
@@ -228,10 +232,10 @@ int divine_video_format(const char *filename, int *width, int *height, bool *int
         struct format_t f = formats[i];
 
         if (strstr(filename, f.name)!=NULL) {
-            *width = f.width;
-            *height = f.height;
-            *interlaced = f.interlaced;
-            *framerate = f.framerate;
+            if (width)      *width = f.width;
+            if (height)     *height = f.height;
+            if (interlaced) *interlaced = f.interlaced;
+            if (framerate)  *framerate = f.framerate;
             return 0;
         }
     }

@@ -518,7 +518,7 @@ int main(int argc, char *argv[])
 
             case YUV:
                 format = new dlformat;
-                video = new dlyuv(lumaonly);
+                video = new dlyuv(lumaonly, displayformat);
 
                 /* skip to the first frame */
                 if (firstframe)

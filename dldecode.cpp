@@ -66,8 +66,9 @@ int dlyuv::attach(dlformat *f, int m)
     mux = m;
 
     /* determine the video format */
-    if (divine_video_format(format->get_source()->name(), &width, &height, &interlaced, &framerate, &pixelformat)<0)
-        dlexit("failed to determine output video format from filename: %s", format->get_source()->name());
+    if (divine_video_format(imagesize, &width, &height, &interlaced, &framerate, &pixelformat)<0)
+        if (divine_video_format(format->get_source()->name(), &width, &height, &interlaced, &framerate, &pixelformat)<0)
+            dlexit("failed to determine output video format: displayformat=%s filename=%s", size, format->get_source()->name());
 
     /* allocate the read buffer */
     size = pixelformat==I422? width*height*2 : width*height*3/2;

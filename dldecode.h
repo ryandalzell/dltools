@@ -82,6 +82,7 @@ class dlyuv : public dldecode
 public:
     dlyuv() { lumaonly = 0; }
     dlyuv(int l) { lumaonly = l; }
+    dlyuv(int l, const char *s) { lumaonly = l; imagesize = s; }
 
     virtual int attach(dlformat *format, int mux=0);
     bool atend();
@@ -95,6 +96,7 @@ private:
 
     /* display parameters */
     int lumaonly;
+    const char *imagesize;
 };
 
 /* libmpeg2 class */
