@@ -150,7 +150,7 @@ void usage(int exitcode)
     fprintf(stderr, "  -q, --quiet         : decrease verbosity, can be used multiple times\n");
     fprintf(stderr, "  -v, --verbose       : increase verbosity, can be used multiple times\n");
     fprintf(stderr, "  --                  : disable argument processing\n");
-    fprintf(stderr, "  -u, --help, --usage : print this usage message\n");
+    fprintf(stderr, "  -h, --help          : print this usage message\n");
     exit(exitcode);
 }
 
@@ -258,12 +258,11 @@ int main(int argc, char *argv[])
             {"index",     1, NULL, 'i'},
             {"quiet",     0, NULL, 'q'},
             {"verbose",   0, NULL, 'v'},
-            {"usage",     0, NULL, 'u'},
-            {"help",      0, NULL, 'u'},
+            {"help",      0, NULL, 'h'},
             {NULL,        0, NULL,  0 }
         };
 
-        int optchar = getopt_long(argc, argv, "f:tI:a:n:m:l=~p:o:i:qvu", long_options, NULL);
+        int optchar = getopt_long(argc, argv, "f:tI:a:n:m:l=~p:o:i:qvh", long_options, NULL);
         if (optchar==-1)
             break;
 
