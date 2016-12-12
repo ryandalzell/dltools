@@ -80,9 +80,12 @@ protected:
 class dlyuv : public dldecode
 {
 public:
-    dlyuv() { lumaonly = 0; }
-    dlyuv(int l) { lumaonly = l; }
-    dlyuv(int l, const char *s) { lumaonly = l; imagesize = s; }
+    dlyuv() { lumaonly = 0; imagesize = NULL; fourcc = NULL; }
+
+    /* yuv specific options */
+    void set_lumaonly(int l) { lumaonly = l; }
+    void set_imagesize(const char *s) { imagesize = s; }
+    void set_fourcc(const char *f) { fourcc = f; }
 
     virtual int attach(dlformat *format, int mux=0);
     bool atend();
@@ -97,6 +100,7 @@ private:
     /* display parameters */
     int lumaonly;
     const char *imagesize;
+    const char *fourcc;
 };
 
 /* libmpeg2 class */

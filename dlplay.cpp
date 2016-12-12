@@ -136,7 +136,8 @@ void usage(int exitcode)
 {
     fprintf(stderr, "%s: play raw video files\n", appname);
     fprintf(stderr, "usage: %s [options] <file/url> [<file/url>...]\n", appname);
-    fprintf(stderr, "  -f, --format        : specify display format: 480i,480p,576i,720p,1080i,1080p [optional +framerate] (default: auto)\n");
+    fprintf(stderr, "  -s, --sizeformat    : specify display size format: 480i,480p,576i,720p,1080i,1080p [optional +framerate] (default: autodetect)\n");
+    fprintf(stderr, "  -f, --fourcc        : specify pixel fourcc format: i420,i422,uyvy (default: i420)\n");
     fprintf(stderr, "  -I, --interface     : address of interface to listen for multicast data (default: first network interface)\n");
     fprintf(stderr, "  -a, --firstframe    : index of first frame in input to display (default: 0)\n");
     fprintf(stderr, "  -n, --numframes     : number of frames in input to display (default: all)\n");
@@ -205,10 +206,11 @@ int main(int argc, char *argv[])
     int dis_height = 0;
     bool interlaced = 0;
     float framerate = 0.0;
-    pixelformat_t pixelformat;
+    pixelformat_t pixelformat = I420;
 
     /* command line defaults */
-    char *displayformat = NULL;
+    char *sizeformat = NULL;
+    char *fourcc = NULL;
     const char *interface = NULL;
     int firstframe = 0;
     int numframes = -1;
@@ -262,13 +264,17 @@ int main(int argc, char *argv[])
             {NULL,        0, NULL,  0 }
         };
 
-        int optchar = getopt_long(argc, argv, "f:tI:a:n:m:l=~p:o:i:qvh", long_options, NULL);
+        int optchar = getopt_long(argc, argv, "s:f:tI:a:n:m:l=~p:o:i:qvh", long_options, NULL);
         if (optchar==-1)
             break;
 
         switch (optchar) {
+            case 's':
+                sizeformat = optarg;
+                break;
+
             case 'f':
-                displayformat = optarg;
+                fourcc = optarg;
                 break;
 
             case 't':
@@ -336,7 +342,7 @@ int main(int argc, char *argv[])
                 verbose++;
                 break;
 
-            case 'u':
+            case 'h':
                 usage(0);
                 break;
 
@@ -517,15 +523,27 @@ int main(int argc, char *argv[])
             }
 
             case YUV:
+            {
                 format = new dlformat;
-                video = new dlyuv(lumaonly, displayformat);
+                dlyuv *yuv = new dlyuv();
+
+                /* yuv specific options */
+                if (lumaonly)
+                    yuv->set_lumaonly(lumaonly);
+                if (sizeformat)
+                    yuv->set_imagesize(sizeformat);
+                if (fourcc)
+                    yuv->set_fourcc(fourcc);
 
                 /* skip to the first frame */
                 if (firstframe)
                     video->rewind(firstframe);
 
+                /* cast down to decoder pointer */
+                video = (dldecode *)yuv;
                 videoonly = 1;
                 break;
+            }
 
             case M2V :
                 format = new dlestream;
@@ -596,10 +614,10 @@ int main(int argc, char *argv[])
         }
 
         /* determine display dimensions */
-        if (displayformat) {
+        if (sizeformat) {
             /* lookup specified format */
-            if (divine_video_format(displayformat, &dis_width, &dis_height, &interlaced, &framerate, &pixelformat)<0)
-                dlexit("failed to determine output video format from filename: %s", displayformat);
+            if (divine_video_format(sizeformat, &dis_width, &dis_height, &interlaced, &framerate)<0)
+                dlexit("failed to determine output video format from filename: %s", sizeformat);
         } else {
             /* determine from picture parameters */
             dis_width = pic_width;

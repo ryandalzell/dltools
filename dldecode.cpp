@@ -66,9 +66,20 @@ int dlyuv::attach(dlformat *f, int m)
     mux = m;
 
     /* determine the video format */
-    if (divine_video_format(imagesize, &width, &height, &interlaced, &framerate, &pixelformat)<0)
-        if (divine_video_format(format->get_source()->name(), &width, &height, &interlaced, &framerate, &pixelformat)<0)
+    if (divine_video_format(imagesize, &width, &height, &interlaced, &framerate)<0)
+        if (divine_video_format(format->get_source()->name(), &width, &height, &interlaced, &framerate)<0)
             dlexit("failed to determine output video format: displayformat=%s filename=%s", size, format->get_source()->name());
+
+    /* override the pixelformat if a fourcc is specified */
+    pixelformat = I420;
+    if (fourcc) {
+        if (divine_pixel_format(fourcc, &pixelformat)<0)
+            dlexit("failed to determine input pixel format from fourcc: %s", fourcc);
+    } else {
+        /* not an error if these don't find a match */
+        if (divine_pixel_format(imagesize, &pixelformat)<0)
+            divine_pixel_format(format->get_source()->name(), &pixelformat);
+    }
 
     /* allocate the read buffer */
     size = pixelformat==I422? width*height*2 : width*height*3/2;

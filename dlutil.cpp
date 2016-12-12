@@ -180,7 +180,25 @@ const char *pixelformatname[] = {
     "UYVY"
 };
 
-int divine_video_format(const char *filename, int *width, int *height, bool *interlaced, float *framerate, pixelformat_t *pixelformat)
+int divine_pixel_format(const char *filename, pixelformat_t *pixelformat)
+{
+    if (!filename || !pixelformat)
+        return -1;
+
+    if (strstr(filename, "uyvy")!=NULL || strstr(filename, "UYVY")!=NULL)
+        *pixelformat = UYVY;
+    else if (strstr(filename, "422")!=NULL)
+        *pixelformat = I422;
+    else if (strstr(filename, "420")!=NULL)
+        *pixelformat = I420;
+    else
+        /* couldn't find a pixel format string */
+        return -1;
+
+    return 0;
+}
+
+int divine_video_format(const char *filename, int *width, int *height, bool *interlaced, float *framerate)
 {
     /* sanity check */
     if (!filename)
@@ -221,21 +239,14 @@ int divine_video_format(const char *filename, int *width, int *height, bool *int
         { "cif",        352,  288,  true,  30.0 },
     };
 
-    if (strstr(filename, "uyvy")!=NULL || strstr(filename, "UYVY")!=NULL)
-        *pixelformat = UYVY;
-    else if (strstr(filename, "422")!=NULL)
-        *pixelformat = I422;
-    else
-        *pixelformat = I420;
-
     for (unsigned i=0; i<sizeof(formats)/sizeof(struct format_t); i++) {
         struct format_t f = formats[i];
 
         if (strstr(filename, f.name)!=NULL) {
-            if (width)      *width = f.width;
-            if (height)     *height = f.height;
+            if (width     ) *width      = f.width;
+            if (height    ) *height     = f.height;
             if (interlaced) *interlaced = f.interlaced;
-            if (framerate)  *framerate = f.framerate;
+            if (framerate ) *framerate  = f.framerate;
             return 0;
         }
     }
