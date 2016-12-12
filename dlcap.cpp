@@ -342,7 +342,6 @@ int main(int argc, char *argv[])
     int height = 0;
     bool interlaced = false;
     float framerate = 0.0f;
-    pixelformat_t pixelformat = UNKNOWN;
 
     /* parse command line for options */
     while (1) {
@@ -404,7 +403,7 @@ int main(int argc, char *argv[])
 
     /* lookup format type */
     if (format || outfile) {
-        if (divine_video_format(format? format : outfile, &width, &height, &interlaced, &framerate, &pixelformat)<0)
+        if (divine_video_format(format? format : outfile, &width, &height, &interlaced, &framerate)<0)
             dlmessage("info: auto-detecting input format");
     } else
         dlmessage("info: auto-detecting input format");
