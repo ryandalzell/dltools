@@ -37,7 +37,8 @@ void dlmessage(const char *format, ...);
 void dlstatus(const char *format, ...);
 void dlabort(const char *format, ...);
 
-int divine_video_format(const char *filename, int *width, int *height, bool *interlaced, float *framerate, pixelformat_t *pixelformat);
+int divine_pixel_format(const char *filename, pixelformat_t *pixelformat);
+int divine_video_format(const char *filename, int *width, int *height, bool *interlaced, float *framerate);
 unsigned long long int get_time();
 unsigned long long int get_utime();
 tstamp_t get_stime();
