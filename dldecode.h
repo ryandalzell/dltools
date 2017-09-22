@@ -8,7 +8,9 @@ extern "C" {
     #include <mpeg2dec/mpeg2.h>
     #include <a52dec/a52.h>
     #include <a52dec/mm_accel.h>
+#ifdef HAVE_LIBDE265
     #include <libde265/de265.h>
+#endif
 }
 #include <mpg123.h>
 
@@ -168,6 +170,7 @@ private:
 };
 
 /* libde265 class */
+#ifdef HAVE_LIBDE265
 class dlhevc : public dldecode
 {
 public:
@@ -187,5 +190,6 @@ protected:
     de265_decoder_context* ctx;
     const struct de265_image *image;
 };
+#endif
 
 #endif

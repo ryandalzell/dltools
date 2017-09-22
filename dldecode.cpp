@@ -550,6 +550,7 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
     return results;
 }
 
+#ifdef HAVE_LIBDE265
 dlhevc::dlhevc()
 {
     /* initialise the hevc video decoder */
@@ -826,3 +827,4 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
 
     return results;
 }
+#endif

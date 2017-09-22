@@ -20,7 +20,9 @@ extern "C" {
     #include <mpeg2dec/mpeg2convert.h>
     #include <a52dec/a52.h>
     #include <a52dec/mm_accel.h>
+#ifdef HAVE_LIBDE265
     #include <libde265/de265.h>
+#endif
 }
 #include <mpg123.h>
 
@@ -476,11 +478,13 @@ int main(int argc, char *argv[])
                             video = new dlmpeg2;
                             break;
 
+#ifdef HAVE_LIBDE265
                         case 0x24:
                         case 0x1b: // included h.264 stream type for development compatibility.
                         case 0x06:
                             video = new dlhevc;
                             break;
+#endif
                     }
 
                     /* cast down to format pointer */
@@ -554,12 +558,14 @@ int main(int argc, char *argv[])
                 videoonly = 1;
                 break;
 
+#ifdef HAVE_LIBDE265
             case HEVC:
                 vid_fmt = new dlestream;
                 vid_fmt->attach(source);
                 video = new dlhevc;
                 videoonly = 1;
                 break;
+#endif
 
             default: dlexit("unknown input file type");
         }

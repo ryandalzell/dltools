@@ -3,6 +3,7 @@
 
 # Build options
 LIBYUV = 1
+HEVC = 0
 
 # Build configuration
 BINDIR = /usr/local/bin
@@ -31,6 +32,10 @@ ifeq ($(LIBYUV),1)
 CXXFLAGS += -DHAVE_LIBYUV
 LFLAGS += -lyuv
 endif
+ifeq ($(HEVC),1)
+CXXFLAGS += -DHAVE_LIBDE265
+LFLAGS += -lde265
+endif
 
 # Targets
 all   : $(APPS) dlplay
@@ -54,7 +59,7 @@ DeckLinkAPIDispatch.o: $(SDKDIR)/DeckLinkAPIDispatch.cpp
 	$(CXX) -c -o $@ $(CXXFLAGS) $<
 
 dlplay: dlplay.o dldecode.o $(OBJS)
-	$(CXX) -o $@ $^ $(LFLAGS) -lmpeg2 -lmpg123 -la52 -lde265
+	$(CXX) -o $@ $^ $(LFLAGS) -lmpeg2 -lmpg123 -la52
 
 dist: dltools.tar.gz
 
