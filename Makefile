@@ -4,6 +4,7 @@
 # Build options
 LIBYUV = 1
 HEVC = 0
+FFMPEG = 1
 
 # Build configuration
 BINDIR = /usr/local/bin
@@ -35,6 +36,10 @@ endif
 ifeq ($(HEVC),1)
 CXXFLAGS += -DHAVE_LIBDE265
 LFLAGS += -lde265
+endif
+ifeq ($(FFMPEG),1)
+CXXFLAGS += -DHAVE_FFMPEG
+LFLAGS += -lavcodec -lavformat -lavutil
 endif
 
 # Targets

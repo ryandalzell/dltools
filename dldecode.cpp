@@ -828,3 +828,172 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
     return results;
 }
 #endif
+
+dlffmpeg::dlffmpeg()
+{
+    codec = NULL;
+    stream = NULL;
+    codeccontext = NULL;
+    formatcontext = NULL;
+    frame = NULL;
+    errorstring = (char *) malloc(AV_ERROR_MAX_STRING_SIZE);
+    /* register all the codecs and formats */
+    av_register_all();
+}
+
+dlffmpeg::~dlffmpeg()
+{
+    av_frame_free(&frame);
+    //avcodec_free_context(&codeccontext);
+    avformat_close_input(&formatcontext);
+    //av_free(codeccontext);
+    free(errorstring);
+}
+
+int dlffmpeg::attach(dlformat* f)
+{
+    /* attach the input source */
+    format = f;
+
+    /* allocate the read buffer, with padding for overread */
+    //size = 64*1024;
+    //data = (unsigned char *) malloc(size + AV_INPUT_BUFFER_PADDING_SIZE);
+    //memset(data + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+
+    /* open input file and allocate format context */
+    if (avformat_open_input(&formatcontext, format->get_source()->name(), NULL, NULL) < 0) {
+        dlmessage("failed to open source file in avformat");
+        return -1;
+    }
+
+    /* get stream information */
+    if (avformat_find_stream_info(formatcontext, NULL) < 0) {
+        dlmessage("failed to find stream information");
+        return -1;
+    }
+
+    int stream_index;
+    int ret = av_find_best_stream(formatcontext, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
+    if (ret < 0) {
+        dlmessage("failed to find video stream in input file");
+        return ret;
+    }
+    stream_index = ret;
+
+    /* find decoder for the stream */
+    stream = formatcontext->streams[stream_index];
+    codeccontext = stream->codec;
+    AVCodec *dec = avcodec_find_decoder(codeccontext->codec_id);
+    if (!dec) {
+        dlmessage("failed to find video codec");
+        return -1;
+    }
+
+    /* Init the decoders, with or without reference counting */
+    AVDictionary *opts = NULL;
+    //if (api_mode == API_MODE_NEW_API_REF_COUNT)
+    //    av_dict_set(&opts, "refcounted_frames", "1", 0);
+    if ((ret = avcodec_open2(codeccontext, dec, &opts)) < 0) {
+        dlmessage("failed to open video codec");
+        return ret;
+    }
+
+    {
+        /* */
+        width = codeccontext->width;
+        height = codeccontext->height;
+        interlaced = 0;
+        //pix_fmt = codeccontext->pix_fmt;
+        pixelformat = I420;
+        //framerate = context->framerate.num / context->framerate.den;
+        framerate = 60000.0 / 1001.0;
+            //switch (de265_get_chroma_format(image)) {
+            //case de265_chroma_444  : pixelformat = I444; break;
+            //    case de265_chroma_422  : pixelformat = I422; break;
+            //    case de265_chroma_420  : pixelformat = I420; break;
+            //case de265_chroma_mono : pixelformat = Y800; break;
+            //    default : dlerror("unknown chroma format");
+            //}
+
+        /* dump input information to stderr */
+        if (verbose>=1)
+            av_dump_format(formatcontext, 0, format->get_source()->name(), 0);
+    }
+
+    /* allocate the decoded image */
+    int size = av_image_alloc(image, linesizes, width, height, codeccontext->pix_fmt, 1);
+    if (size < 0) {
+        dlmessage("failed to allocate image");
+        return -1;
+    }
+
+    /* initialise the frame */
+    frame = av_frame_alloc();
+    if (!frame) {
+        dlmessage("failed to allocate video frame");
+        return -1;
+    }
+
+    /* initialise the packet */
+    av_init_packet(&packet);
+    packet.data = NULL;
+    packet.size = 0;
+
+    return 0;
+}
+
+decode_t dlffmpeg::decode(unsigned char *uyvy, size_t uyvysize)
+{
+    decode_t results = {0, 0, 0, 0};
+
+    /* start timer */
+    unsigned long long start = get_utime();
+
+    /* decode the next avc frame */
+    int got_frame = 0;
+    while (!got_frame) {
+        if (packet.size <= 0) {
+            if (av_read_frame(formatcontext, &packet) < 0)
+                break;
+        }
+
+        // TODO check stream index?
+
+        //dlmessage("packet.size=%d", packet.size);
+        int len = avcodec_decode_video2(codeccontext, frame, &got_frame, &packet);
+        if (len < 0) {
+            dlmessage("error while decoding frame: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, len));
+            break;
+        }
+        //dlmessage("decode: len=%d", len);
+
+        if (got_frame) {
+            /* timestamp decode time */
+            unsigned long long decode = get_utime();
+            results.decode_time = decode - start;
+
+            /* copy frame to uyvy buffer */
+            convert_yuv_uyvy((const unsigned char **)frame->data, uyvy, width, height, pixelformat);
+            results.size = width*height*2;
+            //tstamp_t pts = de265_get_image_PTS(image);
+            //if (pts<0 || pts<=last_pts) {
+                /* extrapolate a timestamp if necessary */
+            tstamp_t pts = last_pts + llround(90000.0/framerate);
+            //}
+            results.timestamp = last_pts = pts;
+
+            /* measure render time */
+            results.render_time = get_utime() - decode;
+        }
+
+        //if (packet.data) {
+            packet.size -= len;
+            packet.data += len;
+        //}
+
+        if (got_frame)
+            break;
+    }
+
+    return results;
+}

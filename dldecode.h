@@ -11,6 +11,8 @@ extern "C" {
 #ifdef HAVE_LIBDE265
     #include <libde265/de265.h>
 #endif
+    #include <libavutil/imgutils.h>
+    #include <libavformat/avformat.h>
 }
 #include <mpg123.h>
 
@@ -191,5 +193,34 @@ protected:
     const struct de265_image *image;
 };
 #endif
+
+/* ffmpeg class */
+class dlffmpeg : public dldecode
+{
+public:
+    dlffmpeg();
+    ~dlffmpeg();
+
+    virtual int attach(dlformat *format);
+    bool atend();
+    virtual decode_t decode(unsigned char *buffer, size_t bufsize);
+
+public:
+    virtual const char *description() { return "avc video"; }
+
+protected:
+    /* ffmpeg variables */
+    AVCodec *codec;
+    AVStream *stream;
+    AVCodecContext *codeccontext;
+    AVFormatContext *formatcontext;
+    AVFrame *frame;
+    AVPacket packet;
+    uint8_t *image[4];
+    int linesizes[4];
+
+    /* error string */
+    char *errorstring;
+};
 
 #endif

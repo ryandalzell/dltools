@@ -124,6 +124,8 @@ filetype_t dlfile::autodetect()
     /* determine the file type from the filename suffix */
     if (strstr(filename, ".m2v")!=NULL || strstr(filename, ".M2V")!=NULL)
         return M2V;
+    else if (strstr(filename, ".264")!=NULL || strstr(filename, ".h264")!=NULL || strstr(filename, ".avc")!=NULL)
+        return AVC;
     else if (strstr(filename, ".265")!=NULL || strstr(filename, ".h265")!=NULL || strstr(filename, ".hevc")!=NULL)
         return HEVC;
     else if (strstr(filename, ".ts")!=NULL || strstr(filename, ".trp")!=NULL || strstr(filename, ".mpg")!=NULL)

@@ -480,11 +480,14 @@ int main(int argc, char *argv[])
 
 #ifdef HAVE_LIBDE265
                         case 0x24:
-                        case 0x1b: // included h.264 stream type for development compatibility.
                         case 0x06:
                             video = new dlhevc;
                             break;
 #endif
+
+                        case 0x1b: // included h.264 stream type for development compatibility.
+                            video = new dlffmpeg;
+                            break;
                     }
 
                     /* cast down to format pointer */
@@ -567,6 +570,13 @@ int main(int argc, char *argv[])
                 break;
 #endif
 
+            case AVC:
+                vid_fmt = new dlestream;
+                vid_fmt->attach(source);
+                video = new dlffmpeg;
+                videoonly = 1;
+                break;
+
             default: dlexit("unknown input file type");
         }
 
@@ -590,6 +600,7 @@ int main(int argc, char *argv[])
         /* initialise the audio encoder */
         if (!videoonly && aud_pid) {
             if (audio->attach(aud_fmt)<0) {
+                dlmessage("failed to initialise the audio decoder");
                 delete audio;
                 audio = NULL;
             }
