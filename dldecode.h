@@ -207,13 +207,13 @@ public:
 
 public:
     virtual const char *description() { return "avc video"; }
+    int read(uint8_t *buf, int buf_size);
 
 protected:
     /* ffmpeg variables */
-    AVCodec *codec;
-    AVStream *stream;
     AVCodecContext *codeccontext;
     AVFormatContext *formatcontext;
+    AVIOContext *iocontext;
     AVFrame *frame;
     AVPacket packet;
     uint8_t *image[4];

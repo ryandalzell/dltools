@@ -831,11 +831,11 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
 
 dlffmpeg::dlffmpeg()
 {
-    codec = NULL;
-    stream = NULL;
     codeccontext = NULL;
     formatcontext = NULL;
+    iocontext = NULL;
     frame = NULL;
+    image[0] = NULL;
     errorstring = (char *) malloc(AV_ERROR_MAX_STRING_SIZE);
     /* register all the codecs and formats */
     av_register_all();
@@ -843,11 +843,30 @@ dlffmpeg::dlffmpeg()
 
 dlffmpeg::~dlffmpeg()
 {
+    if (image[0])
+        av_freep(&image[0]);
     av_frame_free(&frame);
-    //avcodec_free_context(&codeccontext);
+    avcodec_free_context(&codeccontext);
+    // the following line triggers a double-free on my system,
+    // but valgrind tells me it should be here
     avformat_close_input(&formatcontext);
-    //av_free(codeccontext);
+    if (iocontext) {
+        av_freep(&iocontext->buffer);
+        av_freep(&iocontext);
+    }
     free(errorstring);
+}
+
+/* av io context callbacks */
+int read_packet(void *opaque, uint8_t *buf, int buf_size)
+{
+    class dlffmpeg *p = (class dlffmpeg *)opaque;
+    return p->read(buf, buf_size);
+}
+
+int dlffmpeg::read(uint8_t* buf, int buf_size)
+{
+    return format->read(buf, buf_size);
 }
 
 int dlffmpeg::attach(dlformat* f)
@@ -855,14 +874,27 @@ int dlffmpeg::attach(dlformat* f)
     /* attach the input source */
     format = f;
 
-    /* allocate the read buffer, with padding for overread */
-    //size = 64*1024;
-    //data = (unsigned char *) malloc(size + AV_INPUT_BUFFER_PADDING_SIZE);
-    //memset(data + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+    /* allocate the read buffer */
+    size = 64*1024;
+    data = (unsigned char *) av_malloc(size);
 
-    /* open input file and allocate format context */
-    if (avformat_open_input(&formatcontext, format->get_source()->name(), NULL, NULL) < 0) {
-        dlmessage("failed to open source file in avformat");
+    /* allocate format context */
+    if ( !(formatcontext = avformat_alloc_context()) ) {
+        dlmessage("failed to allocate format context");
+        return -1;
+    }
+
+    /* allocate the io context */
+    iocontext = avio_alloc_context(data, size, 0, this, &read_packet, NULL, NULL);
+    if (!iocontext) {
+        dlmessage("failed to allocate io context");
+        return -1;
+    }
+    formatcontext->pb = iocontext;
+
+    /* open the format context with custom io */
+    if (avformat_open_input(&formatcontext, NULL, NULL, NULL) < 0) {
+        dlmessage("failed to open format context with custom io");
         return -1;
     }
 
@@ -881,7 +913,7 @@ int dlffmpeg::attach(dlformat* f)
     stream_index = ret;
 
     /* find decoder for the stream */
-    stream = formatcontext->streams[stream_index];
+    AVStream *stream = formatcontext->streams[stream_index];
     codeccontext = stream->codec;
     AVCodec *dec = avcodec_find_decoder(codeccontext->codec_id);
     if (!dec) {
