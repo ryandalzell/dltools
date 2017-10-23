@@ -935,17 +935,15 @@ int dlffmpeg::attach(dlformat* f)
         width = codeccontext->width;
         height = codeccontext->height;
         interlaced = 0;
-        //pix_fmt = codeccontext->pix_fmt;
-        pixelformat = I420;
+        switch (codeccontext->pix_fmt) {
+          //case AV_PIX_FMT_YUV444P  : pixelformat = I444; break;
+            case AV_PIX_FMT_YUV422P  : pixelformat = I422; break;
+            case AV_PIX_FMT_YUV420P  : pixelformat = I420; break;
+          //case AV_PIX_FMT_GRAY8    : pixelformat = Y800; break;
+            default : dlerror("unknown chroma format");
+        }
         //framerate = context->framerate.num / context->framerate.den;
         framerate = 60000.0 / 1001.0;
-            //switch (de265_get_chroma_format(image)) {
-            //case de265_chroma_444  : pixelformat = I444; break;
-            //    case de265_chroma_422  : pixelformat = I422; break;
-            //    case de265_chroma_420  : pixelformat = I420; break;
-            //case de265_chroma_mono : pixelformat = Y800; break;
-            //    default : dlerror("unknown chroma format");
-            //}
 
         /* dump input information to stderr */
         if (verbose>=1)
