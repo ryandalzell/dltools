@@ -43,11 +43,6 @@ protected:
 class dlestream : public dlformat
 {
 public:
-    /* copy to buffer read */
-    //virtual size_t read(unsigned char *buf, size_t bytes);
-    /* zero copy read (depending on implementation) */
-    //virtual const unsigned char *read(size_t *bytes);
-
     /* format metadata */
     virtual const char *description() { return "elementary stream"; }
 };
@@ -76,6 +71,14 @@ public:
 protected:
     int pid;
     long long pts;
+};
+
+/* ffmpeg (libavformat) format decoder class */
+class dlpassthrough : public dlformat
+{
+public:
+    /* format metadata */
+    virtual const char *description() { return "ffmpeg format"; }
 };
 
 #endif

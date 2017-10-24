@@ -875,7 +875,7 @@ int dlffmpeg::attach(dlformat* f)
     format = f;
 
     /* allocate the read buffer */
-    size = 64*1024;
+    size = 188;
     data = (unsigned char *) av_malloc(size);
 
     /* allocate format context */

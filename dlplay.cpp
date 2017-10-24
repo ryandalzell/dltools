@@ -485,7 +485,7 @@ int main(int argc, char *argv[])
                             break;
 #endif
 
-                        case 0x1b: // included h.264 stream type for development compatibility.
+                        case 0x1b:
                             video = new dlffmpeg;
                             break;
                     }
@@ -570,8 +570,8 @@ int main(int argc, char *argv[])
                 break;
 #endif
 
-            case AVC:
-                vid_fmt = new dlestream;
+            case FFMPEG:
+                vid_fmt = new dlpassthrough;
                 vid_fmt->attach(source);
                 video = new dlffmpeg;
                 videoonly = 1;

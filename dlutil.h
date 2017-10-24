@@ -12,6 +12,7 @@ typedef enum {
     AVC,
     HEVC,
     TS,
+    FFMPEG, // use libav for decoding.
 } filetype_t;
 
 /* pixel formats */
