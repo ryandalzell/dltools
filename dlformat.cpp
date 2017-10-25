@@ -126,3 +126,79 @@ long long int dltstream::get_timestamp()
     return pts;
 }
 
+/* ffmpeg (libavformat) decoder class */
+dlavformat::dlavformat()
+{
+    formatcontext = NULL;
+    iocontext = NULL;
+    /* register all the codecs and formats */
+    av_register_all();
+    errorstring = (char *) malloc(AV_ERROR_MAX_STRING_SIZE);
+}
+
+dlavformat::~dlavformat()
+{
+    // the following line triggers a double-free on my system,
+    // but valgrind tells me it should be here
+    //avformat_close_input(&formatcontext);
+    if (iocontext) {
+        av_freep(&iocontext->buffer);
+        av_freep(&iocontext);
+    }
+    free(errorstring);
+}
+
+/* av io context callbacks */
+int read_packet(void *opaque, uint8_t *buf, int buf_size)
+{
+    class dlavformat *p = (class dlavformat *)opaque;
+    return (int) p->read(buf, (size_t)buf_size);
+}
+
+int dlavformat::attach(dlsource *s)
+{
+    /* attach the input source */
+    source = s;
+    token = source->attach();
+
+    /* allocate the read buffer */
+    size = 4096; //188;
+    data = (unsigned char *) av_malloc(size);
+
+    /* allocate format context */
+    formatcontext = avformat_alloc_context();
+    if ( !formatcontext ) {
+        dlmessage("failed to allocate format context");
+        return -1;
+    }
+
+    /* allocate the io context */
+    iocontext = avio_alloc_context(data, size, 0, this, &read_packet, NULL, NULL);
+    if (!iocontext) {
+        dlmessage("failed to allocate io context");
+        return -1;
+    }
+    formatcontext->pb = iocontext;
+
+    /* open the format context with custom io */
+    int ret = avformat_open_input(&formatcontext, NULL, NULL, NULL);
+    if (ret < 0) {
+        av_strerror(ret, errorstring, AV_ERROR_MAX_STRING_SIZE);
+        dlmessage("failed to open format context with custom io: %s", errorstring);
+        return -1;
+    }
+
+    return 0;
+}
+
+size_t dlavformat::read(unsigned char *buf, size_t bytes)
+{
+    size_t size = source->read(buf, bytes, token);
+    if (size==0) {
+        /* no timestamp so simply loop input */
+        source->rewind(token);
+        size = source->read(buf, bytes, token);
+    }
+    return size;
+}
+

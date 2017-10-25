@@ -206,14 +206,12 @@ public:
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
-    virtual const char *description() { return "avc video"; }
-    int read(uint8_t *buf, int buf_size);
+    virtual const char *description() { return codeccontext->codec->long_name; }
 
 protected:
     /* ffmpeg variables */
-    AVCodecContext *codeccontext;
     AVFormatContext *formatcontext;
-    AVIOContext *iocontext;
+    AVCodecContext *codeccontext;
     AVFrame *frame;
     AVPacket packet;
     uint8_t *image[4];

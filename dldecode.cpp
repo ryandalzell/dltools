@@ -831,14 +831,11 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
 
 dlffmpeg::dlffmpeg()
 {
-    codeccontext = NULL;
     formatcontext = NULL;
-    iocontext = NULL;
+    codeccontext = NULL;
     frame = NULL;
     image[0] = NULL;
     errorstring = (char *) malloc(AV_ERROR_MAX_STRING_SIZE);
-    /* register all the codecs and formats */
-    av_register_all();
 }
 
 dlffmpeg::~dlffmpeg()
@@ -847,26 +844,7 @@ dlffmpeg::~dlffmpeg()
         av_freep(&image[0]);
     av_frame_free(&frame);
     avcodec_free_context(&codeccontext);
-    // the following line triggers a double-free on my system,
-    // but valgrind tells me it should be here
-    avformat_close_input(&formatcontext);
-    if (iocontext) {
-        av_freep(&iocontext->buffer);
-        av_freep(&iocontext);
-    }
     free(errorstring);
-}
-
-/* av io context callbacks */
-int read_packet(void *opaque, uint8_t *buf, int buf_size)
-{
-    class dlffmpeg *p = (class dlffmpeg *)opaque;
-    return p->read(buf, buf_size);
-}
-
-int dlffmpeg::read(uint8_t* buf, int buf_size)
-{
-    return format->read(buf, buf_size);
 }
 
 int dlffmpeg::attach(dlformat* f)
@@ -874,29 +852,8 @@ int dlffmpeg::attach(dlformat* f)
     /* attach the input source */
     format = f;
 
-    /* allocate the read buffer */
-    size = 188;
-    data = (unsigned char *) av_malloc(size);
-
-    /* allocate format context */
-    if ( !(formatcontext = avformat_alloc_context()) ) {
-        dlmessage("failed to allocate format context");
-        return -1;
-    }
-
-    /* allocate the io context */
-    iocontext = avio_alloc_context(data, size, 0, this, &read_packet, NULL, NULL);
-    if (!iocontext) {
-        dlmessage("failed to allocate io context");
-        return -1;
-    }
-    formatcontext->pb = iocontext;
-
-    /* open the format context with custom io */
-    if (avformat_open_input(&formatcontext, NULL, NULL, NULL) < 0) {
-        dlmessage("failed to open format context with custom io");
-        return -1;
-    }
+    /* extract the pointer to the format context */
+    formatcontext = ((dlavformat *)f)->formatcontext;
 
     /* get stream information */
     if (avformat_find_stream_info(formatcontext, NULL) < 0) {
@@ -989,13 +946,11 @@ decode_t dlffmpeg::decode(unsigned char *uyvy, size_t uyvysize)
 
         // TODO check stream index?
 
-        //dlmessage("packet.size=%d", packet.size);
         int len = avcodec_decode_video2(codeccontext, frame, &got_frame, &packet);
         if (len < 0) {
             dlmessage("error while decoding frame: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, len));
             break;
         }
-        //dlmessage("decode: len=%d", len);
 
         if (got_frame) {
             /* timestamp decode time */
@@ -1016,10 +971,8 @@ decode_t dlffmpeg::decode(unsigned char *uyvy, size_t uyvysize)
             results.render_time = get_utime() - decode;
         }
 
-        //if (packet.data) {
-            packet.size -= len;
-            packet.data += len;
-        //}
+        packet.size -= len;
+        packet.data += len;
 
         if (got_frame)
             break;

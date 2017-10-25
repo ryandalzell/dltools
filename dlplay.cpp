@@ -571,16 +571,15 @@ int main(int argc, char *argv[])
 #endif
 
             case FFMPEG:
-                vid_fmt = new dlpassthrough;
-                vid_fmt->attach(source);
+                vid_fmt = new dlavformat;
+                if (vid_fmt->attach(source)<0)
+                    dlexit("failed to attach the ffmpeg format decoder to the source");
                 video = new dlffmpeg;
                 videoonly = 1;
                 break;
 
             default: dlexit("unknown input file type");
         }
-
-        dlmessage("found %s and %s in %s from %s source", video? video->description() : "no video", audio? audio->description() : "no audio", vid_fmt->description(), source->description());
 
         /* initialise the video decoder */
         if (!audioonly) {
@@ -613,6 +612,8 @@ int main(int argc, char *argv[])
         /* sanity check */
         if (!video && !audio)
             dlexit("error: neither video nor audio to play in file \"%s\"", filename);
+
+        dlmessage("found %s and %s in %s from %s source", video? video->description() : "no video", audio? audio->description() : "no audio", vid_fmt->description(), source->description());
 
         if (video && verbose>=1)
             dlmessage("info: video format is %dx%d%c%.2f %s", pic_width, pic_height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);

@@ -3,6 +3,9 @@
 
 #include "dlutil.h"
 #include "dlsource.h"
+extern "C" {
+        #include <libavformat/avformat.h>
+}
 
 /* virtual base class for data format decoders */
 class dlformat
@@ -74,11 +77,28 @@ protected:
 };
 
 /* ffmpeg (libavformat) format decoder class */
-class dlpassthrough : public dlformat
+class dlavformat : public dlformat
 {
 public:
+    dlavformat();
+    ~dlavformat();
+
+    /* format operators */
+    virtual int attach(dlsource *source);
+
+    /* copy to buffer read */
+    virtual size_t read(unsigned char *buf, size_t bytes);
+
     /* format metadata */
-    virtual const char *description() { return "ffmpeg format"; }
+    virtual const char *description() { return formatcontext->iformat->long_name; }
+
+public:
+    AVFormatContext *formatcontext;
+    AVIOContext *iocontext;
+
+protected:
+    /* error string */
+    char *errorstring;
 };
 
 #endif
