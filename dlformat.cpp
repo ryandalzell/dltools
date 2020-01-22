@@ -126,6 +126,8 @@ long long int dltstream::get_timestamp()
     return pts;
 }
 
+#ifdef HAVE_FFMPEG
+
 /* ffmpeg (libavformat) decoder class */
 dlavformat::dlavformat()
 {
@@ -201,4 +203,4 @@ size_t dlavformat::read(unsigned char *buf, size_t bytes)
     }
     return size;
 }
-
+#endif // HAVE_FFMPEG

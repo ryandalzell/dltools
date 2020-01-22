@@ -829,6 +829,7 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
 }
 #endif
 
+#ifdef HAVE_FFMPEG
 dlffmpeg::dlffmpeg()
 {
     formatcontext = NULL;
@@ -980,3 +981,4 @@ decode_t dlffmpeg::decode(unsigned char *uyvy, size_t uyvysize)
 
     return results;
 }
+#endif // HAVE_FFMPEG

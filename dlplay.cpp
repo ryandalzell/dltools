@@ -485,9 +485,11 @@ int main(int argc, char *argv[])
                             break;
 #endif
 
+#ifdef HAVE_FFMPEG
                         case 0x1b:
                             video = new dlffmpeg;
                             break;
+#endif
                     }
 
                     /* cast down to format pointer */
@@ -570,6 +572,7 @@ int main(int argc, char *argv[])
                 break;
 #endif
 
+#ifdef HAVE_FFMPEG
             case FFMPEG:
                 vid_fmt = new dlavformat;
                 if (vid_fmt->attach(source)<0)
@@ -577,6 +580,7 @@ int main(int argc, char *argv[])
                 video = new dlffmpeg;
                 videoonly = 1;
                 break;
+#endif
 
             default: dlexit("unknown input file type");
         }

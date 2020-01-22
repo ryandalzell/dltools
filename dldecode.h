@@ -11,8 +11,10 @@ extern "C" {
 #ifdef HAVE_LIBDE265
     #include <libde265/de265.h>
 #endif
+#ifdef HAVE_FFMPEG
     #include <libavutil/imgutils.h>
     #include <libavformat/avformat.h>
+#endif
 }
 #include <mpg123.h>
 
