@@ -1,0 +1,26 @@
+README file for dltools package
+Ryan Dalzell
+21st January 2020
+
+OVERVIEW
+--------
+
+dltools is a package of several tools for the Blackmagic Decklink
+series of cards. Currently the utilities are:
+
+dlplay: video player, supports file and network input and
+        can play raw yuv and mpeg2, h.264 and hevc video codecs
+        and mpeg2 and ac3 audio codecs.
+
+dlcap:  video recorder, captures raw yuv data in supported formats
+
+dltest: simple test utility, looks for compatible cards and reports
+        supported formats
+
+dlskel: skeleton application to use as template for further utilities
+ 
+
+INSTALLATION
+------------
+
+Please read file "INSTALL" for detailed installation instructions.

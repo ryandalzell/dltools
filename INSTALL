@@ -2,20 +2,34 @@
 
   On Debian/Ubuntu:
 
-  > sudo apt-get install libmpeg2-4-dev libmpg123-dev liba52-0.7.4-dev libde265-dev
+  > sudo apt install libmpeg2-4-dev libmpg123-dev liba52-0.7.4-dev libde265-dev
 
   Or, get the source code for each package and build,install:
 
-  > make; sudo make install
+  > ./configure
+  > make
+  > sudo make install
 
-2) Then, build this package:
+2) Install dependency not available in the package managers: libyuv
 
+  > cd $TRUNK/library/tools/libyuv
+  > mkdir build
+  > cd build
+  > cmake ..
+  > make
+  > sudo make install
+
+3) Then, build this package:
+
+  > cd $TRUNK/library/tools/dltools
   > make
 
-3) And finally install it:
+4) And finally install it:
 
   > sudo make install
 
-  You can use PREFIX= to install the package somewhere other than /usr/local
+  You can use PREFIX= to install the package somewhere other than /usr/local, e.g.
 
   > sudo make install PREFIX=/home/ryan
+
+  Will install dltools to /home/ryan/bin
