@@ -412,8 +412,8 @@ int main(int argc, char *argv[])
         dlsource *source = NULL;
         if (strncmp(filename, "udp://", 6)==0) {
             /* determine address, if given */
-            char address[32];
-            strncpy(address, filename + 6, sizeof(address));
+            char address[32] = {0};
+            strncpy(address, filename + 6, sizeof(address)-1);
 
             /* determine port number, if given */
             const char *port = "1234";
@@ -750,6 +750,7 @@ int main(int argc, char *argv[])
         preroll = 1;
         IDeckLinkMutableVideoFrame *frame = NULL;
         decode_t vid, aud;
+        vid.timestamp = aud.timestamp = 0;      /* fixes warning */
 
         /* playback timestamp boundaries */
         tstamp_t video_start_time = 1ll<<34;
@@ -1024,9 +1025,9 @@ int main(int argc, char *argv[])
                 if (last_vid && last_aud) {
                     tstamp_t vdiff = vid.timestamp - last_vid;
                     tstamp_t adiff = aud.timestamp - last_aud;
-                    char v[32], a[32];
-                    strncpy(v, describe_timestamp(vdiff), sizeof(v));
-                    strncpy(a, describe_timestamp(adiff), sizeof(a));
+                    char v[32] = {0}, a[32] = {0};
+                    strncpy(v, describe_timestamp(vdiff), sizeof(v)-1);
+                    strncpy(a, describe_timestamp(adiff), sizeof(a)-1);
                     dlmessage("loop: vid=%s aud=%s", v, a);
                     if (video && vdiff<=0)
                         dlexit("video went back in time: %s", describe_timestamp(vdiff));
