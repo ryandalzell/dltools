@@ -197,6 +197,7 @@ protected:
 #endif
 
 /* ffmpeg class */
+#ifdef HAVE_FFMPEG
 class dlffmpeg : public dldecode
 {
 public:
@@ -222,5 +223,6 @@ protected:
     /* error string */
     char *errorstring;
 };
+#endif // HAVE_FFMPEG
 
 #endif

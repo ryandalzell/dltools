@@ -4,7 +4,7 @@
 # Build options
 LIBYUV = 1
 HEVC = 0
-FFMPEG = 1
+FFMPEG = 0
 
 # Build configuration
 BINDIR = /usr/local/bin
@@ -31,7 +31,7 @@ LFLAGS = -lm -ldl -lpthread
 # Options
 ifeq ($(LIBYUV),1)
 CXXFLAGS += -DHAVE_LIBYUV
-LFLAGS += -lyuv
+LFLAGS += -lyuv -ljpeg
 endif
 ifeq ($(HEVC),1)
 CXXFLAGS += -DHAVE_LIBDE265
