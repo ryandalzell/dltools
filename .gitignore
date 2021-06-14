@@ -4,5 +4,4 @@ dlplay
 dlcap
 *.o
 *~
-.vimrc
 .gdb_history
