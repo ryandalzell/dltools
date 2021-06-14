@@ -14,8 +14,7 @@ dlplay: video player, supports file and network input and
 
 dlcap:  video recorder, captures raw yuv data in supported formats
 
-dltest: simple test utility, looks for compatible cards and reports
-        supported formats
+dlinfo: looks for compatible cards and reports supported formats
 
 dlskel: skeleton application to use as template for further utilities
  

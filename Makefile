@@ -12,7 +12,7 @@ SDKDIR = /usr/local/decklink/include
 PLATFORM = $(shell uname -p)
 
 # Targets
-APPS = dlskel dltest dlcap
+APPS = dlskel dlinfo dlcap
 
 # Common files
 OBJS = dlutil.o dlterm.o dlconv.o dlts.o dlalloc.o dlsource.o dlformat.o DeckLinkAPIDispatch.o
@@ -143,7 +143,7 @@ dlsource.o: dlsource.cpp dlutil.h \
  /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
  /usr/local/decklink/include/DeckLinkAPIDeckControl.h dlsource.h
 dlterm.o: dlterm.cpp dlterm.h
-dltest.o: dltest.cpp /usr/local/decklink/include/DeckLinkAPI.h \
+dlinfo.o: dlinfo.cpp /usr/local/decklink/include/DeckLinkAPI.h \
  /usr/local/decklink/include/LinuxCOM.h \
  /usr/local/decklink/include/DeckLinkAPITypes.h \
  /usr/local/decklink/include/DeckLinkAPIModes.h \

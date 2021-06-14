@@ -9,7 +9,7 @@
 
 #include "DeckLinkAPI.h"
 
-const char *appname = "dltest";
+const char *appname = "dlinfo";
 
 int main(int argc, char *argv[])
 {
