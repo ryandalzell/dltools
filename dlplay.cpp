@@ -487,18 +487,22 @@ int main(int argc, char *argv[])
                             video = new dlmpeg2;
                             break;
 
-#ifdef HAVE_LIBDE265
                         case 0x24:
                         case 0x06:
+#ifdef HAVE_LIBDE265
                             video = new dlhevc;
-                            break;
+#else
+                            dlexit("error: no support for hevc decoder in this build");
 #endif
+                            break;
 
-#ifdef HAVE_FFMPEG
                         case 0x1b:
+#ifdef HAVE_FFMPEG
                             video = new dlffmpeg;
-                            break;
+#else
+                            dlexit("error: no support for ffmpeg decoder in this build");
 #endif
+                            break;
                     }
 
                     /* cast down to format pointer */
@@ -577,24 +581,32 @@ int main(int argc, char *argv[])
                 videoonly = 1;
                 break;
 
-#ifdef HAVE_LIBDE265
+            case AVC:
+                dlexit("error: no support for avc decoder in this build");
+                break;
+
             case HEVC:
+#ifdef HAVE_LIBDE265
                 vid_fmt = new dlestream;
                 vid_fmt->attach(source);
                 video = new dlhevc;
                 videoonly = 1;
-                break;
+#else
+                dlexit("error: no support for hevc decoder in this build");
 #endif
+                break;
 
-#ifdef HAVE_FFMPEG
             case FFMPEG:
+#ifdef HAVE_FFMPEG
                 vid_fmt = new dlavformat;
                 if (vid_fmt->attach(source)<0)
                     dlexit("failed to attach the ffmpeg format decoder to the source");
                 video = new dlffmpeg;
                 videoonly = 1;
-                break;
+#else
+                dlexit("error: no support for ffmpeg decoder in this build");
 #endif
+                break;
 
             default: dlexit("unknown input file type: %s", describe_filetype(filetype));
         }
