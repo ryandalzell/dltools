@@ -234,6 +234,7 @@ int main(int argc, char *argv[])
     /* decoded audio buffer */
     size_t aud_size = 0;
     unsigned char *aud_data = NULL;
+    uint32_t aud_rem = 0;              /* audio samples remaining to enqueue */
 
     /* transport stream variables */
     int vid_pid = 0;
@@ -531,6 +532,11 @@ int main(int argc, char *argv[])
                             audio = new dlliba52;
                             aud_size = 6*256*2*sizeof(uint16_t);
                             break;
+
+                        default:
+                            dlmessage("unknown audio stream type: %d", stream_type);
+                            aud_size = 0;
+                            break;
                     }
 
                     /* cast down to format pointer */
@@ -590,7 +596,7 @@ int main(int argc, char *argv[])
                 break;
 #endif
 
-            default: dlexit("unknown input file type");
+            default: dlexit("unknown input file type: %s", describe_filetype(filetype));
         }
 
         /* initialise the video decoder */
@@ -913,14 +919,14 @@ int main(int argc, char *argv[])
                 /* preroll complete */
                 preroll = 0;
 
-                /* end audio preroll
+                /* end audio preroll */
                 if (output->EndAudioPreroll()!=S_OK) {
                     dlmessage("error: failed to end audio preroll");
                     return 2;
-                } */
+                }
 
                 /* start the playback */
-                if (output->StartScheduledPlayback(video_start_time, 90000, 1.0) != S_OK)
+                if (output->StartScheduledPlayback(mmin(video_start_time, audio_start_time), 90000, 1.0) != S_OK)
                     dlexit("error: failed to start video playback");
 
                 if (verbose>=1)
@@ -973,7 +979,22 @@ int main(int argc, char *argv[])
             /* maintain audio buffer level */
             if (audio /*&& !preroll*/) {
 
-                while (true) {
+                /* reschedule audio that wasn't queued last time */
+                if (aud_rem>0) {
+                    uint32_t scheduled;
+                    HRESULT result = output->ScheduleAudioSamples(aud_data+aud_size-aud_rem*4, aud_rem, aud.timestamp, 90000, &scheduled); // FIXME timestamp
+                    if (result != S_OK) {
+                        dlmessage("error: block %d: failed to re-schedule audio data", blocknum);
+                        delete audio;
+                        audio = NULL;
+                    } else if (scheduled!=aud_rem) {
+                        dlmessage("failed to re-schedule all the audio data: %d/%d samples", scheduled, aud_rem);
+                        aud_rem -= scheduled;
+                    } else
+                        aud_rem = 0;
+                }
+
+                while (aud_rem==0) {
                     unsigned int buffered;
                     if (output->GetBufferedAudioSampleFrameCount(&buffered) != S_OK)
                         dlexit("failed to get audio buffer level");
@@ -984,16 +1005,16 @@ int main(int argc, char *argv[])
 
                     /* decode audio */
                     aud = audio->decode(aud_data, aud_size);
-                    if (verbose>=1 && blocknum==0) {
+                    if (blocknum==0) {
                         audio_start_time = aud.timestamp;
-                        dlmessage("info: start time of audio is %lld, %s", audio_start_time, describe_timestamp(audio_start_time));
+                        if (verbose>=1)
+                            dlmessage("info: start time of audio is %lld, %s", audio_start_time, describe_timestamp(audio_start_time));
                     }
                     audio_end_time = mmax(aud.timestamp, audio_end_time);
 
-
                     /* buffer decoded audio */
-                    uint32_t scheduled;
-                    HRESULT result = output->ScheduleAudioSamples(aud_data, aud.size/2, aud.timestamp, 90000, &scheduled);
+                    uint32_t scheduled, num_sample_frames = aud.size/2;
+                    HRESULT result = output->ScheduleAudioSamples(aud_data, num_sample_frames, aud.timestamp, 90000, &scheduled);
                     //dlmessage("buffer level %d: decoded %d bytes at timestamp %s and scheduled %d samples", buffered, aud.size, describe_timestamp(aud.timestamp), scheduled);
                     if (result != S_OK) {
                         dlmessage("error: block %d: failed to schedule audio data", blocknum);
@@ -1001,9 +1022,10 @@ int main(int argc, char *argv[])
                         audio = NULL;
                         break;
                     }
-                    if (scheduled!=aud.size/2) {
-                        dlexit("error: failed to schedule all the audio data: %d/%d samples", scheduled, aud.size/2);
-                        break;
+                    if (scheduled!=num_sample_frames) {
+                        dlmessage("did not schedule all the audio data: %d/%d samples", scheduled, num_sample_frames);
+                        /* exit the loop with a note of how many sample frames remain */
+                        aud_rem = num_sample_frames - scheduled;
                     }
                     blocknum++;
                 }
@@ -1014,9 +1036,21 @@ int main(int argc, char *argv[])
                 /* preroll complete */
                 preroll = 0;
 
+                /* end audio preroll */
+                if (output->EndAudioPreroll()!=S_OK) {
+                    dlmessage("error: failed to end audio preroll");
+                    return 2;
+                }
+
                 /* start the playback */
                 if (output->StartScheduledPlayback(audio_start_time, 90000, 1.0) != S_OK)
                     dlexit("error: failed to start audio playback");
+
+                audio_start_time = aud.timestamp;
+                if (verbose>=1) {
+                    dlmessage("info: start time of audio is %lld, %s", audio_start_time, describe_timestamp(audio_start_time));
+                }
+
             }
 
             /* loop debugging */
