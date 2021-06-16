@@ -308,3 +308,21 @@ const char *describe_timestamp(tstamp_t t)
 
     return s;
 }
+
+const char *describe_filetype(filetype_t f)
+{
+    static const char *filetype_names[] = {
+    "other",
+    "yuv",
+    "yuv4mpeg",
+    "m2v",
+    "avc",
+    "hevc",
+    "ts",
+    "ffmpeg",
+    };
+
+    return filetype_names[f];
+}
+
+
