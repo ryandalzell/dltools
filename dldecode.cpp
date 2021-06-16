@@ -536,15 +536,15 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
             s[i*512+j*2+1] = (int16_t) float32_to_int32_hack(f[j+256]);
         }
     }
-    results.size = 6*256*2;
+    results.size = 6*256*2; /* in samples */
 
     /* keep leftover data for next frame */
     if (ac3_length-length)
         memmove(ac3_frame, ac3_frame+length, ac3_length-length);
     ac3_length = ac3_length-length;
 
-    /* extrapolate a timestamp as necessary */
-    results.timestamp = last_pts + (tstamp_t)(frames_since_pts*90000ll/48000ll*6ll*256ll*4ll);
+    /* extrapolate a timestamp if necessary */
+    results.timestamp = last_pts + (tstamp_t)(frames_since_pts*90000ll*6ll*256ll/48000ll);
     frames_since_pts++;
 
     return results;
