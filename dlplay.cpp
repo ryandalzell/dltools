@@ -171,7 +171,7 @@ void *display_status(void *arg)
             int len = 0;
 
             /* get buffer depth */
-            uint32_t video_buffer, audio_buffer;
+            uint32_t video_buffer, audio_buffer = 0;
             output->GetBufferedVideoFrameCount(&video_buffer);
             output->GetBufferedAudioSampleFrameCount(&audio_buffer);
 
@@ -839,7 +839,8 @@ int main(int argc, char *argv[])
                     /* stop the playback */
                     if (output->StopScheduledPlayback(0, NULL, 0) != S_OK)
                         dlexit("%s: error: failed to pause video playback");
-                    output->DisableAudioOutput();
+                    if (audio)
+                        output->DisableAudioOutput();
 
                     /* display the current frame in the history buffer */
                     output->DisplayVideoFrameSync(history_buffer[pause_index].frame);
@@ -865,9 +866,11 @@ int main(int argc, char *argv[])
                             break;
 
                     /* resume the audio output */
-                    HRESULT result = output->EnableAudioOutput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, 2, bmdAudioOutputStreamTimestamped);
-                    if (result != S_OK) {
-                        dlmessage("error: failed to resume audio output\n");
+                    if (audio) {
+                        HRESULT result = output->EnableAudioOutput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, 2, bmdAudioOutputStreamTimestamped);
+                        if (result != S_OK) {
+                            dlmessage("error: failed to resume audio output\n");
+                        }
                     }
 
                     /* the semaphone has to be re-initialised */
@@ -932,7 +935,7 @@ int main(int argc, char *argv[])
                 preroll = 0;
 
                 /* end audio preroll */
-                if (output->EndAudioPreroll()!=S_OK) {
+                if (audio && output->EndAudioPreroll()!=S_OK) {
                     dlmessage("error: failed to end audio preroll");
                     return 2;
                 }
@@ -1098,7 +1101,8 @@ int main(int argc, char *argv[])
         /* stop the video output */
         output->StopScheduledPlayback(0, NULL, 0);
         output->DisableVideoOutput();
-        output->DisableAudioOutput();
+        if (audio)
+            output->DisableAudioOutput();
 
         /* release all frames in the history buffer */
         for (i=0; i<num_history_frames; i++)
