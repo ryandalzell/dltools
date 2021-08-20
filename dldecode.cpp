@@ -214,8 +214,9 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
                     if (pts<0 || pts<=last_pts) {
                         /* extrapolate a timestamp if necessary */
                         pts = last_pts + llround(90000.0/framerate);
+                        //dlmessage("calc video pts=%s delta=%lld", describe_timestamp(pts), llround(90000.0/framerate));
                     } //else
-                        //dlmessage("new vidio pts=%s", describe_timestamp(pts));
+                        //dlmessage("new video pts=%s", describe_timestamp(pts));
                     results.timestamp = last_pts = pts;
 
                     return results;
@@ -629,7 +630,7 @@ int dlhevc::attach(dlformat *f)
             case de265_chroma_422  : pixelformat = I422; break;
             case de265_chroma_420  : pixelformat = I420; break;
           //case de265_chroma_mono : pixelformat = Y800; break;
-            default : dlerror("unknown chroma format");
+            default : dlexit("unknown chroma format");
         }
 
         /* heuristics for determining interlaced */
@@ -889,19 +890,21 @@ int dlffmpeg::attach(dlformat* f)
     }
 
     {
-        /* */
+        /* FIXME accessing the codeccontext struct in this way is hacky */
         width = codeccontext->width;
         height = codeccontext->height;
-        interlaced = 0;
+        interlaced = codeccontext->field_order!=AV_FIELD_PROGRESSIVE;
         switch (codeccontext->pix_fmt) {
           //case AV_PIX_FMT_YUV444P  : pixelformat = I444; break;
-            case AV_PIX_FMT_YUV422P  : pixelformat = I422; break;
-            case AV_PIX_FMT_YUV420P  : pixelformat = I420; break;
+            case AV_PIX_FMT_YUV422P  :
+            case AV_PIX_FMT_YUVJ422P : pixelformat = I422; break;
+            case AV_PIX_FMT_YUV420P  :
+            case AV_PIX_FMT_YUVJ420P : pixelformat = I420; break;
           //case AV_PIX_FMT_GRAY8    : pixelformat = Y800; break;
-            default : dlerror("unknown chroma format");
+            default : dlexit("unknown chroma format: %s", av_get_pix_fmt_name(codeccontext->pix_fmt));
         }
         //framerate = context->framerate.num / context->framerate.den;
-        framerate = 60000.0 / 1001.0;
+        framerate = av_q2d(codeccontext->framerate);
 
         /* dump input information to stderr */
         if (verbose>=1)

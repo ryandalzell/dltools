@@ -4,7 +4,7 @@
 # Build options
 LIBYUV = 1
 HEVC = 0
-FFMPEG = 0
+FFMPEG = 1
 
 # Build configuration
 BINDIR = /usr/local/bin
