@@ -133,8 +133,6 @@ dlavformat::dlavformat()
 {
     formatcontext = NULL;
     iocontext = NULL;
-    /* register all the codecs and formats */
-    av_register_all();
     errorstring = (char *) malloc(AV_ERROR_MAX_STRING_SIZE);
 }
 
