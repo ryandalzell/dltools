@@ -402,6 +402,17 @@ int main(int argc, char *argv[])
     if (output->SetVideoOutputFrameMemoryAllocator(&alloc)!=S_OK)
         dlexit("%s: error: could not set a custom memory allocator");
 
+    /* configure the decklink card to output on SDI single-link only
+     * this is mainly a precaution in case the card attributes are set
+     * differently by default, e.g. on my 4K Extreme 12G this was the case */
+    if (card->QueryInterface(IID_IDeckLinkConfiguration, &voidptr)!=S_OK)
+        dlexit("error: could not obtain the configuration interface");
+    IDeckLinkConfiguration *config = (IDeckLinkConfiguration *)voidptr;
+    if (config->SetInt(bmdDeckLinkConfigVideoOutputConnection, bmdVideoConnectionSDI)!=S_OK)
+        dlmessage("warning: failed to set card configuration to output SDI");
+    if (config->SetInt(bmdDeckLinkConfigSDIOutputLinkConfiguration, bmdLinkConfigurationSingleLink)!=S_OK)
+        dlmessage("warning: failed to set card configuration to single link SDI");
+
     /* play input files sequentially */
     unsigned int restart = 1, exit = 0;
     while (restart && !exit) {
@@ -1125,6 +1136,7 @@ int main(int argc, char *argv[])
     }
 
     /* tidy up */
+    config->Release();
     card->Release();
     iterator->Release();
     if (aud_data)

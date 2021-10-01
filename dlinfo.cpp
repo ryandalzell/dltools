@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "dlutil.h"
 #include "DeckLinkAPI.h"
 
 const char *appname = "dlinfo";
@@ -130,8 +131,46 @@ int main(int argc, char *argv[])
 
         } while(0);
 
-        /* list the input and output capabilities of the card */
-        //print_capabilities(deckLink);
+        /* list the output configuration of the card */
+        do {
+            /* query the card for its configuration interface */
+            IDeckLinkConfiguration *config = NULL;
+            if (card->QueryInterface(IID_IDeckLinkConfiguration, (void **)&config)!=S_OK)
+                dlexit("error: could not obtain the configuration interface");
+
+            /* obtain the default configuration */
+            int64_t VideoConnections, LinkConfigurations;
+            if (config->GetInt(bmdDeckLinkConfigVideoOutputConnection, &VideoConnections)!=S_OK)
+                dlmessage("warning: failed to get card configuration for output SDI");
+            if (config->GetInt(bmdDeckLinkConfigSDIOutputLinkConfiguration, &LinkConfigurations)!=S_OK)
+                dlmessage("warning: failed to get card configuration for link SDI");
+
+            /* display the default configuration */
+            char s[4096];
+            int n = 0;
+            if (VideoConnections & bmdVideoConnectionSDI)
+                n += snprintf(s+n, sizeof(s)-n, "SDI, ");
+            if (VideoConnections & bmdVideoConnectionHDMI)
+                n += snprintf(s+n, sizeof(s)-n, "HDMI, ");
+            if (VideoConnections & bmdVideoConnectionOpticalSDI)
+                n += snprintf(s+n, sizeof(s)-n, "OpticalSDI, ");
+            if (VideoConnections & bmdVideoConnectionComponent)
+                n += snprintf(s+n, sizeof(s)-n, "Component, ");
+            if (VideoConnections & bmdVideoConnectionComposite)
+                n += snprintf(s+n, sizeof(s)-n, "Composite, ");
+            if (VideoConnections & bmdVideoConnectionSVideo)
+                n += snprintf(s+n, sizeof(s)-n, "SVideo, ");
+            dlmessage("output connections are: %s", s);
+            const char *l = "";
+            switch (LinkConfigurations)
+            {
+                case bmdLinkConfigurationSingleLink: l = "single-link"; break;
+                case bmdLinkConfigurationDualLink: l = "dual-link"; break;
+                case bmdLinkConfigurationQuadLink: l = "quad-link"; break;
+            }
+            dlmessage("default output config is: %s", l);
+
+        } while (0);
 
         /* tidy up */
         card->Release();
@@ -142,7 +181,7 @@ int main(int argc, char *argv[])
 
     /* report no devices found */
     if (num_devices==0)
-        printf("%s: no DeckLink cards were found\n", appname);
+        dlmessage("no DeckLink cards were found");
 
     return 0;
 }
