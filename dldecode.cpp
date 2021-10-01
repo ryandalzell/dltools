@@ -214,8 +214,9 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
                     if (pts<0 || pts<=last_pts) {
                         /* extrapolate a timestamp if necessary */
                         pts = last_pts + llround(90000.0/framerate);
+                        //dlmessage("calc video pts=%s delta=%lld", describe_timestamp(pts), llround(90000.0/framerate));
                     } //else
-                        //dlmessage("new vidio pts=%s", describe_timestamp(pts));
+                        //dlmessage("new video pts=%s", describe_timestamp(pts));
                     results.timestamp = last_pts = pts;
 
                     return results;
@@ -629,7 +630,7 @@ int dlhevc::attach(dlformat *f)
             case de265_chroma_422  : pixelformat = I422; break;
             case de265_chroma_420  : pixelformat = I420; break;
           //case de265_chroma_mono : pixelformat = Y800; break;
-            default : dlerror("unknown chroma format");
+            default : dlexit("unknown chroma format");
         }
 
         /* heuristics for determining interlaced */
@@ -863,7 +864,8 @@ int dlffmpeg::attach(dlformat* f)
     }
 
     int stream_index;
-    int ret = av_find_best_stream(formatcontext, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
+    AVCodec *codec;
+    int ret = av_find_best_stream(formatcontext, AVMEDIA_TYPE_VIDEO, -1, -1, &codec, 0);
     if (ret < 0) {
         dlmessage("failed to find video stream in input file");
         return ret;
@@ -872,40 +874,45 @@ int dlffmpeg::attach(dlformat* f)
 
     /* find decoder for the stream */
     AVStream *stream = formatcontext->streams[stream_index];
-    codeccontext = stream->codec;
-    AVCodec *dec = avcodec_find_decoder(codeccontext->codec_id);
-    if (!dec) {
-        dlmessage("failed to find video codec");
-        return -1;
-    }
+    codeccontext = avcodec_alloc_context3(codec);
+    avcodec_parameters_to_context(codeccontext, stream->codecpar);
+    //av_codec_set_pkt_timebase(codeccontext, stream->time_base);
 
     /* Init the decoders, with or without reference counting */
     AVDictionary *opts = NULL;
     //if (api_mode == API_MODE_NEW_API_REF_COUNT)
     //    av_dict_set(&opts, "refcounted_frames", "1", 0);
-    if ((ret = avcodec_open2(codeccontext, dec, &opts)) < 0) {
+    if ((ret = avcodec_open2(codeccontext, codec, &opts)) < 0) {
         dlmessage("failed to open video codec");
         return ret;
     }
 
     {
-        /* */
+        /* FIXME accessing the codeccontext struct in this way is hacky */
         width = codeccontext->width;
         height = codeccontext->height;
-        interlaced = 0;
+        interlaced = codeccontext->field_order!=AV_FIELD_PROGRESSIVE;
         switch (codeccontext->pix_fmt) {
           //case AV_PIX_FMT_YUV444P  : pixelformat = I444; break;
-            case AV_PIX_FMT_YUV422P  : pixelformat = I422; break;
-            case AV_PIX_FMT_YUV420P  : pixelformat = I420; break;
+            case AV_PIX_FMT_YUV422P  :
+            case AV_PIX_FMT_YUVJ422P : pixelformat = I422; break;
+            case AV_PIX_FMT_YUV420P  :
+            case AV_PIX_FMT_YUVJ420P : pixelformat = I420; break;
           //case AV_PIX_FMT_GRAY8    : pixelformat = Y800; break;
-            default : dlerror("unknown chroma format");
+            default : dlexit("unknown chroma format: %s", av_get_pix_fmt_name(codeccontext->pix_fmt));
         }
         //framerate = context->framerate.num / context->framerate.den;
-        framerate = 60000.0 / 1001.0;
+        if (codeccontext->framerate.num!=0) {
+            dlmessage("framerate: %d/%d", codeccontext->framerate.num, codeccontext->framerate.den);
+            framerate = av_q2d(codeccontext->framerate);
+        } else {
+            dlmessage("framerate: %d/%d", stream->avg_frame_rate.num, stream->avg_frame_rate.den);
+            framerate = av_q2d(stream->avg_frame_rate);
+        }
 
         /* dump input information to stderr */
-        if (verbose>=1)
-            av_dump_format(formatcontext, 0, format->get_source()->name(), 0);
+        //if (verbose>=1)
+            av_dump_format(formatcontext, stream_index, format->get_source()->name(), 0);
     }
 
     /* allocate the decoded image */
@@ -940,17 +947,32 @@ decode_t dlffmpeg::decode(unsigned char *uyvy, size_t uyvysize)
     /* decode the next avc frame */
     int got_frame = 0;
     while (!got_frame) {
-        if (packet.size <= 0) {
+        //if (packet.size <= 0) {
             if (av_read_frame(formatcontext, &packet) < 0)
+                /* end of file */
                 break;
-        }
+        //}
 
         // TODO check stream index?
 
-        int len = avcodec_decode_video2(codeccontext, frame, &got_frame, &packet);
-        if (len < 0) {
-            dlmessage("error while decoding frame: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, len));
+        //int len = avcodec_decode_video2(codeccontext, frame, &got_frame, &packet);
+        //if (codeccontext->codec_type == AVMEDIA_TYPE_VIDEO || codeccontext->codec_type == AVMEDIA_TYPE_AUDIO) {
+        int ret = avcodec_send_packet(codeccontext, &packet);
+        if (ret < 0 /*&& len != AVERROR(EAGAIN)*/ && ret != AVERROR_EOF) {
+            dlmessage("error while decoding frame: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret));
             break;
+        } else if (ret == AVERROR_EOF) {
+            dlmessage("avcodec_send_packet: end of file");
+            av_packet_unref(&packet);
+            break;
+        } else {
+            ret = avcodec_receive_frame(codeccontext, frame);
+            if (ret < 0)
+                dlmessage("error while receiving frame: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret));
+            else
+                got_frame = 1;
+            //if (len == AVERROR(EAGAIN) || len == AVERROR_EOF)
+            //    len = 0;
         }
 
         if (got_frame) {
@@ -972,11 +994,7 @@ decode_t dlffmpeg::decode(unsigned char *uyvy, size_t uyvysize)
             results.render_time = get_utime() - decode;
         }
 
-        packet.size -= len;
-        packet.data += len;
-
-        if (got_frame)
-            break;
+        av_packet_unref(&packet);
     }
 
     return results;

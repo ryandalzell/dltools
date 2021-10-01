@@ -4,7 +4,7 @@
 #include "dlutil.h"
 #include "dlsource.h"
 extern "C" {
-#ifdef FFMPEG
+#ifdef HAVE_FFMPEG
         #include <libavformat/avformat.h>
 #endif
 }
@@ -78,7 +78,7 @@ protected:
     long long pts;
 };
 
-#ifdef FFMPEG
+#ifdef HAVE_FFMPEG
 /* ffmpeg (libavformat) format decoder class */
 class dlavformat : public dlformat
 {
