@@ -1,6 +1,8 @@
 #ifndef DLUTIL_H
 #define DLUTIL_H
 
+#include <stddef.h>
+
 #include "DeckLinkAPI.h"
 
 /* file types */
@@ -20,6 +22,7 @@ typedef enum {
     UNKNOWN = 0,
     I420,
     I422,
+    I444,
     UYVY
 } pixelformat_t;
 
@@ -45,5 +48,6 @@ unsigned long long int get_utime();
 tstamp_t get_stime();
 const char *describe_timestamp(tstamp_t t);
 const char *describe_filetype(filetype_t f);
+size_t pixelformat_get_size(pixelformat_t pixelformat, int width, int height);
 
 #endif

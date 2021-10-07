@@ -177,6 +177,7 @@ const char *pixelformatname[] = {
     "",
     "I420",
     "I422",
+    "I444",
     "UYVY"
 };
 
@@ -187,6 +188,8 @@ int divine_pixel_format(const char *filename, pixelformat_t *pixelformat)
 
     if (strstr(filename, "uyvy")!=NULL || strstr(filename, "UYVY")!=NULL)
         *pixelformat = UYVY;
+    else if (strstr(filename, "444")!=NULL)
+        *pixelformat = I444;
     else if (strstr(filename, "422")!=NULL)
         *pixelformat = I422;
     else if (strstr(filename, "420")!=NULL)
@@ -325,4 +328,14 @@ const char *describe_filetype(filetype_t f)
     return filetype_names[f];
 }
 
-
+size_t pixelformat_get_size(pixelformat_t pixelformat, int width, int height)
+{
+    switch (pixelformat) {
+        case I420: return width*height*3/2;
+        case I422:
+        case UYVY: return width*height*2;
+        case I444: return width*height*3;
+        case UNKNOWN: dlexit("unknown pixelformat: %d", pixelformat);
+    }
+    return 0;
+}

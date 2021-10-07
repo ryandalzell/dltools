@@ -74,7 +74,7 @@ int dlyuv::attach(dlformat *f)
     }
 
     /* allocate the read buffer */
-    size = pixelformat==I422? width*height*2 : width*height*3/2;
+    size = pixelformat_get_size(pixelformat, width, height);
     data = (unsigned char *) malloc(size);
 
     /* calculate the number of frames in the input */
@@ -106,9 +106,11 @@ decode_t dlyuv::decode(unsigned char *uyvy, size_t uyvysize)
         results.size = bytes;
 
         /* convert to uyvy */
-        if (!lumaonly)
-            convert_i420_uyvy(data, uyvy, width, height, pixelformat);
-        else
+        if (!lumaonly) {
+            const unsigned char *yuv[3] = {data, data+width*height, (pixelformat==I444? data+2*width*height : pixelformat==I422? data+3*width*height/2 : data+5*width*height/4)};
+            convert_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
+            //convert_i420_uyvy(data, uyvy, width, height, pixelformat);
+        } else
             convert_i420_uyvy_lumaonly(data, uyvy, width, height);
 
     }

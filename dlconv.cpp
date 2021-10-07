@@ -10,9 +10,31 @@
 #include <libyuv.h>
 #endif
 
+static void convert_i444_uyvy(const unsigned char *i444, unsigned char *uyvy, int width, int height)
+{
+    const unsigned char *yuv[3] = {i444};
+    for (int y=0; y<height; y++) {
+        yuv[1] = i444 + width*height + width*y;
+        yuv[2] = i444 + width*height*2 + width*y;
+        for (int x=0; x<width/2; x++) {
+            *(uyvy++) = *yuv[1];
+            *(uyvy++) = *(yuv[0]++);
+            *(uyvy++) = *yuv[2];
+            *(uyvy++) = *(yuv[0]++);
+            yuv[1] += 2;
+            yuv[2] += 2;
+        }
+    }
+}
+
 void convert_i420_uyvy(const unsigned char *i420, unsigned char *uyvy, int width, int height, pixelformat_t pixelformat)
 {
     const unsigned char *yuv[3] = {i420};
+
+    if (pixelformat==I444)
+        return convert_i444_uyvy(i420, uyvy, width, height);
+
+    /* otherwise for 4:2:0 and 4:2:2 */
     for (int y=0; y<height; y++) {
         if (pixelformat==I422) {
             yuv[1] = i420 + width*height + (width/2)*y;
@@ -53,6 +75,7 @@ void convert_yuv_uyvy(const unsigned char *yuv[3], unsigned char *uyvy, int widt
     switch (pixelformat) {
         case I420: libyuv::I420ToUYVY(yuv[0], width, yuv[1], width/2, yuv[2], width/2, uyvy, 2*width, width, height); break;
         case I422: libyuv::I422ToUYVY(yuv[0], width, yuv[1], width/2, yuv[2], width/2, uyvy, 2*width, width, height); break;
+        case I444: convert_i444_uyvy(yuv[0], uyvy, width, height); break;   /* no suitable accelerated routine in libyuv */
         default  : dlerror("unknown pixel format in conversion: %s", pixelformatname[pixelformat]);
     }
 #endif
