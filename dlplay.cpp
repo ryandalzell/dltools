@@ -143,7 +143,6 @@ void usage(int exitcode)
     fprintf(stderr, "  -I, --interface     : address of interface to listen for multicast data (default: first network interface)\n");
     fprintf(stderr, "  -a, --firstframe    : index of first frame in input to display (default: 0)\n");
     fprintf(stderr, "  -n, --numframes     : number of frames in input to display (default: all)\n");
-    fprintf(stderr, "  -m, --ntscmode      : use proper ntsc framerate, e.g. 29.97 instead of 30fps (default: on)\n");
     fprintf(stderr, "  -2, --halfrate      : allow using half frame rate, e.g. 30fps when 60fps is not supported (default: off)\n");
     fprintf(stderr, "  -l, --luma          : display luma plane only (default: luma and chroma)\n");
     fprintf(stderr, "  -=, --videoonly     : play video only (default: video and audio if possible)\n");
@@ -218,7 +217,6 @@ int main(int argc, char *argv[])
     const char *interface = NULL;
     int firstframe = 0;
     int numframes = -1;
-    int ntscmode = 1;   /* use e.g. 29.97 instead of 30fps */
     bool allowhalfrate = false; /* use e.g. 30fps when 60fps not supported */
     int lumaonly = 0;
     int topfieldfirst = 1;
@@ -255,7 +253,6 @@ int main(int argc, char *argv[])
             {"interface", 1, NULL, 'I'},
             {"firstframe",1, NULL, 'a'},
             {"numframes", 1, NULL, 'n'},
-            {"ntscmode",  1, NULL, 'm'},
             {"halfrate",  0, NULL, '2'},
             {"halfframerate",  0, NULL, '2'},
             {"luma",      0, NULL, 'l'},
@@ -304,12 +301,6 @@ int main(int argc, char *argv[])
                 numframes = atoi(optarg);
                 if (numframes<1)
                     dlexit("invalid value for number of frames: %d", numframes);
-                break;
-
-            case 'm':
-                ntscmode = atoi(optarg);
-                if (ntscmode<0 || ntscmode>1)
-                    dlexit("invalid value for ntsc mode: %d", ntscmode);
                 break;
 
             case '2':
@@ -658,20 +649,6 @@ int main(int argc, char *argv[])
 
         if (video && verbose>=1)
             dlmessage("info: video format is %dx%d%c%.2f %s", pic_width, pic_height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);
-
-        /* override the framerate with ntscmode */
-        if (framerate>29.9 && framerate<=30.0) {
-            if (ntscmode)
-                framerate = 30000.0/1001.0;
-            else
-                framerate = 30.0;
-        }
-        if (framerate>59.9 && framerate<=60.0) {
-            if (ntscmode)
-                framerate = 60000.0/1001.0;
-            else
-                framerate = 60.0;
-        }
 
         /* determine display dimensions */
         if (sizeformat) {
