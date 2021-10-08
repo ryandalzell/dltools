@@ -166,7 +166,7 @@ int dlmpeg2::attach(dlformat *f)
             case STATE_SEQUENCE:
                 width = info->sequence->width;
                 height = info->sequence->height;
-                interlaced = height==720? 0 : 1;
+                interlaced = !(info->sequence->flags & SEQ_FLAG_PROGRESSIVE_SEQUENCE);
                 framerate = 27000000.0/info->sequence->frame_period;
                 pixelformat = info->sequence->height==info->sequence->chroma_height? I422 : I420;
                 seq_found = 1;
