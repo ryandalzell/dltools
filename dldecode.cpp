@@ -891,7 +891,7 @@ int dlffmpeg::attach(dlformat* f)
     /* read the image parameters from the codeccontext */
     width = codeccontext->width;
     height = codeccontext->height;
-    interlaced = codeccontext->field_order!=AV_FIELD_PROGRESSIVE;
+    interlaced = codeccontext->field_order!=AV_FIELD_PROGRESSIVE && codeccontext->field_order!=AV_FIELD_UNKNOWN;
     switch (codeccontext->pix_fmt) {
         //case AV_PIX_FMT_YUV444P  : pixelformat = I444; break;
         case AV_PIX_FMT_YUV422P  :
@@ -983,8 +983,8 @@ decode_t dlffmpeg::decode(unsigned char *uyvy, size_t uyvysize)
             /* copy frame to uyvy buffer */
             convert_yuv_uyvy((const unsigned char **)frame->data, uyvy, width, height, pixelformat);
             results.size = width*height*2;
-            // TODO get pts from decoder.
-            tstamp_t pts = -1; //de265_get_image_PTS(image);
+            /* get pts from decoder */
+            tstamp_t pts = frame->pts;
             if (pts<0 || pts<=last_pts) {
                 /* extrapolate a timestamp if necessary */
                 pts = last_pts + llround(90000.0/framerate);
