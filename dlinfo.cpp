@@ -139,10 +139,17 @@ int main(int argc, char *argv[])
                 dlexit("error: could not obtain the configuration interface");
 
             /* obtain the default configuration */
-            int64_t VideoConnections, LinkConfigurations;
+            int64_t VideoConnections, LinkConfigurations, VideoOutputMode, VideoOutputModeFlags;
+            bool Output1080pAsPsF;
             if (config->GetInt(bmdDeckLinkConfigVideoOutputConnection, &VideoConnections)!=S_OK)
                 dlmessage("warning: failed to get card configuration for output SDI");
             if (config->GetInt(bmdDeckLinkConfigSDIOutputLinkConfiguration, &LinkConfigurations)!=S_OK)
+                dlmessage("warning: failed to get card configuration for link SDI");
+            if (config->GetFlag(bmdDeckLinkConfigOutput1080pAsPsF, &Output1080pAsPsF))
+                dlmessage("warning: failed to get card configuration");
+            if (config->GetInt(bmdDeckLinkConfigDefaultVideoOutputMode, &VideoOutputMode)!=S_OK)
+                dlmessage("warning: failed to get card configuration for link SDI");
+            if (config->GetInt(bmdDeckLinkConfigDefaultVideoOutputModeFlags, &VideoOutputModeFlags)!=S_OK)
                 dlmessage("warning: failed to get card configuration for link SDI");
 
             /* display the default configuration */
@@ -169,6 +176,8 @@ int main(int argc, char *argv[])
                 case bmdLinkConfigurationQuadLink: l = "quad-link"; break;
             }
             dlmessage("default output config is: %s", l);
+            dlmessage("default output 1080p as PsF is: %s", Output1080pAsPsF? "true" : "false");
+            dlmessage("default output video mode is %c%c%c%c with flags 0x%x", (VideoOutputMode>>24)&0xff, (VideoOutputMode>>16)&0xff, (VideoOutputMode>>8)&0xff, (VideoOutputMode>>0)&0xff, VideoOutputModeFlags);
 
         } while (0);
 
