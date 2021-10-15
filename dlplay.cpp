@@ -247,6 +247,7 @@ int main(int argc, char *argv[])
     /* parse command line for options */
     while (1) {
         static struct option long_options[] = {
+            {"sizeformat",1, NULL, 's'},
             {"format",    1, NULL, 'f'},
             {"ts",        0, NULL, 't'},
             {"transportstream", 0, NULL, 't'},
@@ -269,7 +270,7 @@ int main(int argc, char *argv[])
             {NULL,        0, NULL,  0 }
         };
 
-        int optchar = getopt_long(argc, argv, "s:f:tI:a:n:m:l=~p:o:i:qvh", long_options, NULL);
+        int optchar = getopt_long(argc, argv, "s:f:tI:a:n:2l=~p:o:i:qvh", long_options, NULL);
         if (optchar==-1)
             break;
 
