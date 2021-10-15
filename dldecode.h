@@ -198,6 +198,34 @@ protected:
 
 /* ffmpeg class */
 #ifdef HAVE_FFMPEG
+class dlffavc : public dldecode
+{
+public:
+    dlffavc();
+    ~dlffavc();
+
+    virtual int attach(dlformat *format);
+    bool atend();
+    virtual decode_t decode(unsigned char *buffer, size_t bufsize);
+
+public:
+    virtual const char *description() { return codeccontext->codec->long_name; }
+
+protected:
+    /* ffmpeg variables */
+    AVCodecParserContext *parser;
+    AVCodecContext *codeccontext;
+    AVFrame *frame;
+    AVPacket *packet;
+
+    /* data buffer */
+    unsigned char *buf;
+    size_t size;
+
+    /* error string */
+    char *errorstring;
+};
+
 class dlffmpeg : public dldecode
 {
 public:

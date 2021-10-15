@@ -125,19 +125,11 @@ filetype_t dlfile::autodetect()
     if (strstr(filename, ".m2v")!=NULL || strstr(filename, ".M2V")!=NULL)
         return M2V;
     else if (strstr(filename, ".264")!=NULL || strstr(filename, ".h264")!=NULL || strstr(filename, ".avc")!=NULL)
-#ifdef HAVE_FFMPEG
-        return FFMPEG;
-#else
         return AVC;
-#endif
     else if (strstr(filename, ".265")!=NULL || strstr(filename, ".h265")!=NULL || strstr(filename, ".hevc")!=NULL)
         return HEVC;
     else if (strstr(filename, ".ts")!=NULL || strstr(filename, ".trp")!=NULL || strstr(filename, ".mpg")!=NULL)
-#ifdef HAVE_FFMPEG
-        return FFMPEG;
-#else
         return TS;
-#endif
     else if (strstr(filename, ".mp4")!=NULL)
 #ifdef HAVE_FFMPEG
         return FFMPEG;

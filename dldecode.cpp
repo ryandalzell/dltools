@@ -833,6 +833,210 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
 #endif
 
 #ifdef HAVE_FFMPEG
+dlffavc::dlffavc()
+{
+    codeccontext = NULL;
+    frame = NULL;
+    size = 4096;
+    errorstring = (char *) malloc(AV_ERROR_MAX_STRING_SIZE);
+}
+
+dlffavc::~dlffavc()
+{
+    av_frame_free(&frame);
+    avcodec_free_context(&codeccontext);
+    free(errorstring);
+}
+
+int dlffavc::attach(dlformat* f)
+{
+    int ret;
+
+    /* attach the input source */
+    format = f;
+
+    /* find avc decoder */
+    AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
+    if (!codec)
+        dlexit("failed to find h.264/avc video decoder");
+
+    /* initialise the parser */
+    parser = av_parser_init(codec->id);
+    if (!parser)
+        dlexit("failed to initialise codec parser");
+
+    /* initialise the codec context */
+    codeccontext = avcodec_alloc_context3(codec);
+    if (!codeccontext)
+        dlexit("failed to initialise codec context");
+
+    /* initialise the frame */
+    frame = av_frame_alloc();
+    if (!frame) {
+        dlmessage("failed to allocate video frame");
+        return -1;
+    }
+
+    /* initialise the packet */
+    packet = av_packet_alloc();
+    if (!packet) {
+        dlmessage("failed to allocate packet");
+        return -1;
+    }
+
+    /* initialise a data buffer */
+    buf = (unsigned char *) malloc(size + AV_INPUT_BUFFER_PADDING_SIZE);
+    memset(buf + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+
+    /* init the decoder, with or without reference counting */
+    AVDictionary *opts = NULL;
+    //if (api_mode == API_MODE_NEW_API_REF_COUNT)
+    //    av_dict_set(&opts, "refcounted_frames", "1", 0);
+    if ((ret = avcodec_open2(codeccontext, codec, &opts)) < 0) {
+        dlmessage("failed to open video codec");
+        return ret;
+    }
+
+    /* decode the first frame to get the image parameters */
+    int got_frame = 0;
+    while (!got_frame) {
+        size_t s = format->read(buf, size);
+        if (s==0)
+            break;
+
+        /* use the parser to split the data into frames */
+        uint8_t *d = buf;
+        while (s > 0) { // keep shovelling the rest of the data in after 'got_frame'
+            ret = av_parser_parse2(parser, codeccontext, &packet->data, &packet->size, d, s, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+            if (ret < 0)
+                dlexit("failed to parse h.264 data");
+            dlmessage("d=%p s=%zd ret=%d", d, s, ret);
+            d += ret;
+            s -= ret;
+
+            if (packet->size) {
+                //decode(codeccontext, frame, packet, outfilename);
+
+                ret = avcodec_send_packet(codeccontext, packet);
+                if (ret < 0)
+                    dlexit("failed to send a packet for decoding: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret));
+
+                while (ret >= 0) {
+                    ret = avcodec_receive_frame(codeccontext, frame);
+                    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+                        break;
+                    else if (ret < 0)
+                        dlexit("error during decoding frame");
+
+                    dlmessage("pre-frame %3d", codeccontext->frame_number);
+
+                    got_frame = 1;
+                    break;
+                }
+            }
+        }
+    }
+
+    /* read the image parameters from the codeccontext */
+    width = codeccontext->width;
+    height = codeccontext->height;
+    interlaced = codeccontext->field_order!=AV_FIELD_PROGRESSIVE && codeccontext->field_order!=AV_FIELD_UNKNOWN;
+    switch (codeccontext->pix_fmt) {
+        //case AV_PIX_FMT_YUV444P  : pixelformat = I444; break;
+        case AV_PIX_FMT_YUV422P  :
+        case AV_PIX_FMT_YUVJ422P : pixelformat = I422; break;
+        case AV_PIX_FMT_YUV420P  :
+        case AV_PIX_FMT_YUVJ420P : pixelformat = I420; break;
+        //case AV_PIX_FMT_GRAY8    : pixelformat = Y800; break;
+        default : dlexit("unknown chroma format: %s", av_get_pix_fmt_name(codeccontext->pix_fmt));
+    }
+    framerate = av_q2d(codeccontext->framerate);
+    /* h.264 doesn't require timing info in elementary stream */
+    if (framerate<0.1) {
+        framerate = 30000.0/1001.0;
+        dlmessage("framerate is zero, using a default framerate of %.2f", framerate);
+    }
+
+    /* dump input information to stderr */
+    if (verbose>=1)
+        dlmessage("avc: %dx%d%c%.2f", width, height, interlaced? 'i' : 'p', framerate);
+
+    return 0;
+}
+
+decode_t dlffavc::decode(unsigned char *uyvy, size_t uyvysize)
+{
+    decode_t results = {0, 0, 0, 0};
+    int ret;
+
+    /* start timer */
+    unsigned long long start = get_utime();
+
+    /* decode the next avc frame */
+    int got_frame = 0;
+    while (!got_frame) {
+        size_t s = format->read(buf, size);
+        if (s==0)
+            break;
+
+        /* use the parser to split the data into frames */
+        uint8_t *d = buf;
+        while (s > 0) {
+            ret = av_parser_parse2(parser, codeccontext, &packet->data, &packet->size, d, s, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+            if (ret < 0)
+                dlexit("failed to parse h.264 data");
+            d += ret;
+            s -= ret;
+
+            if (packet->size) {
+                //decode(codeccontext, frame, packet, outfilename);
+
+                ret = avcodec_send_packet(codeccontext, packet);
+                if (ret < 0)
+                    dlexit("failed to send a packet for decoding");
+
+                while (ret >= 0) {
+                    ret = avcodec_receive_frame(codeccontext, frame);
+                    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+                        break;
+                    else if (ret < 0)
+                        dlexit("error during decoding frame");
+
+                    //if (codeccontext->frame_number%100==0)
+                    //    dlmessage("frame %3d", codeccontext->frame_number);
+
+                    got_frame = 1;
+                    break;
+                }
+            }
+        }
+
+        if (got_frame) {
+            /* timestamp decode time */
+            unsigned long long decode = get_utime();
+            results.decode_time = decode - start;
+
+            /* copy frame to uyvy buffer */
+            convert_yuv_uyvy((const unsigned char **)frame->data, uyvy, width, height, pixelformat);
+            results.size = width*height*2;
+            /* get pts from decoder */
+            tstamp_t pts = frame->pts;
+            if (pts<0 || pts<=last_pts) {
+                /* extrapolate a timestamp if necessary */
+                pts = last_pts + llround(90000.0/framerate);
+            }
+            results.timestamp = last_pts = pts;
+
+            /* measure render time */
+            results.render_time = get_utime() - decode;
+        }
+
+        //av_packet_unref(packet);
+    }
+
+    return results;
+}
+
 dlffmpeg::dlffmpeg()
 {
     formatcontext = NULL;
@@ -877,7 +1081,7 @@ int dlffmpeg::attach(dlformat* f)
     AVStream *stream = formatcontext->streams[stream_index];
     codeccontext = avcodec_alloc_context3(codec);
     avcodec_parameters_to_context(codeccontext, stream->codecpar);
-    //av_codec_set_pkt_timebase(codeccontext, stream->time_base);
+    //av_codec_set_packet_timebase(codeccontext, stream->time_base);
 
     /* init the decoders, with or without reference counting */
     AVDictionary *opts = NULL;

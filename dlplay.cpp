@@ -501,7 +501,7 @@ int main(int argc, char *argv[])
 
                         case 0x1b:
 #ifdef HAVE_FFMPEG
-                            video = new dlffmpeg;
+                            video = new dlffavc;
 #else
                             dlexit("error: no support for ffmpeg decoder in this build");
 #endif
@@ -585,7 +585,14 @@ int main(int argc, char *argv[])
                 break;
 
             case AVC:
+#ifdef HAVE_FFMPEG
+                vid_fmt = new dlestream;
+                vid_fmt->attach(source);
+                video = new dlffavc;
+                videoonly = 1;
+#else
                 dlexit("error: no support for avc decoder in this build");
+#endif
                 break;
 
             case HEVC:
