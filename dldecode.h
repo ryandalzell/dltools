@@ -196,13 +196,14 @@ protected:
 };
 #endif
 
-/* ffmpeg class */
+/* ffmpeg classes */
 #ifdef HAVE_FFMPEG
-class dlffavc : public dldecode
+class dlffvideo : public dldecode
 {
 public:
-    dlffavc();
-    ~dlffavc();
+    dlffvideo();
+    dlffvideo(enum AVCodecID id);
+    ~dlffvideo();
 
     virtual int attach(dlformat *format);
     bool atend();
@@ -213,6 +214,7 @@ public:
 
 protected:
     /* ffmpeg variables */
+    enum AVCodecID codecid;
     AVCodecParserContext *parser;
     AVCodecContext *codeccontext;
     AVFrame *frame;

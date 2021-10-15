@@ -833,22 +833,29 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
 #endif
 
 #ifdef HAVE_FFMPEG
-dlffavc::dlffavc()
+dlffvideo::dlffvideo()
 {
     codeccontext = NULL;
     frame = NULL;
     size = 4096;
     errorstring = (char *) malloc(AV_ERROR_MAX_STRING_SIZE);
+    codecid = AV_CODEC_ID_H264; /* default codec is h.264 */
 }
 
-dlffavc::~dlffavc()
+dlffvideo::dlffvideo(enum AVCodecID id)
+{
+    dlffvideo();
+    codecid = id;
+}
+
+dlffvideo::~dlffvideo()
 {
     av_frame_free(&frame);
     avcodec_free_context(&codeccontext);
     free(errorstring);
 }
 
-int dlffavc::attach(dlformat* f)
+int dlffvideo::attach(dlformat* f)
 {
     int ret;
 
@@ -856,7 +863,7 @@ int dlffavc::attach(dlformat* f)
     format = f;
 
     /* find avc decoder */
-    AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
+    AVCodec *codec = avcodec_find_decoder(codecid);
     if (!codec)
         dlexit("failed to find h.264/avc video decoder");
 
@@ -910,13 +917,11 @@ int dlffavc::attach(dlformat* f)
             ret = av_parser_parse2(parser, codeccontext, &packet->data, &packet->size, d, s, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
             if (ret < 0)
                 dlexit("failed to parse h.264 data");
-            dlmessage("d=%p s=%zd ret=%d", d, s, ret);
+            //dlmessage("d=%p s=%zd ret=%d", d, s, ret);
             d += ret;
             s -= ret;
 
             if (packet->size) {
-                //decode(codeccontext, frame, packet, outfilename);
-
                 ret = avcodec_send_packet(codeccontext, packet);
                 if (ret < 0)
                     dlexit("failed to send a packet for decoding: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret));
@@ -928,7 +933,7 @@ int dlffavc::attach(dlformat* f)
                     else if (ret < 0)
                         dlexit("error during decoding frame");
 
-                    dlmessage("pre-frame %3d", codeccontext->frame_number);
+                    //dlmessage("pre-frame %3d", codeccontext->frame_number);
 
                     got_frame = 1;
                     break;
@@ -964,7 +969,7 @@ int dlffavc::attach(dlformat* f)
     return 0;
 }
 
-decode_t dlffavc::decode(unsigned char *uyvy, size_t uyvysize)
+decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
 {
     decode_t results = {0, 0, 0, 0};
     int ret;
@@ -989,8 +994,6 @@ decode_t dlffavc::decode(unsigned char *uyvy, size_t uyvysize)
             s -= ret;
 
             if (packet->size) {
-                //decode(codeccontext, frame, packet, outfilename);
-
                 ret = avcodec_send_packet(codeccontext, packet);
                 if (ret < 0)
                     dlexit("failed to send a packet for decoding");
@@ -1001,9 +1004,6 @@ decode_t dlffavc::decode(unsigned char *uyvy, size_t uyvysize)
                         break;
                     else if (ret < 0)
                         dlexit("error during decoding frame");
-
-                    //if (codeccontext->frame_number%100==0)
-                    //    dlmessage("frame %3d", codeccontext->frame_number);
 
                     got_frame = 1;
                     break;
