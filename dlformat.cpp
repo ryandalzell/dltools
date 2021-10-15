@@ -138,9 +138,7 @@ dlavformat::dlavformat()
 
 dlavformat::~dlavformat()
 {
-    // the following line triggers a double-free on my system,
-    // but valgrind tells me it should be here
-    //avformat_close_input(&formatcontext);
+    avformat_close_input(&formatcontext);
     if (iocontext) {
         av_freep(&iocontext->buffer);
         av_freep(&iocontext);

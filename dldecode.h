@@ -216,7 +216,8 @@ protected:
     AVFormatContext *formatcontext;
     AVCodecContext *codeccontext;
     AVFrame *frame;
-    AVPacket packet;
+    AVPacket *packet;
+    int stream_index;
     uint8_t *image[4];
     int linesizes[4];
 

@@ -865,7 +865,6 @@ int dlffmpeg::attach(dlformat* f)
         return -1;
     }
 
-    int stream_index;
     AVCodec *codec;
     int ret = av_find_best_stream(formatcontext, AVMEDIA_TYPE_VIDEO, -1, -1, &codec, 0);
     if (ret < 0) {
@@ -880,7 +879,7 @@ int dlffmpeg::attach(dlformat* f)
     avcodec_parameters_to_context(codeccontext, stream->codecpar);
     //av_codec_set_pkt_timebase(codeccontext, stream->time_base);
 
-    /* Init the decoders, with or without reference counting */
+    /* init the decoders, with or without reference counting */
     AVDictionary *opts = NULL;
     //if (api_mode == API_MODE_NEW_API_REF_COUNT)
     //    av_dict_set(&opts, "refcounted_frames", "1", 0);
@@ -889,32 +888,26 @@ int dlffmpeg::attach(dlformat* f)
         return ret;
     }
 
-    {
-        /* FIXME accessing the codeccontext struct in this way is hacky */
-        width = codeccontext->width;
-        height = codeccontext->height;
-        interlaced = codeccontext->field_order!=AV_FIELD_PROGRESSIVE;
-        switch (codeccontext->pix_fmt) {
-          //case AV_PIX_FMT_YUV444P  : pixelformat = I444; break;
-            case AV_PIX_FMT_YUV422P  :
-            case AV_PIX_FMT_YUVJ422P : pixelformat = I422; break;
-            case AV_PIX_FMT_YUV420P  :
-            case AV_PIX_FMT_YUVJ420P : pixelformat = I420; break;
-          //case AV_PIX_FMT_GRAY8    : pixelformat = Y800; break;
-            default : dlexit("unknown chroma format: %s", av_get_pix_fmt_name(codeccontext->pix_fmt));
-        }
-        //framerate = context->framerate.num / context->framerate.den;
-        if (codeccontext->framerate.num!=0) {
-            dlmessage("framerate: %d/%d", codeccontext->framerate.num, codeccontext->framerate.den);
-            framerate = av_q2d(codeccontext->framerate);
-        } else {
-            dlmessage("framerate: %d/%d", stream->avg_frame_rate.num, stream->avg_frame_rate.den);
-            framerate = av_q2d(stream->avg_frame_rate);
-        }
-
-        /* dump input information to stderr */
-        //if (verbose>=1)
-            av_dump_format(formatcontext, stream_index, format->get_source()->name(), 0);
+    /* read the image parameters from the codeccontext */
+    width = codeccontext->width;
+    height = codeccontext->height;
+    interlaced = codeccontext->field_order!=AV_FIELD_PROGRESSIVE;
+    switch (codeccontext->pix_fmt) {
+        //case AV_PIX_FMT_YUV444P  : pixelformat = I444; break;
+        case AV_PIX_FMT_YUV422P  :
+        case AV_PIX_FMT_YUVJ422P : pixelformat = I422; break;
+        case AV_PIX_FMT_YUV420P  :
+        case AV_PIX_FMT_YUVJ420P : pixelformat = I420; break;
+        //case AV_PIX_FMT_GRAY8    : pixelformat = Y800; break;
+        default : dlexit("unknown chroma format: %s", av_get_pix_fmt_name(codeccontext->pix_fmt));
+    }
+    /* need to hunt a bit for the framerate */
+    if (codeccontext->framerate.num!=0) {
+        //dlmessage("framerate: %d/%d", codeccontext->framerate.num, codeccontext->framerate.den);
+        framerate = av_q2d(codeccontext->framerate);
+    } else {
+        //dlmessage("framerate: %d/%d", stream->avg_frame_rate.num, stream->avg_frame_rate.den);
+        framerate = av_q2d(stream->avg_frame_rate);
     }
 
     /* allocate the decoded image */
@@ -932,9 +925,15 @@ int dlffmpeg::attach(dlformat* f)
     }
 
     /* initialise the packet */
-    av_init_packet(&packet);
-    packet.data = NULL;
-    packet.size = 0;
+    packet = av_packet_alloc();
+    if (!packet) {
+        dlmessage("failed to allocate packet");
+        return -1;
+    }
+
+    /* dump input information to stderr */
+    if (verbose>=1)
+        av_dump_format(formatcontext, stream_index, format->get_source()->name(), 0);
 
     return 0;
 }
@@ -949,32 +948,31 @@ decode_t dlffmpeg::decode(unsigned char *uyvy, size_t uyvysize)
     /* decode the next avc frame */
     int got_frame = 0;
     while (!got_frame) {
-        //if (packet.size <= 0) {
-            if (av_read_frame(formatcontext, &packet) < 0)
-                /* end of file */
-                break;
-        //}
-
-        // TODO check stream index?
-
-        //int len = avcodec_decode_video2(codeccontext, frame, &got_frame, &packet);
-        //if (codeccontext->codec_type == AVMEDIA_TYPE_VIDEO || codeccontext->codec_type == AVMEDIA_TYPE_AUDIO) {
-        int ret = avcodec_send_packet(codeccontext, &packet);
-        if (ret < 0 /*&& len != AVERROR(EAGAIN)*/ && ret != AVERROR_EOF) {
-            dlmessage("error while decoding frame: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret));
+        if (av_read_frame(formatcontext, packet) < 0)
+            /* end of file */
             break;
-        } else if (ret == AVERROR_EOF) {
-            dlmessage("avcodec_send_packet: end of file");
-            av_packet_unref(&packet);
+
+        // check stream index for frames we are interested in.
+        if (packet->stream_index != stream_index)
+            continue;
+
+        //if (codeccontext->codec_type == AVMEDIA_TYPE_VIDEO || codeccontext->codec_type == AVMEDIA_TYPE_AUDIO) {
+        int ret = avcodec_send_packet(codeccontext, packet);
+        if (ret < 0) {
+            dlmessage("error while sending pcket: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret));
             break;
         } else {
+
+            // FIXME sample code loops until no more frames.
             ret = avcodec_receive_frame(codeccontext, frame);
-            if (ret < 0)
-                dlmessage("error while receiving frame: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret));
-            else
+            if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN)) {
+                /* there is no output frame available, but there were no errors during decoding */
+                continue;
+            } else if (ret < 0) {
+                dlmessage("error decoding frame: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret));
+                return results;
+            } else
                 got_frame = 1;
-            //if (len == AVERROR(EAGAIN) || len == AVERROR_EOF)
-            //    len = 0;
         }
 
         if (got_frame) {
@@ -985,18 +983,21 @@ decode_t dlffmpeg::decode(unsigned char *uyvy, size_t uyvysize)
             /* copy frame to uyvy buffer */
             convert_yuv_uyvy((const unsigned char **)frame->data, uyvy, width, height, pixelformat);
             results.size = width*height*2;
-            //tstamp_t pts = de265_get_image_PTS(image);
-            //if (pts<0 || pts<=last_pts) {
+            // TODO get pts from decoder.
+            tstamp_t pts = -1; //de265_get_image_PTS(image);
+            if (pts<0 || pts<=last_pts) {
                 /* extrapolate a timestamp if necessary */
-            tstamp_t pts = last_pts + llround(90000.0/framerate);
-            //}
+                pts = last_pts + llround(90000.0/framerate);
+            }
             results.timestamp = last_pts = pts;
 
             /* measure render time */
             results.render_time = get_utime() - decode;
+
+            av_frame_unref(frame);
         }
 
-        av_packet_unref(&packet);
+        av_packet_unref(packet);
     }
 
     return results;
