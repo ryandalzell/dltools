@@ -138,6 +138,12 @@ filetype_t dlfile::autodetect()
 #else
         return TS;
 #endif
+    else if (strstr(filename, ".mp4")!=NULL)
+#ifdef HAVE_FFMPEG
+        return FFMPEG;
+#else
+        return OTHER;
+#endif
 
     return YUV;
 }
