@@ -11,8 +11,10 @@ typedef enum {
     YUV,
     YUV4MPEG,
     M2V,
+    M4V,
     AVC,
     HEVC,
+    AV1,
     TS,
     FFMPEG, // use libav for decoding.
 } filetype_t;

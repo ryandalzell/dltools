@@ -581,7 +581,20 @@ int main(int argc, char *argv[])
                 vid_fmt = new dlestream;
                 vid_fmt->attach(source);
                 video = new dlmpeg2;
+                // TODO does this need dims in advance.
+                //video = new dlffvideo(AV_CODEC_ID_MPEG2VIDEO);
                 videoonly = 1;
+                break;
+
+            case M4V:
+#ifdef HAVE_FFMPEG
+                vid_fmt = new dlestream;
+                vid_fmt->attach(source);
+                video = new dlffvideo(AV_CODEC_ID_MPEG4);
+                videoonly = 1;
+#else
+                dlexit("error: no support for mpeg-4 decoder in this build");
+#endif
                 break;
 
             case AVC:
@@ -600,6 +613,17 @@ int main(int argc, char *argv[])
                 vid_fmt = new dlestream;
                 vid_fmt->attach(source);
                 video = new dlffvideo(AV_CODEC_ID_H265);
+                videoonly = 1;
+#else
+                dlexit("error: no support for hevc decoder in this build");
+#endif
+                break;
+
+            case AV1:
+#ifdef HAVE_FFMPEG
+                vid_fmt = new dlestream;
+                vid_fmt->attach(source);
+                video = new dlffvideo(AV_CODEC_ID_AV1);
                 videoonly = 1;
 #else
                 dlexit("error: no support for hevc decoder in this build");

@@ -865,7 +865,7 @@ int dlffvideo::attach(dlformat* f)
     /* find avc decoder */
     AVCodec *codec = avcodec_find_decoder(codecid);
     if (!codec)
-        dlexit("failed to find h.264/avc video decoder");
+        dlexit("failed to find %s video decoder", avcodec_get_name(codecid));
 
     /* initialise the parser */
     parser = av_parser_init(codec->id);
@@ -916,8 +916,7 @@ int dlffvideo::attach(dlformat* f)
         while (s > 0) { // keep shovelling the rest of the data in after 'got_frame'
             ret = av_parser_parse2(parser, codeccontext, &packet->data, &packet->size, d, s, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
             if (ret < 0)
-                dlexit("failed to parse h.264 data");
-            //dlmessage("d=%p s=%zd ret=%d", d, s, ret);
+                dlexit("failed to parse %s data", avcodec_get_name(codecid));
             d += ret;
             s -= ret;
 
@@ -989,7 +988,7 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
         while (s > 0) {
             ret = av_parser_parse2(parser, codeccontext, &packet->data, &packet->size, d, s, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
             if (ret < 0)
-                dlexit("failed to parse h.264 data");
+                dlexit("failed to parse %s data", avcodec_get_name(codecid));
             d += ret;
             s -= ret;
 

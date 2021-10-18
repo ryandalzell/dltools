@@ -320,8 +320,10 @@ const char *describe_filetype(filetype_t f)
     "yuv",
     "yuv4mpeg",
     "m2v",
+    "m4v",
     "avc",
     "hevc",
+    "av1"
     "ts",
     "ffmpeg",
     };
