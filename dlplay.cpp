@@ -395,6 +395,7 @@ int main(int argc, char *argv[])
         dlexit("%s: error: could not set a custom memory allocator");
 
     /* configure the decklink card to output on SDI single-link only
+     * and smpte level A for 3G,
      * this is mainly a precaution in case the card attributes are set
      * differently by default, e.g. on my 4K Extreme 12G this was the case */
     if (card->QueryInterface(IID_IDeckLinkConfiguration, &voidptr)!=S_OK)
@@ -404,6 +405,8 @@ int main(int argc, char *argv[])
         dlmessage("warning: failed to set card configuration to output SDI");
     if (config->SetInt(bmdDeckLinkConfigSDIOutputLinkConfiguration, bmdLinkConfigurationSingleLink)!=S_OK)
         dlmessage("warning: failed to set card configuration to single link SDI");
+    if (config->SetFlag(bmdDeckLinkConfigSMPTELevelAOutput, true)!=S_OK)
+        dlmessage("warning: failed to set card configuration to SMPTE A");
 
     /* play input files sequentially */
     unsigned int restart = 1, exit = 0;
