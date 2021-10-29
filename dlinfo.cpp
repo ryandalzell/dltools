@@ -150,6 +150,7 @@ int main(int argc, char *argv[])
 
                 case S_OK:
                     /* TODO iterate the available profiles */
+                    printf("  profiles: TODO multiple profile support\n");
                     manager->Release();
                     break;
 
@@ -208,7 +209,10 @@ int main(int argc, char *argv[])
             }
             printf("  default output config is: %s\n", l);
             printf("  default output: SMPTE Level %c, 1080p as PsF is: %s\n", SMPTELevelAOutput? 'A' : 'B', Output1080pAsPsF? "true" : "false");
-            printf("  default output video mode is %c%c%c%c with flags 0x%lx\n", (VideoOutputMode>>24)&0xff, (VideoOutputMode>>16)&0xff, (VideoOutputMode>>8)&0xff, (VideoOutputMode>>0)&0xff, VideoOutputModeFlags);
+            char mode[5] = {
+                char((VideoOutputMode>>24)&0xff), char((VideoOutputMode>>16)&0xff), char((VideoOutputMode>>8)&0xff), char((VideoOutputMode>>0)&0xff), 0
+            };
+            printf("  default output video mode is %4s with flags 0x%lx\n", mode, VideoOutputModeFlags);
 
 #if 0
             n = 0;
@@ -240,6 +244,17 @@ int main(int argc, char *argv[])
                 n += snprintf(s+n, sizeof(s)-n, "The simultaneous output of SD and up-converted pillarbox 1080i\n");
             printf("    output conversions are: %s", s);
 #endif
+
+            /* display the card device information */
+            const char *label, *serialno, *company;
+            if (config->GetString(bmdDeckLinkConfigDeviceInformationLabel, &label)!=S_OK)
+                label = "";
+            if (config->GetString(bmdDeckLinkConfigDeviceInformationSerialNumber, &serialno)!=S_OK)
+                serialno = "";
+            if (config->GetString(bmdDeckLinkConfigDeviceInformationCompany, &company)!=S_OK)
+                company = "";
+            printf("    label: %s, serial %s, company %s\n", label, serialno, company);
+
         }
 
         /* tidy up */
