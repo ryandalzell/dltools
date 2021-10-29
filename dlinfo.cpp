@@ -21,6 +21,14 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    /* query the API information */
+    IDeckLinkAPIInformation *api = CreateDeckLinkAPIInformationInstance();
+    const char *version;
+    if (api->GetString(BMDDeckLinkAPIVersion, &version) == S_OK) {
+        printf("info: decklink api %s\n", version);
+    }
+    //free(version);
+
     /* enumerate all cards in this system */
     int num_devices = 0;
     IDeckLink *card;
@@ -42,7 +50,7 @@ int main(int argc, char *argv[])
         //print_attributes(deckLink);
 
         /* list the video output display modes supported by the card */
-        do {
+        if (1) {
             /* query the card for its output interface */
             IDeckLinkOutput *interface = NULL;
             result = card->QueryInterface(IID_IDeckLinkOutput, (void**)&interface);
@@ -84,10 +92,10 @@ int main(int argc, char *argv[])
             printf("\n");
 
 
-        } while(0);
+        }
 
         /* list the video input display modes supported by the card */
-        do {
+        if (1) {
             /* query the card for its input interface */
             IDeckLinkInput *interface = NULL;
             result = card->QueryInterface(IID_IDeckLinkInput, (void**)&interface);
@@ -106,7 +114,7 @@ int main(int argc, char *argv[])
             }
 
             /* list all supported output display modes */
-            printf("   input modes:");
+            printf("  input modes:");
             IDeckLinkDisplayMode *display_mode = NULL;
             while (displaymode_iterator->Next(&display_mode) == S_OK)
             {
@@ -129,28 +137,51 @@ int main(int argc, char *argv[])
             printf("\n");
 
 
-        } while(0);
+        }
+
+        /* list the available profiles of the card */
+        if (1) {
+            /* query the card for its profile manager */
+            IDeckLinkProfileManager *manager = NULL;
+            switch (card->QueryInterface(IID_IDeckLinkProfileManager, (void **)&manager)) {
+                case E_NOINTERFACE:
+                    printf("  profiles: card only supports one profile\n");
+                    break;
+
+                case S_OK:
+                    /* TODO iterate the available profiles */
+                    manager->Release();
+                    break;
+
+                default:
+                    dlexit("error: could not obtain the profile manager interface");
+            }
+        }
 
         /* list the output configuration of the card */
-        do {
+        if (1) {
             /* query the card for its configuration interface */
             IDeckLinkConfiguration *config = NULL;
             if (card->QueryInterface(IID_IDeckLinkConfiguration, (void **)&config)!=S_OK)
                 dlexit("error: could not obtain the configuration interface");
 
             /* obtain the default configuration */
-            int64_t VideoConnections, LinkConfigurations, VideoOutputMode, VideoOutputModeFlags;
-            bool Output1080pAsPsF;
+            int64_t VideoConnections, LinkConfigurations, VideoOutputMode, VideoOutputModeFlags, VideoOutputConversion;
+            bool SMPTELevelAOutput, Output1080pAsPsF;
             if (config->GetInt(bmdDeckLinkConfigVideoOutputConnection, &VideoConnections)!=S_OK)
                 dlmessage("warning: failed to get card configuration for output SDI");
             if (config->GetInt(bmdDeckLinkConfigSDIOutputLinkConfiguration, &LinkConfigurations)!=S_OK)
                 dlmessage("warning: failed to get card configuration for link SDI");
+            if (config->GetFlag(bmdDeckLinkConfigSMPTELevelAOutput, &SMPTELevelAOutput)!=S_OK)
+                dlmessage("warning: failed to get card configuration to SMPTE A");
             if (config->GetFlag(bmdDeckLinkConfigOutput1080pAsPsF, &Output1080pAsPsF))
                 dlmessage("warning: failed to get card configuration");
             if (config->GetInt(bmdDeckLinkConfigDefaultVideoOutputMode, &VideoOutputMode)!=S_OK)
-                dlmessage("warning: failed to get card configuration for link SDI");
+                dlmessage("warning: failed to get card configuration for video output mode");
             if (config->GetInt(bmdDeckLinkConfigDefaultVideoOutputModeFlags, &VideoOutputModeFlags)!=S_OK)
-                dlmessage("warning: failed to get card configuration for link SDI");
+                dlmessage("warning: failed to get card configuration for video output mode flags");
+            if (config->GetInt(bmdDeckLinkConfigVideoOutputConversionMode, &VideoOutputConversion)!=S_OK)
+                dlmessage("warning: failed to get card configuration for video output conversion mode");
 
             /* display the default configuration */
             char s[4096];
@@ -167,7 +198,7 @@ int main(int argc, char *argv[])
                 n += snprintf(s+n, sizeof(s)-n, "Composite, ");
             if (VideoConnections & bmdVideoConnectionSVideo)
                 n += snprintf(s+n, sizeof(s)-n, "SVideo, ");
-            dlmessage("output connections are: %s", s);
+            printf("  output connections are: %s\n", s);
             const char *l = "";
             switch (LinkConfigurations)
             {
@@ -175,11 +206,41 @@ int main(int argc, char *argv[])
                 case bmdLinkConfigurationDualLink: l = "dual-link"; break;
                 case bmdLinkConfigurationQuadLink: l = "quad-link"; break;
             }
-            dlmessage("default output config is: %s", l);
-            dlmessage("default output 1080p as PsF is: %s", Output1080pAsPsF? "true" : "false");
-            dlmessage("default output video mode is %c%c%c%c with flags 0x%x", (VideoOutputMode>>24)&0xff, (VideoOutputMode>>16)&0xff, (VideoOutputMode>>8)&0xff, (VideoOutputMode>>0)&0xff, VideoOutputModeFlags);
+            printf("  default output config is: %s\n", l);
+            printf("  default output: SMPTE Level %c, 1080p as PsF is: %s\n", SMPTELevelAOutput? 'A' : 'B', Output1080pAsPsF? "true" : "false");
+            printf("  default output video mode is %c%c%c%c with flags 0x%lx\n", (VideoOutputMode>>24)&0xff, (VideoOutputMode>>16)&0xff, (VideoOutputMode>>8)&0xff, (VideoOutputMode>>0)&0xff, VideoOutputModeFlags);
 
-        } while (0);
+#if 0
+            n = 0;
+            if (VideoOutputConversion & bmdVideoOutputLetterboxDownconversion)
+                n += snprintf(s+n, sizeof(s)-n, "Down-converted letterbox SD output\n");
+            if (VideoOutputConversion & bmdVideoOutputAnamorphicDownconversion)
+                n += snprintf(s+n, sizeof(s)-n, "Down-converted anamorphic SD output\n");
+            if (VideoOutputConversion & bmdVideoOutputHD720toHD1080Conversion)
+                n += snprintf(s+n, sizeof(s)-n, "HD720 to HD1080 conversion output\n");
+            if (VideoOutputConversion & bmdVideoOutputHardwareLetterboxDownconversion)
+                n += snprintf(s+n, sizeof(s)-n, "Simultaneous output of HD and down-converted letterbox SD\n");
+            if (VideoOutputConversion & bmdVideoOutputHardwareAnamorphicDownconversion)
+                n += snprintf(s+n, sizeof(s)-n, "Simultaneous output of HD and down-converted anamorphic SD\n");
+            if (VideoOutputConversion & bmdVideoOutputHardwareCenterCutDownconversion)
+                n += snprintf(s+n, sizeof(s)-n, "Simultaneous output of HD and center cut SD\n");
+            if (VideoOutputConversion & bmdVideoOutputHardware720p1080pCrossconversion)
+                n += snprintf(s+n, sizeof(s)-n, "The simultaneous output of 720p and 1080p cross-conversion\n");
+            if (VideoOutputConversion & bmdVideoOutputHardwareAnamorphic720pUpconversion)
+                n += snprintf(s+n, sizeof(s)-n, "The simultaneous output of SD and up-converted anamorphic 720p\n");
+            if (VideoOutputConversion & bmdVideoOutputHardwareAnamorphic1080iUpconversion)
+                n += snprintf(s+n, sizeof(s)-n, "The simultaneous output of SD and up-converted anamorphic 1080i\n");
+            if (VideoOutputConversion & bmdVideoOutputHardwareAnamorphic149To720pUpconversion)
+                n += snprintf(s+n, sizeof(s)-n, "The simultaneous output of SD and up-converted anamorphic widescreen aspect ratio 14:9 to 720p\n");
+            if (VideoOutputConversion & bmdVideoOutputHardwareAnamorphic149To1080iUpconversion)
+                n += snprintf(s+n, sizeof(s)-n, "The simultaneous output of SD and up-converted anamorphic widescreen aspect ratio 14:9 to 1080i\n");
+            if (VideoOutputConversion & bmdVideoOutputHardwarePillarbox720pUpconversion)
+                n += snprintf(s+n, sizeof(s)-n, "The simultaneous output of SD and up-converted pillarbox 720p\n");
+            if (VideoOutputConversion & bmdVideoOutputHardwarePillarbox1080iUpconversion)
+                n += snprintf(s+n, sizeof(s)-n, "The simultaneous output of SD and up-converted pillarbox 1080i\n");
+            printf("    output conversions are: %s", s);
+#endif
+        }
 
         /* tidy up */
         card->Release();
