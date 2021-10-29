@@ -13,6 +13,7 @@
 dlalloc::dlalloc()
 {
     refcnt = 0;
+    index = 0;
 }
 
 dlalloc::~dlalloc()
