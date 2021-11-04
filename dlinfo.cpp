@@ -174,7 +174,7 @@ int main(int argc, char *argv[])
             if (config->GetInt(bmdDeckLinkConfigSDIOutputLinkConfiguration, &LinkConfigurations)!=S_OK)
                 dlmessage("warning: failed to get card configuration for link SDI");
             if (config->GetFlag(bmdDeckLinkConfigSMPTELevelAOutput, &SMPTELevelAOutput)!=S_OK)
-                dlmessage("warning: failed to get card configuration to SMPTE A");
+                dlmessage("warning: failed to get card configuration for SMPTE A");
             if (config->GetFlag(bmdDeckLinkConfigOutput1080pAsPsF, &Output1080pAsPsF))
                 dlmessage("warning: failed to get card configuration");
             if (config->GetInt(bmdDeckLinkConfigDefaultVideoOutputMode, &VideoOutputMode)!=S_OK)
