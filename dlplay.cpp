@@ -116,8 +116,10 @@ HRESULT callback::ScheduledFrameCompleted(IDeckLinkVideoFrame* frame, BMDOutputF
     }
 
     /* when a video frame has been completed, post a semaphore */
-    sem_post(&sem);
-    completed++;
+    if (result!=bmdOutputFrameFlushed) {
+        sem_post(&sem);
+        completed++;
+    }
 
     return S_OK;
 }
@@ -137,12 +139,12 @@ HRESULT callback::RenderAudioSamples(bool preroll)
 void usage(int exitcode)
 {
     fprintf(stderr, "%s: play raw video files\n", appname);
-    fprintf(stderr, "usage: %s [options] <file/url> [<file/url>...]\n", appname);
+    fprintf(stderr, "usage: %s [options] <file/url>\n", appname);
     fprintf(stderr, "  -s, --sizeformat    : specify display size format: 480i,480p,576i,720p,1080i,1080p [optional +framerate] (default: autodetect)\n");
     fprintf(stderr, "  -f, --fourcc        : specify pixel fourcc format: i420,i422,uyvy (default: i420)\n");
     fprintf(stderr, "  -I, --interface     : address of interface to listen for multicast data (default: first network interface)\n");
     fprintf(stderr, "  -a, --firstframe    : index of first frame in input to display (default: 0)\n");
-    fprintf(stderr, "  -n, --numframes     : number of frames in input to display (default: all)\n");
+    fprintf(stderr, "  -n, --numframes     : total number of frames to display (default: no limit)\n");
     fprintf(stderr, "  -2, --halfrate      : allow using half frame rate, e.g. 30fps when 60fps is not supported (default: off)\n");
     fprintf(stderr, "  -l, --luma          : display luma plane only (default: luma and chroma)\n");
     fprintf(stderr, "  -=, --videoonly     : play video only (default: video and audio if possible)\n");
@@ -216,7 +218,7 @@ int main(int argc, char *argv[])
     char *fourcc = NULL;
     const char *interface = NULL;
     int firstframe = 0;
-    int numframes = -1;
+    unsigned numframes = 0;
     bool allowhalfrate = false; /* use e.g. 30fps when 60fps not supported */
     int lumaonly = 0;
     int topfieldfirst = 1;
@@ -504,7 +506,7 @@ int main(int argc, char *argv[])
 
                         case 0x1b:
 #ifdef HAVE_FFMPEG
-                            video = new dlffvideo;
+                            video = new dlffvideo(AV_CODEC_ID_H264);
 #else
                             dlexit("error: no support for ffmpeg decoder in this build");
 #endif
@@ -1115,11 +1117,16 @@ int main(int argc, char *argv[])
                 last_vid = vid.timestamp;
                 last_aud = aud.timestamp;
             }
+
+            /* limit output to specific number of frames */
+            if (numframes && completed>=numframes) {
+                exit = 1;
+                break;
+            }
         }
 
         /* stop the status display */
         exit_thread = 1;
-        pthread_join(status_thread, NULL);
 
         /* stop the video output */
         output->StopScheduledPlayback(0, NULL, 0);
@@ -1145,6 +1152,7 @@ int main(int argc, char *argv[])
         delete aud_fmt;
         delete video;
         delete audio;
+        pthread_join(status_thread, NULL);
     }
 
     /* tidy up */
