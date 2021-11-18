@@ -497,7 +497,9 @@ int main(int argc, char *argv[])
 
                         case 0x24:
                         case 0x06:
-#ifdef HAVE_LIBDE265
+#ifdef HAVE_FFMPEG
+                            video = new dlffvideo(AV_CODEC_ID_HEVC);
+#elif HAVE_LIBDE265
                             video = new dlhevc;
 #else
                             dlexit("error: no support for hevc decoder in this build");
