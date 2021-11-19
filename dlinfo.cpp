@@ -140,6 +140,7 @@ int main(int argc, char *argv[])
         }
 
         /* list the available profiles of the card */
+#if BLACKMAGIC_DECKLINK_API_VERSION >= 0x0b000000
         if (1) {
             /* query the card for its profile manager */
             IDeckLinkProfileManager *manager = NULL;
@@ -158,6 +159,7 @@ int main(int argc, char *argv[])
                     dlexit("error: could not obtain the profile manager interface");
             }
         }
+#endif
 
         /* list the output configuration of the card */
         if (1) {
