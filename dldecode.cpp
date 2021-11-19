@@ -863,7 +863,7 @@ int dlffvideo::attach(dlformat* f)
     format = f;
 
     /* find avc decoder */
-    AVCodec *codec = avcodec_find_decoder(codecid);
+    const AVCodec *codec = avcodec_find_decoder(codecid);
     if (!codec)
         dlexit("failed to find %s video decoder", avcodec_get_name(codecid));
 
@@ -1068,7 +1068,7 @@ int dlffmpeg::attach(dlformat* f)
         return -1;
     }
 
-    AVCodec *codec;
+    const AVCodec *codec;
     int ret = av_find_best_stream(formatcontext, AVMEDIA_TYPE_VIDEO, -1, -1, &codec, 0);
     if (ret < 0) {
         dlmessage("failed to find video stream in input file");
