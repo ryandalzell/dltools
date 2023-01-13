@@ -133,8 +133,10 @@ dlmpeg2::dlmpeg2()
 
 dlmpeg2::~dlmpeg2()
 {
-    if (mpeg2dec)
+    if (mpeg2dec) {
+        dlmessage("closing mpeg2 library");
         mpeg2_close(mpeg2dec);
+    }
 }
 
 int dlmpeg2::attach(dlformat *f)
@@ -1068,7 +1070,7 @@ int dlffmpeg::attach(dlformat* f)
         return -1;
     }
 
-    const AVCodec *codec;
+    AVCodec *codec;
     int ret = av_find_best_stream(formatcontext, AVMEDIA_TYPE_VIDEO, -1, -1, &codec, 0);
     if (ret < 0) {
         dlmessage("failed to find video stream in input file");
