@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include "dlterm.h"
+#include "dlutil.h"
 
 dlterm::dlterm()
 {
@@ -57,5 +58,7 @@ int dlterm::readchar()
         return ch;
     }
     r = read(0,&ch,1);
+    if (r<0)
+        dlmessage("failed to read from terminal");
     return ch;
 }
