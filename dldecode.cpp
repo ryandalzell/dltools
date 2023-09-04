@@ -21,7 +21,7 @@ dldecode::dldecode()
     data = NULL;
     verbose = 0;
     /* timestamp */
-    last_pts = 0;
+    last_sts = 0;
     timestamp = 0;
     frames_since_pts = 0;
     /* debug */
@@ -116,7 +116,7 @@ decode_t dlyuv::decode(unsigned char *uyvy, size_t uyvysize)
     }
 
     results.timestamp = timestamp;
-    timestamp += llround(90000.0/framerate);
+    timestamp += llround(180000.0/framerate);
 
     return results;
 }
@@ -159,8 +159,8 @@ int dlmpeg2::attach(dlformat *f)
                 read = format->read(data, size);
                 if (read>0) {
                     /* tag with most recent available timestamp */
-                    tstamp_t pts = format->get_timestamp();
-                    mpeg2_tag_picture(mpeg2dec, (uint32_t)pts, uint32_t(pts>>32));
+                    sts_t sts = format->get_timestamp();
+                    mpeg2_tag_picture(mpeg2dec, (uint32_t)sts, uint32_t(sts>>32));
                     mpeg2_buffer(mpeg2dec, data, data+read);
                 }
                 break;
@@ -199,8 +199,8 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
                 }
                 if (read>0) {
                     /* tag with most recent available timestamp */
-                    tstamp_t pts = format->get_timestamp();
-                    mpeg2_tag_picture(mpeg2dec, (uint32_t)pts, uint32_t(pts>>32));
+                    sts_t sts = format->get_timestamp();
+                    mpeg2_tag_picture(mpeg2dec, (uint32_t)sts, uint32_t(sts>>32));
                     mpeg2_buffer(mpeg2dec, data, data+read);
                 } else
                     return results;
@@ -212,16 +212,16 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
                     const unsigned char *yuv[3] = {info->display_fbuf->buf[0], info->display_fbuf->buf[1], info->display_fbuf->buf[2]};
                     convert_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
                     results.size = width*height*2;
-                    tstamp_t pts = -1;
+                    sts_t sts = -1;
                     if (info->current_picture)
-                        pts = ((tstamp_t)(info->current_picture->tag2)<<32) | (tstamp_t)info->current_picture->tag;
-                    if (pts<0 || pts==last_pts) {
+                        sts = ((sts_t)(info->current_picture->tag2)<<32) | (sts_t)info->current_picture->tag;
+                    if (sts<0 || sts==last_sts) {
                         /* extrapolate a timestamp if necessary */
-                        pts = last_pts + llround(90000.0/framerate);
-                        //dlmessage("calc video pts=%s delta=%lld", describe_timestamp(pts), llround(90000.0/framerate));
+                        sts = last_sts + llround(180000.0/framerate);
+                        //dlmessage("calc video sts=%s delta=%lld", describe_sts(sts), llround(180000.0/framerate));
                     } //else
-                        //dlmessage("new  video pts=%s delta=%lld", describe_timestamp(pts), pts-last_pts);
-                    results.timestamp = last_pts = pts;
+                        //dlmessage("new  video sts=%s delta=%lld", describe_sts(sts), sts-last_sts);
+                    results.timestamp = last_sts = sts;
 
                     return results;
                 }
@@ -274,9 +274,9 @@ int dlmpg123::attach(dlformat *f)
             }
         }
 
-        long long pts = format->get_timestamp();
-        if (pts>=0) {
-            last_pts = pts;
+        sts_t sts = format->get_timestamp();
+        if (sts>=0) {
+            last_sts = sts;
             frames_since_pts = 0;
         }
 
@@ -320,9 +320,9 @@ decode_t dlmpg123::decode(unsigned char *samples, size_t sampsize)
             }
         }
 
-        long long pts = format->get_timestamp();
-        if (pts>=0 && pts>last_pts) {
-            results.timestamp = last_pts = pts;
+        sts_t sts = format->get_timestamp();
+        if (sts>=0 && sts>last_sts) {
+            results.timestamp = last_sts = sts;
             frames_since_pts = 0;
             //dlmessage("new audio pts=%s", describe_timestamp(pts));
         }
@@ -333,7 +333,7 @@ decode_t dlmpg123::decode(unsigned char *samples, size_t sampsize)
     /* extrapolate a timestamp if necessary */
     if (results.timestamp<0) {
         frames_since_pts++;
-        results.timestamp = last_pts + (tstamp_t)(frames_since_pts*90000ll*1152ll/48000ll);
+        results.timestamp = last_sts + (sts_t)(frames_since_pts*180000ll*1152ll/48000ll);
     }
 
     return results;
@@ -354,7 +354,7 @@ dlliba52::dlliba52()
     ac3_frame = NULL;
 
     /* initialise the transport stream parser */
-    last_pts = -1;
+    last_sts = -1;
 }
 
 dlliba52::~dlliba52()
@@ -392,9 +392,9 @@ int dlliba52::attach(dlformat *f)
         }
 
         /* look for first pts */
-        tstamp_t pts = format->get_timestamp();
-        if (pts>=0) {
-            last_pts = pts;
+        sts_t sts = format->get_timestamp();
+        if (sts>=0) {
+            last_sts = sts;
             frames_since_pts = 0;
         }
 
@@ -404,12 +404,12 @@ int dlliba52::attach(dlformat *f)
             if (ret)
                 break;
         }
-    } while (ret==0 || last_pts<0);
+    } while (ret==0 || last_sts<0);
 
     /* queue the synchronised data */
     memcpy(ac3_frame, data+sync, read-sync);
     ac3_length = read-sync;
-    dlmessage("found a52 frame of %d bytes, %d in buffer, initial pts=%s", ret, ac3_length, describe_timestamp(last_pts));
+    dlmessage("found a52 frame of %d bytes, %d in buffer, initial pts=%s", ret, ac3_length, describe_sts(last_sts));
 
     /* report the format parameters */
     int channels = 0;
@@ -470,9 +470,9 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
                 }
             }
 
-            tstamp_t pts = format->get_timestamp();
-            if (pts>=0 && pts>last_pts) {
-                last_pts = pts;
+            sts_t sts = format->get_timestamp();
+            if (sts>=0 && sts>last_sts) {
+                last_sts = sts;
                 frames_since_pts = 0;
                 //dlmessage("new audio pts=%s", describe_timestamp(pts));
             }
@@ -549,7 +549,7 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
     ac3_length = ac3_length-length;
 
     /* extrapolate a timestamp if necessary */
-    results.timestamp = last_pts + (tstamp_t)(frames_since_pts*90000ll*6ll*256ll/48000ll);
+    results.timestamp = last_sts + (sts_t)(frames_since_pts*180000ll*6ll*256ll/48000ll);
     frames_since_pts++;
 
     return results;
@@ -605,7 +605,7 @@ int dlhevc::attach(dlformat *f)
             /* read a chunk of input data */
             int n = format->read(data, size);
             if (n) {
-                tstamp_t timestamp = format->get_timestamp();
+                sts_t timestamp = format->get_timestamp();
                 err = de265_push_data(ctx, data, n, timestamp, NULL);
                 if (!de265_isOK(err)) {
                     dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
@@ -675,7 +675,7 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                 }
                 if (read>0) {
                     /* use most recent available timestamp */
-                    tstamp_t timestamp = format->get_timestamp();
+                    sts_t timestamp = format->get_timestamp();
                     err = de265_push_data(ctx, data, read, timestamp, NULL);
                     if (!de265_isOK(err)) {
                         dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
@@ -705,12 +705,12 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
             yuv[2] = de265_get_image_plane(image, 2, &stride);
             convert_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
             results.size = width*height*2;
-            tstamp_t pts = de265_get_image_PTS(image);
-            if (pts<0 || pts<=last_pts) {
+            sts_t sts = 2*de265_get_image_PTS(image);
+            if (sts<0 || sts<=last_sts) {
                 /* extrapolate a timestamp if necessary */
-                pts = last_pts + llround(90000.0/framerate);
+                sts = last_sts + llround(180000.0/framerate);
             }
-            results.timestamp = last_pts = pts;
+            results.timestamp = last_sts = sts;
         }
 
         /* measure render time */
@@ -737,7 +737,7 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                     }
                     if (read>0) {
                         /* use most recent available timestamp */
-                        tstamp_t timestamp = format->get_timestamp();
+                        sts_t timestamp = format->get_timestamp();
                         err = de265_push_data(ctx, data, read, timestamp, NULL);
                         if (!de265_isOK(err)) {
                             dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
@@ -807,12 +807,12 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                 /* use timestamp from first field for display of deinterlaced frame */
                 if (top_field==top_field_first) {
                     results.size = width*height*2;
-                    tstamp_t pts = de265_get_image_PTS(image);
-                    if (pts<0 || pts<=last_pts) {
+                    sts_t sts = 2*de265_get_image_PTS(image);
+                    if (sts<0 || sts<=last_sts) {
                         /* extrapolate a timestamp if necessary */
-                        pts = last_pts + llround(90000.0/framerate);
+                        sts = last_sts + llround(180000.0/framerate);
                     }
-                    results.timestamp = last_pts = pts;
+                    results.timestamp = last_sts = sts;
                 }
 
                 /* sum render time */
@@ -1021,12 +1021,12 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
             convert_yuv_uyvy((const unsigned char **)frame->data, uyvy, width, height, pixelformat);
             results.size = width*height*2;
             /* get pts from decoder */
-            tstamp_t pts = frame->pts;
-            if (pts<0 || pts<=last_pts) {
+            sts_t sts = 2*frame->pts;
+            if (sts<0 || sts<=last_sts) {
                 /* extrapolate a timestamp if necessary */
-                pts = last_pts + llround(90000.0/framerate);
+                sts = last_sts + llround(180000.0/framerate);
             }
-            results.timestamp = last_pts = pts;
+            results.timestamp = last_sts = sts;
 
             /* measure render time */
             results.render_time = get_utime() - decode;
@@ -1189,12 +1189,12 @@ decode_t dlffmpeg::decode(unsigned char *uyvy, size_t uyvysize)
             convert_yuv_uyvy((const unsigned char **)frame->data, uyvy, width, height, pixelformat);
             results.size = width*height*2;
             /* get pts from decoder */
-            tstamp_t pts = frame->pts;
-            if (pts<0 || pts<=last_pts) {
+            sts_t sts = 2*frame->pts;
+            if (sts<0 || sts<=last_sts) {
                 /* extrapolate a timestamp if necessary */
-                pts = last_pts + llround(90000.0/framerate);
+                sts = last_sts + llround(180000.0/framerate);
             }
-            results.timestamp = last_pts = pts;
+            results.timestamp = last_sts = sts;
 
             /* measure render time */
             results.render_time = get_utime() - decode;

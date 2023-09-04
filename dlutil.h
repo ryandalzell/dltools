@@ -29,7 +29,8 @@ typedef enum {
 } pixelformat_t;
 
 /* timestamp */
-typedef long long tstamp_t;
+typedef long long pts_t;        /* presentation timestamp in 90kHz */
+typedef long long sts_t;        /* system timestamp in 180kHz */
 
 #define mmax(a, b) ((a) > (b) ? (a) : (b))
 #define mmin(a, b) ((a) < (b) ? (a) : (b))
@@ -47,8 +48,10 @@ int divine_pixel_format(const char *filename, pixelformat_t *pixelformat);
 int divine_video_format(const char *filename, int *width, int *height, bool *interlaced, float *framerate);
 unsigned long long int get_time();
 unsigned long long int get_utime();
-tstamp_t get_stime();
-const char *describe_timestamp(tstamp_t t);
+pts_t get_ptstime();
+sts_t get_ststime();
+const char *describe_pts(pts_t t);
+const char *describe_sts(sts_t t);
 const char *describe_filetype(filetype_t f);
 size_t pixelformat_get_size(pixelformat_t pixelformat, int width, int height);
 

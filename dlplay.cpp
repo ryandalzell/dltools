@@ -179,10 +179,10 @@ void *display_status(void *arg)
             /* get scheduled time */
             BMDTimeValue time;
             double speed;
-            output->GetScheduledStreamTime(90000, &time, &speed);
+            output->GetScheduledStreamTime(180000, &time, &speed);
 
             /* display status output */
-            len += snprintf(string+len, sizeof(string)-len, "%dfps video buffer %d audio buffer %d time %s speed %.1f", completed-framerate, video_buffer, audio_buffer, describe_timestamp(time), speed);
+            len += snprintf(string+len, sizeof(string)-len, "%dfps video buffer %d audio buffer %d time %s speed %.1f", completed-framerate, video_buffer, audio_buffer, describe_sts(time), speed);
             framerate = completed;
             if (late)
                 len += snprintf(string+len, sizeof(string)-len, " late %d frame%s", late, late>1? "s" : "");
@@ -801,17 +801,17 @@ int main(int argc, char *argv[])
         vid.timestamp = aud.timestamp = 0;      /* fixes warning */
 
         /* playback timestamp boundaries */
-        tstamp_t video_start_time = 1ll<<34;
-        tstamp_t video_end_time = 0ll;
-        tstamp_t audio_start_time = 1ll<<34;
-        tstamp_t audio_end_time = 0ll;
+        sts_t video_start_time = 1ll<<35;
+        sts_t video_end_time = 0ll;
+        sts_t audio_start_time = 1ll<<35;
+        sts_t audio_end_time = 0ll;
 
         /* video frame history buffer */
         int num_history_frames = 0;
         const int MAX_HISTORY_FRAMES = 30;
         typedef struct {
             IDeckLinkVideoFrame *frame;
-            tstamp_t timestamp;
+            sts_t timestamp;
         } history_frame_t;
         history_frame_t history_buffer[MAX_HISTORY_FRAMES];
 
@@ -851,7 +851,7 @@ int main(int argc, char *argv[])
                     /* find the index in the history buffer of the current frame */
                     BMDTimeValue time;
                     double speed;
-                    output->GetScheduledStreamTime(90000, &time, &speed);
+                    output->GetScheduledStreamTime(180000, &time, &speed);
                     int pause_index = 0;
                     if (time < history_buffer[0].timestamp)
                         pause_index = 0;
@@ -866,7 +866,7 @@ int main(int argc, char *argv[])
                         }
 
                     if (verbose>=1)
-                        dlmessage("current time is %s, pause timestamp %s", describe_timestamp(time), describe_timestamp(history_buffer[pause_index].timestamp));
+                        dlmessage("current time is %s, pause timestamp %s", describe_sts(time), describe_sts(history_buffer[pause_index].timestamp));
 
                     /* stop the playback */
                     if (output->StopScheduledPlayback(0, NULL, 0) != S_OK)
@@ -892,7 +892,7 @@ int main(int argc, char *argv[])
 
                     /* preroll from end of history buffer to current pause index */
                     for (int i=num_history_frames-1; i>pause_index; i--)
-                        if (output->ScheduleVideoFrame(history_buffer[i].frame, history_buffer[i].timestamp, lround(90000.0/framerate), 90000)==S_OK)
+                        if (output->ScheduleVideoFrame(history_buffer[i].frame, history_buffer[i].timestamp, lround(180000.0/framerate), 180000)==S_OK)
                             video_start_time = history_buffer[i].timestamp;
                         else
                             break;
@@ -949,14 +949,14 @@ int main(int argc, char *argv[])
             /* enqueue previous frame */
             if (frame && video) {
                 unsigned long long start = get_utime();
-                HRESULT result = output->ScheduleVideoFrame(frame, vid.timestamp, lround(90000.0/framerate), 90000);
+                HRESULT result = output->ScheduleVideoFrame(frame, vid.timestamp, lround(180000.0/framerate), 180000);
                 queuetime += get_utime() - start;
                 if (result != S_OK) {
                     switch (result) {
                         case E_ACCESSDENIED : fprintf(stderr, "%s: error: frame %d: video output disabled when queueing video frame\n", appname, queuenum); break;
                         case E_OUTOFMEMORY  : fprintf(stderr, "%s: error: frame %d: too many frames are scheduled when queueing video frame\n", appname, queuenum);
                         case E_INVALIDARG   : fprintf(stderr, "%s: error: frame %d: frame attributes are invalid when queueing video frame\n", appname, queuenum); break;
-                        default             : fprintf(stderr, "%s: error: frame %d: failed to schedule video frame, timestamp %s\n", appname, queuenum, describe_timestamp(vid.timestamp)); break;
+                        default             : fprintf(stderr, "%s: error: frame %d: failed to schedule video frame, timestamp %s\n", appname, queuenum, describe_sts(vid.timestamp)); break;
                     }
                     break;
                 }
@@ -975,13 +975,13 @@ int main(int argc, char *argv[])
                 }
 
                 /* start the playback */
-                if (output->StartScheduledPlayback(mmin(video_start_time, audio_start_time), 90000, 1.0) != S_OK)
+                if (output->StartScheduledPlayback(mmin(video_start_time, audio_start_time), 180000, 1.0) != S_OK)
                     dlexit("error: failed to start video playback");
 
                 if (verbose>=1)
                     dlmessage("info: pre-rolled %d frames", queuenum);
                 if (verbose>=1)
-                    dlmessage("info: start time of video is %lld, %s", video_start_time, describe_timestamp(video_start_time));
+                    dlmessage("info: start time of video is %lld, %s", video_start_time, describe_sts(video_start_time));
             }
 
             /* decode the next frame */
@@ -1012,7 +1012,7 @@ int main(int argc, char *argv[])
                 video_end_time = mmax(vid.timestamp, video_end_time);
 
                 if (verbose>=3)
-                    dlmessage("info: frame %d timestamp %s, decode %.1fms render %.1fms", framenum, describe_timestamp(vid.timestamp), vid.decode_time/1000.0, vid.render_time/1000.0);
+                    dlmessage("info: frame %d timestamp %s, decode %.1fms render %.1fms", framenum, describe_sts(vid.timestamp), vid.decode_time/1000.0, vid.render_time/1000.0);
                 framenum++;
 
                 /* store the frame in the history buffer */
@@ -1034,7 +1034,7 @@ int main(int argc, char *argv[])
                 /* reschedule audio that wasn't queued last time */
                 if (aud_rem>0) {
                     uint32_t scheduled;
-                    HRESULT result = output->ScheduleAudioSamples(aud_data+aud_size-aud_rem*4, aud_rem, aud.timestamp, 90000, &scheduled); // FIXME timestamp
+                    HRESULT result = output->ScheduleAudioSamples(aud_data+aud_size-aud_rem*4, aud_rem, aud.timestamp, 180000, &scheduled); // FIXME timestamp
                     if (result != S_OK) {
                         dlmessage("error: block %d: failed to re-schedule audio data", blocknum);
                         delete audio;
@@ -1060,14 +1060,14 @@ int main(int argc, char *argv[])
                     if (blocknum==0) {
                         audio_start_time = aud.timestamp;
                         if (verbose>=1)
-                            dlmessage("info: start time of audio is %lld, %s", audio_start_time, describe_timestamp(audio_start_time));
+                            dlmessage("info: start time of audio is %lld, %s", audio_start_time, describe_sts(audio_start_time));
                     }
                     audio_end_time = mmax(aud.timestamp, audio_end_time);
 
                     /* buffer decoded audio */
                     uint32_t scheduled, num_sample_frames = aud.size/2;
-                    HRESULT result = output->ScheduleAudioSamples(aud_data, num_sample_frames, aud.timestamp, 90000, &scheduled);
-                    //dlmessage("buffer level %d: decoded %d bytes at timestamp %s and scheduled %d samples", buffered, aud.size, describe_timestamp(aud.timestamp), scheduled);
+                    HRESULT result = output->ScheduleAudioSamples(aud_data, num_sample_frames, aud.timestamp, 180000, &scheduled);
+                    //dlmessage("buffer level %d: decoded %d bytes at timestamp %s and scheduled %d samples", buffered, aud.size, describe_sts(aud.timestamp), scheduled);
                     if (result != S_OK) {
                         dlmessage("error: block %d: failed to schedule audio data", blocknum);
                         delete audio;
@@ -1095,36 +1095,36 @@ int main(int argc, char *argv[])
                 }
 
                 /* start the playback */
-                if (output->StartScheduledPlayback(audio_start_time, 90000, 1.0) != S_OK)
+                if (output->StartScheduledPlayback(audio_start_time, 180000, 1.0) != S_OK)
                     dlexit("error: failed to start audio playback");
 
                 audio_start_time = aud.timestamp;
                 if (verbose>=1) {
-                    dlmessage("info: start time of audio is %lld, %s", audio_start_time, describe_timestamp(audio_start_time));
+                    dlmessage("info: start time of audio is %lld, %s", audio_start_time, describe_sts(audio_start_time));
                 }
 
             }
 
             /* loop debugging */
             if (verbose>=2) {
-                static tstamp_t last_vid, last_aud;
+                static sts_t last_vid, last_aud;
                 if (last_vid && last_aud) {
-                    tstamp_t vdiff = vid.timestamp - last_vid;
-                    tstamp_t adiff = aud.timestamp - last_aud;
+                    sts_t vdiff = vid.timestamp - last_vid;
+                    sts_t adiff = aud.timestamp - last_aud;
                     char v[32] = {0}, a[32] = {0};
-                    strncpy(v, describe_timestamp(vdiff), sizeof(v)-1);
-                    strncpy(a, describe_timestamp(adiff), sizeof(a)-1);
+                    strncpy(v, describe_sts(vdiff), sizeof(v)-1);
+                    strncpy(a, describe_sts(adiff), sizeof(a)-1);
                     dlmessage("loop: vid=%s aud=%s", v, a);
                     if (video && vdiff<=0)
-                        dlexit("video went back in time: %s", describe_timestamp(vdiff));
+                        dlexit("video went back in time: %s", describe_sts(vdiff));
                     if (audio && adiff<0)
-                        dlexit("audio went back in time: %s", describe_timestamp(adiff));
+                        dlexit("audio went back in time: %s", describe_sts(adiff));
                 }
                 else if (last_vid) {
-                    tstamp_t vdiff = vid.timestamp - last_vid;
-                    dlmessage("loop: vid=%s", describe_timestamp(vdiff));
+                    sts_t vdiff = vid.timestamp - last_vid;
+                    dlmessage("loop: vid=%s", describe_sts(vdiff));
                     if (vdiff<=0)
-                        dlexit("video went back in time: %s", describe_timestamp(vdiff));
+                        dlexit("video went back in time: %s", describe_sts(vdiff));
                 }
                 last_vid = vid.timestamp;
                 last_aud = aud.timestamp;
@@ -1156,7 +1156,7 @@ int main(int argc, char *argv[])
 
         /* report timing statistics */
         if (verbose>=1)
-            dlmessage("\nmean decode time=%.1fms, mean render time=%.1fms (frame period %.1fms)", (decodetime/framenum)/1000.0, (queuetime/queuenum)/1000.0, 1000.0/framerate);
+            dlmessage("\nmean decode time=%.2fms, mean render time=%.2fms (frame period %.2fms)", (decodetime/framenum)/1000.0, (queuetime/queuenum)/1000.0, 1000.0/framerate);
 
         /* tidy up */
         delete source;

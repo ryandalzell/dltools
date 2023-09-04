@@ -24,7 +24,7 @@ extern "C" {
 /* decoder data types */
 typedef struct {
     size_t size;
-    tstamp_t timestamp;
+    sts_t timestamp;
     unsigned long long decode_time;
     unsigned long long render_time;
 } decode_t;
@@ -52,8 +52,8 @@ protected:
     unsigned char *data;
 
     /* timestamp variables */
-    tstamp_t timestamp;
-    long long last_pts;
+    sts_t timestamp;
+    sts_t last_sts;
     int frames_since_pts;
 
     /* verbose level */

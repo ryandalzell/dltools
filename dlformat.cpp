@@ -106,7 +106,7 @@ size_t dltstream::read(unsigned char *buf, size_t bytes)
         size = next_pes_packet_data(buf, &new_pts, pid, 0, source, token);
         if (new_pts>=0) {
             pts = new_pts;
-            dlmessage("new pts=%s", describe_timestamp(new_pts));
+            dlmessage("new pts=%s", describe_pts(new_pts));
         }
     } while (pts<0);
     return size;
@@ -126,7 +126,8 @@ const unsigned char *dltstream::read(size_t *bytes)
 
 long long int dltstream::get_timestamp()
 {
-    return pts;
+    /* return in system time */
+    return 2*pts;
 }
 
 #ifdef HAVE_FFMPEG

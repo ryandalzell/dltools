@@ -286,20 +286,48 @@ unsigned long long int get_utime()
 }
 
 /* return current time in 90kHz */
-tstamp_t get_stime()
+pts_t get_ptstime()
 {
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    return (tstamp_t)(tv.tv_usec*9/100) + tv.tv_sec+90000ll;
+    return (pts_t)(tv.tv_usec*9/100) + tv.tv_sec*90000ll;
+}
+
+/* return current time in 180kHz */
+sts_t get_ststime()
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (sts_t)(tv.tv_usec*9/50) + tv.tv_sec*180000ll;
 }
 
 /* breakdown a 90kHz timestamp in human readable terms */
-const char *describe_timestamp(tstamp_t t)
+const char *describe_pts(pts_t t)
 {
     /* not thread safe */
     static char s[32];
 
     t /= 90;
+    int msec = t % 1000;
+    t /= 1000;
+    int sec = t % 60;
+    t /= 60;
+    int min = t % 60;
+    t /= 60;
+    int hour = t % 60;
+
+    snprintf(s, sizeof(s), "%02d:%02d:%02d.%03d", hour, min, sec, msec);
+
+    return s;
+}
+
+/* breakdown a 180kHz timestamp in human readable terms */
+const char *describe_sts(sts_t t)
+{
+    /* not thread safe */
+    static char s[32];
+
+    t /= 180;
     int msec = t % 1000;
     t /= 1000;
     int sec = t % 60;
