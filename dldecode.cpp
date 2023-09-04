@@ -158,10 +158,10 @@ int dlmpeg2::attach(dlformat *f)
                 /* read a chunk of data from input */
                 read = format->read(data, size);
                 if (read>0) {
-                    mpeg2_buffer(mpeg2dec, data, data+read);
                     /* tag with most recent available timestamp */
                     tstamp_t pts = format->get_timestamp();
                     mpeg2_tag_picture(mpeg2dec, (uint32_t)pts, uint32_t(pts>>32));
+                    mpeg2_buffer(mpeg2dec, data, data+read);
                 }
                 break;
 
@@ -198,10 +198,10 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
                     read = format->read(data, size);
                 }
                 if (read>0) {
-                    mpeg2_buffer(mpeg2dec, data, data+read);
                     /* tag with most recent available timestamp */
                     tstamp_t pts = format->get_timestamp();
                     mpeg2_tag_picture(mpeg2dec, (uint32_t)pts, uint32_t(pts>>32));
+                    mpeg2_buffer(mpeg2dec, data, data+read);
                 } else
                     return results;
                 break;
@@ -215,12 +215,12 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
                     tstamp_t pts = -1;
                     if (info->current_picture)
                         pts = ((tstamp_t)(info->current_picture->tag2)<<32) | (tstamp_t)info->current_picture->tag;
-                    if (pts<0 || pts<=last_pts) {
+                    if (pts<0 || pts==last_pts) {
                         /* extrapolate a timestamp if necessary */
                         pts = last_pts + llround(90000.0/framerate);
                         //dlmessage("calc video pts=%s delta=%lld", describe_timestamp(pts), llround(90000.0/framerate));
                     } //else
-                        //dlmessage("new video pts=%s", describe_timestamp(pts));
+                        //dlmessage("new  video pts=%s delta=%lld", describe_timestamp(pts), pts-last_pts);
                     results.timestamp = last_pts = pts;
 
                     return results;

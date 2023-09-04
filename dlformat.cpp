@@ -102,18 +102,21 @@ size_t dltstream::read(unsigned char *buf, size_t bytes)
 
     /* on first read of the data stream skip until the pts is initialised */
     do {
-        long long new_pts;
+        long long new_pts = -1ll;
         size = next_pes_packet_data(buf, &new_pts, pid, 0, source, token);
-        if (new_pts>=0)
+        if (new_pts>=0) {
             pts = new_pts;
+            dlmessage("new pts=%s", describe_timestamp(new_pts));
+        }
     } while (pts<0);
     return size;
 }
 
 const unsigned char *dltstream::read(size_t *bytes)
 {
+    /* on first read of the data stream skip until the pts is initialised */
     do {
-        long long new_pts;
+        long long new_pts = -1ll;
         *bytes = next_pes_packet_data(data, &new_pts, pid, 0, source, token);
         if (new_pts>=0)
             pts = new_pts;
