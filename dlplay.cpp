@@ -736,7 +736,7 @@ int main(int argc, char *argv[])
             /* find mode for given width and height */
             while (iterator->Next(&mode) == S_OK) {
                 mode->GetFrameRate(&framerate_duration, &framerate_scale);
-                if (verbose>=1)
+                if (verbose>=2)
                     dlmessage("mode available: %ldx%ld%c%.2f", mode->GetWidth(), mode->GetHeight(), mode->GetFieldDominance()!=bmdProgressiveFrame? 'i' : 'p', (double)framerate_scale/framerate_duration);
                 if (mode->GetWidth()==dis_width && mode->GetHeight()==dis_height) {
                     if ((mode->GetFieldDominance()==bmdProgressiveFrame) ^ interlaced) {
@@ -834,6 +834,8 @@ int main(int argc, char *argv[])
         int queuenum = 0;
         int framenum = 0;
         int blocknum = 0;
+        unsigned long long queuetime = 0;
+        unsigned long long decodetime = 0;
         while (true) {
 
             /* check for user input */
@@ -946,7 +948,9 @@ int main(int argc, char *argv[])
 
             /* enqueue previous frame */
             if (frame && video) {
+                unsigned long long start = get_utime();
                 HRESULT result = output->ScheduleVideoFrame(frame, vid.timestamp, lround(90000.0/framerate), 90000);
+                queuetime += get_utime() - start;
                 if (result != S_OK) {
                     switch (result) {
                         case E_ACCESSDENIED : fprintf(stderr, "%s: error: frame %d: video output disabled when queueing video frame\n", appname, queuenum); break;
@@ -982,6 +986,8 @@ int main(int argc, char *argv[])
 
             /* decode the next frame */
             if (video) {
+                unsigned long long start = get_utime();
+
                 /* allocate a new frame object */
                 HRESULT result = output->CreateVideoFrame(pic_width, pic_height, pic_width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame);
                 if (result!=S_OK)
@@ -1001,6 +1007,7 @@ int main(int argc, char *argv[])
                         restart = 1; /* wait for next sequence */
                     break;
                 }
+                decodetime += get_utime() - start;
                 video_start_time = mmin(vid.timestamp, video_start_time);
                 video_end_time = mmax(vid.timestamp, video_end_time);
 
@@ -1149,7 +1156,7 @@ int main(int argc, char *argv[])
 
         /* report timing statistics */
         if (verbose>=1)
-            dlmessage("\nmean decode time=%.1fms, mean render time=%.1fms", 0.0, 0.0);
+            dlmessage("\nmean decode time=%.1fms, mean render time=%.1fms (frame period %.1fms)", (decodetime/framenum)/1000.0, (queuetime/queuenum)/1000.0, 1000.0/framerate);
 
         /* tidy up */
         delete source;
