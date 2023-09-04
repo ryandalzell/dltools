@@ -172,7 +172,7 @@ int next_pes_packet_data(unsigned char *data, long long *pts, int pid, int start
             /* look for pts and dts */
             int pts_dts_flags = packet[ptr+7] >> 6;
             if (pts_dts_flags==2 || pts_dts_flags==3) {
-                long long pts3 = (packet[ptr+9] >> 1) && 0x7;
+                long long pts3 = (packet[ptr+9] >> 1) & 0x7;
                 long long pts2 = (packet[ptr+10] << 7 | (packet[ptr+11] >> 1));
                 long long pts1 = (packet[ptr+12] << 7 | (packet[ptr+13] >> 1));
                 *pts = (pts3<<30) | (pts2<<15) | pts1;
