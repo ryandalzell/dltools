@@ -1106,25 +1106,36 @@ int main(int argc, char *argv[])
             }
 
             /* loop debugging */
-            if (verbose>=2) {
+            if (1) {
                 static sts_t last_vid, last_aud;
                 if (last_vid && last_aud) {
                     sts_t vdiff = vid.timestamp - last_vid;
                     sts_t adiff = aud.timestamp - last_aud;
-                    char v[32] = {0}, a[32] = {0};
-                    strncpy(v, describe_sts(vdiff), sizeof(v)-1);
-                    strncpy(a, describe_sts(adiff), sizeof(a)-1);
-                    dlmessage("loop: vid=%s aud=%s", v, a);
-                    if (video && vdiff<=0)
-                        dlexit("video went back in time: %s", describe_sts(vdiff));
-                    if (audio && adiff<0)
-                        dlexit("audio went back in time: %s", describe_sts(adiff));
+                    if (vdiff<0  || adiff<0) {
+                        char v[32] = {0}, a[32] = {0};
+                        strncpy(v, describe_sts(vdiff), sizeof(v)-1);
+                        strncpy(a, describe_sts(adiff), sizeof(a)-1);
+                        if (verbose>=2)
+                            dlmessage("loop: vid=%s aud=%s", v, a);
+                        if (vdiff<0)
+                            dlmessage("video went back in time: %s", v);
+                        if (adiff<0)
+                            dlmessage("audio went back in time: %s", a);
+                        if (1) {
+                            exit = 1;
+                            break;
+                        }
+                    }
                 }
                 else if (last_vid) {
                     sts_t vdiff = vid.timestamp - last_vid;
-                    dlmessage("loop: vid=%s", describe_sts(vdiff));
-                    if (vdiff<=0)
-                        dlexit("video went back in time: %s", describe_sts(vdiff));
+                    if (verbose>=2)
+                        dlmessage("loop: vid=%s", describe_sts(vdiff));
+                    if (vdiff<0) {
+                        dlmessage("video went back in time: %s", describe_sts(vdiff));
+                        exit = 1;
+                        break;
+                    }
                 }
                 last_vid = vid.timestamp;
                 last_aud = aud.timestamp;
