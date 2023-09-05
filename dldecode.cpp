@@ -129,6 +129,8 @@ dlmpeg2::dlmpeg2()
         dlexit("failed to initialise libmpeg2");
     info = mpeg2_info(mpeg2dec);
     mpeg2_accel(MPEG2_ACCEL_DETECT);
+    /* don't assume timestamps start from zero */
+    last_sts = -1;
 }
 
 dlmpeg2::~dlmpeg2()
@@ -215,12 +217,24 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
                     sts_t sts = -1;
                     if (info->current_picture)
                         sts = ((sts_t)(info->current_picture->tag2)<<32) | (sts_t)info->current_picture->tag;
-                    if (sts<0 || sts==last_sts) {
-                        /* extrapolate a timestamp if necessary */
+                    if (sts<0 && last_sts<0) {
+                        /* first timestamp will be zero if not provided */
+                        sts = 0;
+                        //dlmessage("init video sts=%s", describe_sts(sts));
+                    } else if (sts<0 || sts==last_sts) {
+                        /* extrapolate a timestamp if a new one not provided */
                         sts = last_sts + llround(180000.0/framerate);
                         //dlmessage("calc video sts=%s delta=%lld", describe_sts(sts), llround(180000.0/framerate));
-                    } //else
+                    } else if (sts<last_sts) {
+                        /* this should not happen, timestamps should monotonically increase,
+                         * also this can be caused by a bug in libmpeg2 overwritting the tag */
+                        sts = last_sts + llround(180000.0/framerate);
+                        //dlmessage("calc video sts=%s delta=%lld", describe_sts(sts), llround(180000.0/framerate));
+                    } else {
+                        /* use provided timestamp */
+                        ;
                         //dlmessage("new  video sts=%s delta=%lld", describe_sts(sts), sts-last_sts);
+                    }
                     results.timestamp = last_sts = sts;
 
                     return results;
