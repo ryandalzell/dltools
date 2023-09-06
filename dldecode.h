@@ -205,6 +205,7 @@ public:
     dlffvideo(enum AVCodecID id);
     ~dlffvideo();
 
+    void init();
     virtual int attach(dlformat *format);
     bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);

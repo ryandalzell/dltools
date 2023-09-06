@@ -855,16 +855,12 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
 #ifdef HAVE_FFMPEG
 dlffvideo::dlffvideo()
 {
-    codeccontext = NULL;
-    frame = NULL;
-    size = 4096;
-    errorstring = (char *) malloc(AV_ERROR_MAX_STRING_SIZE);
-    codecid = AV_CODEC_ID_H264; /* default codec is h.264 */
+    init();
 }
 
 dlffvideo::dlffvideo(enum AVCodecID id)
 {
-    dlffvideo();
+    init();
     codecid = id;
 }
 
@@ -873,6 +869,15 @@ dlffvideo::~dlffvideo()
     av_frame_free(&frame);
     avcodec_free_context(&codeccontext);
     free(errorstring);
+}
+
+void dlffvideo::init()
+{
+    codeccontext = NULL;
+    frame = NULL;
+    size = 4096;
+    errorstring = (char *) malloc(AV_ERROR_MAX_STRING_SIZE);
+    codecid = AV_CODEC_ID_H264; /* default codec is h.264 */
 }
 
 int dlffvideo::attach(dlformat* f)
