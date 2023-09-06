@@ -780,6 +780,7 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                 yuv[1] = de265_get_image_plane(image, 1, &stride);
                 yuv[2] = de265_get_image_plane(image, 2, &stride);
 
+#ifdef HAVE_LIBDE265_CUSTOM
                 /* get poc and field order info from decoder */
                 int poc = de265_get_image_picture_order_count(image);
                 enum de265_field_order field_order = de265_get_image_field_order(image);
@@ -807,6 +808,9 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                         top_field = (poc&1)==0;
                         break;
                 }
+#else
+                int top_field = 1;
+#endif
 
                 /* deinterlace */
                 if (top_field==top_field_first) {

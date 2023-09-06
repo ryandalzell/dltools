@@ -624,6 +624,11 @@ int main(int argc, char *argv[])
                 vid_fmt->attach(source);
                 video = new dlffvideo(AV_CODEC_ID_H265);
                 videoonly = 1;
+#elif HAVE_LIBDE265
+                vid_fmt = new dlestream;
+                vid_fmt->attach(source);
+                video = new dlhevc;
+                videoonly = 1;
 #else
                 dlexit("error: no support for hevc decoder in this build");
 #endif
