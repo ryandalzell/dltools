@@ -106,7 +106,7 @@ size_t dltstream::read(unsigned char *buf, size_t bytes)
         size = next_pes_packet_data(buf, &new_pts, pid, 0, source, token);
         if (new_pts>=0) {
             pts = new_pts;
-            dlmessage("new pts=%s", describe_pts(new_pts));
+            //dlmessage("new pts=%s", describe_pts(new_pts));
         }
     } while (pts<0);
     return size;
