@@ -249,6 +249,211 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
     return results;
 }
 
+const uint8_t ff_reverse[256] = {
+    0x00,0x80,0x40,0xC0,0x20,0xA0,0x60,0xE0,0x10,0x90,0x50,0xD0,0x30,0xB0,0x70,0xF0,
+    0x08,0x88,0x48,0xC8,0x28,0xA8,0x68,0xE8,0x18,0x98,0x58,0xD8,0x38,0xB8,0x78,0xF8,
+    0x04,0x84,0x44,0xC4,0x24,0xA4,0x64,0xE4,0x14,0x94,0x54,0xD4,0x34,0xB4,0x74,0xF4,
+    0x0C,0x8C,0x4C,0xCC,0x2C,0xAC,0x6C,0xEC,0x1C,0x9C,0x5C,0xDC,0x3C,0xBC,0x7C,0xFC,
+    0x02,0x82,0x42,0xC2,0x22,0xA2,0x62,0xE2,0x12,0x92,0x52,0xD2,0x32,0xB2,0x72,0xF2,
+    0x0A,0x8A,0x4A,0xCA,0x2A,0xAA,0x6A,0xEA,0x1A,0x9A,0x5A,0xDA,0x3A,0xBA,0x7A,0xFA,
+    0x06,0x86,0x46,0xC6,0x26,0xA6,0x66,0xE6,0x16,0x96,0x56,0xD6,0x36,0xB6,0x76,0xF6,
+    0x0E,0x8E,0x4E,0xCE,0x2E,0xAE,0x6E,0xEE,0x1E,0x9E,0x5E,0xDE,0x3E,0xBE,0x7E,0xFE,
+    0x01,0x81,0x41,0xC1,0x21,0xA1,0x61,0xE1,0x11,0x91,0x51,0xD1,0x31,0xB1,0x71,0xF1,
+    0x09,0x89,0x49,0xC9,0x29,0xA9,0x69,0xE9,0x19,0x99,0x59,0xD9,0x39,0xB9,0x79,0xF9,
+    0x05,0x85,0x45,0xC5,0x25,0xA5,0x65,0xE5,0x15,0x95,0x55,0xD5,0x35,0xB5,0x75,0xF5,
+    0x0D,0x8D,0x4D,0xCD,0x2D,0xAD,0x6D,0xED,0x1D,0x9D,0x5D,0xDD,0x3D,0xBD,0x7D,0xFD,
+    0x03,0x83,0x43,0xC3,0x23,0xA3,0x63,0xE3,0x13,0x93,0x53,0xD3,0x33,0xB3,0x73,0xF3,
+    0x0B,0x8B,0x4B,0xCB,0x2B,0xAB,0x6B,0xEB,0x1B,0x9B,0x5B,0xDB,0x3B,0xBB,0x7B,0xFB,
+    0x07,0x87,0x47,0xC7,0x27,0xA7,0x67,0xE7,0x17,0x97,0x57,0xD7,0x37,0xB7,0x77,0xF7,
+    0x0F,0x8F,0x4F,0xCF,0x2F,0xAF,0x6F,0xEF,0x1F,0x9F,0x5F,0xDF,0x3F,0xBF,0x7F,0xFF,
+    };
+
+dlpcm::dlpcm()
+{
+    audio_packet_size = 0;
+    number_channels = 0;
+    bits_per_sample = 0;
+    pkt = NULL;
+    start = end = NULL;
+}
+
+dlpcm::~dlpcm()
+{
+    if (pkt)
+        free(pkt);
+}
+
+int dlpcm::attach(dlformat *f)
+{
+    /* attach the input source */
+    format = f;
+
+    /* allocate the read buffer */
+    size = 184;
+    data = (unsigned char *) malloc(size);
+
+    /* find the audio format */
+    int read = format->read(data, size);    /* the first read will sync to the start of a PES packet */
+    if (read==0) {
+        if (format->get_source()->eof() || format->get_source()->error()) {
+            dlmessage("failed to sync s302m audio");
+            return -1;
+        }
+    }
+
+    sts_t sts = format->get_timestamp();
+    if (sts>=0) {
+        last_sts = sts;
+        frames_since_pts = 0;
+    }
+
+    /* decode aes3 header */
+    audio_packet_size = data[0]<<8 | data[1];
+    number_channels = (data[2]>>6) & 0x3;
+    number_channels = 2+2*number_channels;
+    //int channel_identification = (data[3] & 0x3)<<6 | data[2]>>2;
+    bits_per_sample = (data[3] >> 4) & 0x3;
+    bits_per_sample = 16+4*bits_per_sample;
+    if (verbose>=1)
+        dlmessage("audio format is 48kHz x%d channels of %d-bit (packet size %d)", number_channels, bits_per_sample, audio_packet_size);
+
+    /* allocate the packet buffer */
+    pkt = (unsigned char *) malloc(audio_packet_size);
+
+    /* initialise the read buffer pointers */
+    start = data;
+    end = data + read;
+
+    return 0;
+}
+
+// decode one aes3 data packet into the sample buffer
+decode_t dlpcm::decode(unsigned char *samples, size_t sampsize) // sampsize is in bytes.
+{
+    decode_t results = {0, -1ll, 0ll, 0ll};
+
+    size_t numsamps = 0;
+    do {
+
+        if (start==end) {
+            /* read from input and check for exceptions */
+            int read = format->read(data, size);
+            if (read==0) {
+                if (format->get_source()->error()) {
+                    dlmessage("error reading input stream \"%s\": %s", format->get_source()->name(), strerror(errno));
+                    results.size = 0;
+                    return results;
+                }
+                if (format->get_source()->eof()) {
+                    results.size = 0;
+                    return results;
+                }
+            }
+
+            /* look for a new timestamp, should be one every pes packet */
+            sts_t sts = format->get_timestamp();
+            if (sts>=0 && sts>last_sts) {
+                results.timestamp = last_sts = sts;
+                frames_since_pts = 0;
+                //dlmessage("new audio sts=%s", describe_sts(sts));
+            }
+
+            /* finally update the read buffer pointers */
+            start = data;
+            end = data + read;
+        } else {
+            /* this actually only happens after the attach(),
+             * so use the timestamp from there for the first packet */
+            results.timestamp = last_sts;
+        }
+
+        /* we are pointing at the aes3 data header initially */
+        size_t new_aps = data[0]<<8 | data[1];
+        if (new_aps > audio_packet_size)
+            pkt = (unsigned char *)realloc(pkt, new_aps);
+        audio_packet_size = new_aps;
+        if (((data[2]>>6) & 0x3) *2+2 != number_channels) {
+            dlmessage("aes3 data header changed");
+            break;
+        }
+        //int channel_identification = (data[3] & 0x3)<<6 | data[2]>>2;
+        if (((data[3] >> 4) & 0x3) *4+16 != bits_per_sample) {
+            dlmessage("aes3 data header changed");
+            break;
+        }
+
+        start += 4;
+
+        /* fill an aes3 data packet from input */
+        //dlmessage("start=%d end=%d", start-data, end-data);
+        for (size_t i=0; i<audio_packet_size; ) {
+            if (start==end) {
+                /* read from input and check for exceptions */
+                int read = format->read(data, size);
+                if (read==0) {
+                    if (format->get_source()->error()) {
+                        dlmessage("error reading input stream \"%s\": %s", format->get_source()->name(), strerror(errno));
+                        results.size = 0;
+                        return results;
+                    }
+                    if (format->get_source()->eof()) {
+                        results.size = 0;
+                        return results;
+                    }
+                }
+
+                /* finally update the read buffer pointers */
+                start = data;
+                end = data + read;
+            }
+
+            size_t chunksize = mmin(audio_packet_size-i, (size_t)(end-start));
+            memcpy(pkt+i, start, chunksize);
+            start += chunksize;
+            i += chunksize;
+        }
+
+        /* sanity check that audio packet is all of pes packet */
+        //if (start!=end)
+        //    dlmessage("start=%d end=%d", start-data, end-data);
+
+        /* copy data from aes3 buffer to audio buffer */
+        for (unsigned char *ptr=pkt; ptr<pkt+audio_packet_size && numsamps<sampsize; numsamps+=4) {
+            switch (bits_per_sample) {
+                case 16:
+                    samples[numsamps+0] = ff_reverse[ptr[0]];
+                    samples[numsamps+1] = ff_reverse[ptr[1]];
+                    samples[numsamps+2] = ff_reverse[(ptr[2]<<4) | (ptr[3]>>4)];
+                    samples[numsamps+3] = ff_reverse[(ptr[3]<<4) | (ptr[4]>>4)];
+                    ptr += 5;
+                    break;
+                case 24:
+                    samples[numsamps+0] = ff_reverse[ptr[1]];
+                    samples[numsamps+1] = ff_reverse[ptr[2]];
+                    samples[numsamps+2] = ff_reverse[((ptr[4]&0xf)<<4) | ((ptr[5]&0xf0)>>4)];
+                    samples[numsamps+3] = ff_reverse[((ptr[5]&0xf)<<4) | ((ptr[6]&0xf0)>>4)];
+                    ptr += 7;
+                    break;
+                default:
+                    dlmessage("unsupported 302m sample size: %d", bits_per_sample);
+            }
+        }
+
+    } while (0); //(numsamps<sampsize);
+
+    results.size += numsamps / 2; /* number of samples */
+    frames_since_pts += numsamps /4; /* number of sample frames */
+
+    /* extrapolate a timestamp if necessary,
+     * should not be required according to the spec para 6.10 */
+    if (results.timestamp<0) {
+        results.timestamp = last_sts + (sts_t)(frames_since_pts*180000ll/48000ll);
+        dlmessage("ext audio sts=%s", describe_sts(results.timestamp));
+    }
+
+    return results;
+}
+
 dlmpg123::dlmpg123()
 {
     /* initialise the mpeg1 audio decoder */

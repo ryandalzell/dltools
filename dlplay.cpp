@@ -481,7 +481,7 @@ int main(int argc, char *argv[])
                 /* look for a video pid */
                 int stream_type = 0;
                 if (!audioonly) {
-                    int video_stream_types[] = { 0x02, 0x80, 0x1B, 0x24, 0x06 };
+                    int video_stream_types[] = { 0x02, 0x80, 0x1B, 0x24 };
                     vid_pid = find_pid_for_stream_type(video_stream_types, sizeof(video_stream_types)/sizeof(int), &stream_type, source, 0);
                     source->rewind();
                 }
@@ -499,7 +499,6 @@ int main(int argc, char *argv[])
                             break;
 
                         case 0x24:
-                        case 0x06:
 #ifdef HAVE_FFMPEG
                             video = new dlffvideo(AV_CODEC_ID_HEVC);
 #elif HAVE_LIBDE265
@@ -525,7 +524,7 @@ int main(int argc, char *argv[])
 
                 /* look for an audio pid */
                 if (!videoonly) {
-                    int audio_stream_types[] = { 0x03, 0x04, 0x81, 0x1C };
+                    int audio_stream_types[] = { 0x03, 0x04, 0x81, 0x1C, 0x06 };
                     //int audio_stream_types[] = { 0x03, 0x04 };
                     aud_pid = find_pid_for_stream_type(audio_stream_types, sizeof(audio_stream_types)/sizeof(int), &stream_type, source, 0);
                     source->rewind();
@@ -548,6 +547,12 @@ int main(int argc, char *argv[])
                         case 0x81:
                             audio = new dlliba52;
                             aud_size = 6*256*2*sizeof(uint16_t);
+                            break;
+
+                        case 0x06:
+                            /* assume this is smpte302m */
+                            audio = new dlpcm;
+                            aud_size = 32768; //192*2*2*sizeof(uint16_t);
                             break;
 
                         default:

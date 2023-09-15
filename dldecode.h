@@ -127,6 +127,28 @@ protected:
     const mpeg2_info_t *info;
 };
 
+/* pcm class */
+class dlpcm : public dldecode
+{
+public:
+    dlpcm();
+    ~dlpcm();
+
+    virtual int attach(dlformat *format);
+    bool atend();
+    virtual decode_t decode(unsigned char *buffer, size_t bufsize);
+
+public:
+    virtual const char *description() { return "pcm audio"; }
+
+protected:
+    size_t audio_packet_size;
+    int number_channels;
+    int bits_per_sample;
+    unsigned char *pkt;
+    unsigned char *start, *end;
+};
+
 /* mpg123 class */
 class dlmpg123 : public dldecode
 {
