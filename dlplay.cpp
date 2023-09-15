@@ -667,6 +667,9 @@ int main(int argc, char *argv[])
 
         /* initialise the video decoder */
         if (!audioonly) {
+            /* set the verbosity */
+            video->set_verbose(verbose);
+
             /* figure out the mode to set */
             if (video->attach(vid_fmt)<0)
                 dlexit("failed to initialise the video decoder");
@@ -675,13 +678,13 @@ int main(int argc, char *argv[])
             interlaced = video->interlaced;
             framerate = video->framerate;
             pixelformat = video->pixelformat;
-
-            /* set the verbosity */
-            video->set_verbose(verbose);
         }
 
         /* initialise the audio encoder */
         if (!videoonly && aud_pid) {
+            /* set the verbosity */
+            audio->set_verbose(verbose);
+
             if (audio->attach(aud_fmt)<0) {
                 dlmessage("failed to initialise the audio decoder");
                 delete audio;
