@@ -1151,6 +1151,7 @@ int dlffvideo::attach(dlformat* f)
             s -= ret;
 
             if (packet->size) {
+                packet->pts = (int64_t) format->get_timestamp();
                 ret = avcodec_send_packet(codeccontext, packet);
                 if (ret < 0)
                     dlexit("failed to send a packet for decoding: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret));
@@ -1223,6 +1224,7 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
             s -= ret;
 
             if (packet->size) {
+                packet->pts = (int64_t) format->get_timestamp();
                 ret = avcodec_send_packet(codeccontext, packet);
                 if (ret < 0)
                     dlexit("failed to send a packet for decoding");
@@ -1248,13 +1250,22 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
             /* copy frame to uyvy buffer */
             convert_yuv_uyvy((const unsigned char **)frame->data, uyvy, width, height, pixelformat);
             results.size = width*height*2;
-            /* get pts from decoder */
-            sts_t sts = 2*frame->pts;
+
+            /* get timestamp from decoder */
+            sts_t sts = frame->pts;
             if (sts<0 || sts<=last_sts) {
                 /* extrapolate a timestamp if necessary */
-                sts = last_sts + llround(180000.0/framerate);
+                frames_since_pts++;
+                //sts = last_sts + frames_since_pts * llround(180000.0/framerate); /* this is the more correct version */
+                sts = last_sts = last_sts + llround(180000.0/framerate); /* this one covers up a bug in the passing in of timestamps */
+                //dlmessage("ext video sts=%s", describe_sts(sts));
+            } else {
+                last_sts = sts;
+                frames_since_pts = 0;
+                //dlmessage("new video sts=%s", describe_sts(sts));
             }
-            results.timestamp = last_sts = sts;
+
+            results.timestamp = sts;
 
             /* measure render time */
             results.render_time = get_utime() - decode;
