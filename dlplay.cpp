@@ -819,6 +819,10 @@ int main(int argc, char *argv[])
         sts_t audio_start_time = 1ll<<35;
         sts_t audio_end_time = 0ll;
 
+        /* timestamp sanity checking */
+        sts_t last_vid = 0;
+        sts_t last_aud = 0;
+
         /* video frame history buffer */
         int num_history_frames = 0;
         const int MAX_HISTORY_FRAMES = 30;
@@ -1120,7 +1124,6 @@ int main(int argc, char *argv[])
 
             /* loop debugging */
             if (1) {
-                static sts_t last_vid, last_aud;
                 if (last_vid && last_aud) {
                     sts_t vdiff = vid.timestamp - last_vid;
                     sts_t adiff = aud.timestamp - last_aud;

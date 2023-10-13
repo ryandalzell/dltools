@@ -196,8 +196,8 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
                 /* read a chunk of data from input */
                 read = format->read(data, size);
                 if (read==0 || format->get_source()->eof()) {
-                    format->get_source()->rewind();
-                    read = format->read(data, size);
+                    results.size = 0;
+                    return results;
                 }
                 if (read>0) {
                     /* tag with most recent available timestamp */
