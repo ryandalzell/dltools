@@ -131,12 +131,15 @@ int next_stream_packet(unsigned char *data, int vid_pid, int aud_pid, int *pid, 
 
 /* read next packet from transport which is part of a pes packet
  * return packet length or zero on failure */
-int next_pes_packet_data(unsigned char *data, long long *pts, int pid, int start, dlsource *source, dltoken_t token)
+int next_pes_packet_data(unsigned char *data, long long *pts, long long *dts, int pid, int start, dlsource *source, dltoken_t token)
 {
     unsigned char packet[188];
 
     /* default no pts */
-    *pts = -1;
+    if (pts)
+        *pts = -1;
+    if (dts)
+        *dts = -1;
 
     /* find next whole transport stream packet with correct pid */
     while (1) {
@@ -175,7 +178,15 @@ int next_pes_packet_data(unsigned char *data, long long *pts, int pid, int start
                 long long pts3 = (packet[ptr+9] >> 1) & 0x7;
                 long long pts2 = (packet[ptr+10] << 7 | (packet[ptr+11] >> 1));
                 long long pts1 = (packet[ptr+12] << 7 | (packet[ptr+13] >> 1));
-                *pts = (pts3<<30) | (pts2<<15) | pts1;
+                if (pts)
+                    *pts = (pts3<<30) | (pts2<<15) | pts1;
+            }
+            if (pts_dts_flags==3) {
+                long long dts3 = (packet[ptr+14] >> 1) & 0x7;
+                long long dts2 = (packet[ptr+15] << 7 | (packet[ptr+16] >> 1));
+                long long dts1 = (packet[ptr+17] << 7 | (packet[ptr+18] >> 1));
+                if (dts)
+                    *dts = (dts3<<30) | (dts2<<15) | dts1;
             }
 
             int pes_header_data_length = packet[ptr+8];

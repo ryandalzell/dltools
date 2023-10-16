@@ -54,7 +54,13 @@ const unsigned char *dlformat::read(size_t *bytes)
     return data;
 }
 
-long long dlformat::get_timestamp()
+long long dlformat::get_pts()
+{
+    /* only implemented in sub-classes */
+    return -1ll;
+}
+
+long long dlformat::get_dts()
 {
     /* only implemented in sub-classes */
     return -1ll;
@@ -72,7 +78,7 @@ dltstream::dltstream(int p)
 {
     source = NULL;
     pid = p;
-    pts = -1ll;
+    pts = dts = -1ll;
     data = NULL;
     size = 0;
 }
@@ -102,12 +108,12 @@ size_t dltstream::read(unsigned char *buf, size_t bytes)
 
     /* on first read of the data stream skip until the pts is initialised */
     do {
-        long long new_pts = -1ll;
-        size = next_pes_packet_data(buf, &new_pts, pid, 0, source, token);
-        if (new_pts>=0) {
+        long long new_pts = -1ll, new_dts = -1ll;
+        size = next_pes_packet_data(buf, &new_pts, &new_dts, pid, 0, source, token);
+        if (new_pts>=0)
             pts = new_pts;
-            //dlmessage("new pts=%s", describe_pts(new_pts));
-        }
+        if (new_dts>=0)
+            dts = new_dts;
     } while (pts<0);
     return size;
 }
@@ -116,18 +122,26 @@ const unsigned char *dltstream::read(size_t *bytes)
 {
     /* on first read of the data stream skip until the pts is initialised */
     do {
-        long long new_pts = -1ll;
-        *bytes = next_pes_packet_data(data, &new_pts, pid, 0, source, token);
+        long long new_pts = -1ll, new_dts = -1ll;
+        *bytes = next_pes_packet_data(data, &new_pts, &new_dts, pid, 0, source, token);
         if (new_pts>=0)
             pts = new_pts;
+        if (new_dts>=0)
+            dts = new_dts;
     } while (pts<0);
     return data;
 }
 
-long long int dltstream::get_timestamp()
+long long int dltstream::get_pts()
 {
     /* return in system time */
     return 2*pts;
+}
+
+long long int dltstream::get_dts()
+{
+    /* return in system time */
+    return 2*dts;
 }
 
 #ifdef HAVE_FFMPEG

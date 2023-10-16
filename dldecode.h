@@ -244,8 +244,9 @@ protected:
     AVPacket *packet;
 
     /* data buffer */
-    unsigned char *buf;
-    size_t size;
+    unsigned char *buf, *ptr;
+    size_t bufsize, size;
+    int got_frame;
 
     /* error string */
     char *errorstring;

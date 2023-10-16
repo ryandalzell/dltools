@@ -25,7 +25,8 @@ public:
     virtual const unsigned char *read(size_t *bytes);
 
     /* return most recent timestamp */
-    virtual long long get_timestamp();
+    virtual long long get_pts();
+    virtual long long get_dts();
 
     /* expose source interfaces */
     dlsource *get_source();
@@ -68,14 +69,15 @@ public:
     virtual const unsigned char *read(size_t *bytes);
 
     /* return most recent pts */
-    virtual long long get_timestamp();
+    virtual long long get_pts();
+    virtual long long get_dts();
 
     /* format metadata */
     virtual const char *description() { return "transport stream"; }
 
 protected:
     int pid;
-    long long pts;
+    long long pts, dts;
 };
 
 #ifdef HAVE_FFMPEG

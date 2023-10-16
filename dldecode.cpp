@@ -161,7 +161,7 @@ int dlmpeg2::attach(dlformat *f)
                 read = format->read(data, size);
                 if (read>0) {
                     /* tag with most recent available timestamp */
-                    sts_t sts = format->get_timestamp();
+                    sts_t sts = format->get_pts();
                     mpeg2_tag_picture(mpeg2dec, (uint32_t)sts, uint32_t(sts>>32));
                     mpeg2_buffer(mpeg2dec, data, data+read);
                 }
@@ -201,7 +201,7 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
                 }
                 if (read>0) {
                     /* tag with most recent available timestamp */
-                    sts_t sts = format->get_timestamp();
+                    sts_t sts = format->get_pts();
                     mpeg2_tag_picture(mpeg2dec, (uint32_t)sts, uint32_t(sts>>32));
                     mpeg2_buffer(mpeg2dec, data, data+read);
                 } else
@@ -301,7 +301,7 @@ int dlpcm::attach(dlformat *f)
         }
     }
 
-    sts_t sts = format->get_timestamp();
+    sts_t sts = format->get_pts();
     if (sts>=0) {
         last_sts = sts;
         frames_since_pts = 0;
@@ -351,7 +351,7 @@ decode_t dlpcm::decode(unsigned char *samples, size_t sampsize) // sampsize is i
             }
 
             /* look for a new timestamp, should be one every pes packet */
-            sts_t sts = format->get_timestamp();
+            sts_t sts = format->get_pts();
             if (sts>=0 && sts>last_sts) {
                 results.timestamp = last_sts = sts;
                 frames_since_pts = 0;
@@ -493,7 +493,7 @@ int dlmpg123::attach(dlformat *f)
             }
         }
 
-        sts_t sts = format->get_timestamp();
+        sts_t sts = format->get_pts();
         if (sts>=0) {
             last_sts = sts;
             frames_since_pts = 0;
@@ -539,7 +539,7 @@ decode_t dlmpg123::decode(unsigned char *samples, size_t sampsize)
             }
         }
 
-        sts_t sts = format->get_timestamp();
+        sts_t sts = format->get_pts();
         if (sts>=0 && sts>last_sts) {
             results.timestamp = last_sts = sts;
             frames_since_pts = 0;
@@ -611,7 +611,7 @@ int dlliba52::attach(dlformat *f)
         }
 
         /* look for first pts */
-        sts_t sts = format->get_timestamp();
+        sts_t sts = format->get_pts();
         if (sts>=0) {
             last_sts = sts;
             frames_since_pts = 0;
@@ -689,7 +689,7 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
                 }
             }
 
-            sts_t sts = format->get_timestamp();
+            sts_t sts = format->get_pts();
             if (sts>=0 && sts>last_sts) {
                 last_sts = sts;
                 frames_since_pts = 0;
@@ -824,7 +824,7 @@ int dlhevc::attach(dlformat *f)
             /* read a chunk of input data */
             int n = format->read(data, size);
             if (n) {
-                sts_t timestamp = format->get_timestamp();
+                sts_t timestamp = format->get_pts();
                 err = de265_push_data(ctx, data, n, timestamp, NULL);
                 if (!de265_isOK(err)) {
                     dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
@@ -894,7 +894,7 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                 }
                 if (read>0) {
                     /* use most recent available timestamp */
-                    sts_t timestamp = format->get_timestamp();
+                    sts_t timestamp = format->get_pts();
                     err = de265_push_data(ctx, data, read, timestamp, NULL);
                     if (!de265_isOK(err)) {
                         dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
@@ -956,7 +956,7 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                     }
                     if (read>0) {
                         /* use most recent available timestamp */
-                        sts_t timestamp = format->get_timestamp();
+                        sts_t timestamp = format->get_pts();
                         err = de265_push_data(ctx, data, read, timestamp, NULL);
                         if (!de265_isOK(err)) {
                             dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
@@ -1080,7 +1080,10 @@ void dlffvideo::init()
 {
     codeccontext = NULL;
     frame = NULL;
-    size = 4096;
+    bufsize = 4096;
+    size = 0;
+    ptr = NULL;
+    got_frame = 0;
     errorstring = (char *) malloc(AV_ERROR_MAX_STRING_SIZE);
     codecid = AV_CODEC_ID_H264; /* default codec is h.264 */
 }
@@ -1092,7 +1095,7 @@ int dlffvideo::attach(dlformat* f)
     /* attach the input source */
     format = f;
 
-    /* find avc decoder */
+    /* find required decoder */
     const AVCodec *codec = avcodec_find_decoder(codecid);
     if (!codec)
         dlexit("failed to find %s video decoder", avcodec_get_name(codecid));
@@ -1122,8 +1125,8 @@ int dlffvideo::attach(dlformat* f)
     }
 
     /* initialise a data buffer */
-    buf = (unsigned char *) malloc(size + AV_INPUT_BUFFER_PADDING_SIZE);
-    memset(buf + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+    buf = (unsigned char *) malloc(bufsize + AV_INPUT_BUFFER_PADDING_SIZE);
+    memset(buf + bufsize, 0, AV_INPUT_BUFFER_PADDING_SIZE);
 
     /* init the decoder, with or without reference counting */
     AVDictionary *opts = NULL;
@@ -1135,39 +1138,39 @@ int dlffvideo::attach(dlformat* f)
     }
 
     /* decode the first frame to get the image parameters */
-    int got_frame = 0;
+    got_frame = 0;
     while (!got_frame) {
-        size_t s = format->read(buf, size);
-        if (s==0)
-            break;
+        if (size==0) {
+            size = format->read(buf, bufsize);
+            if (size==0)
+                break;
+            ptr = buf;
+        }
 
         /* use the parser to split the data into frames */
-        uint8_t *d = buf;
-        while (s > 0) { // keep shovelling the rest of the data in after 'got_frame'
-            ret = av_parser_parse2(parser, codeccontext, &packet->data, &packet->size, d, s, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+        ret = av_parser_parse2(parser, codeccontext, &packet->data, &packet->size, ptr, size, format->get_pts(), format->get_dts(), 0);
+        if (ret < 0)
+            dlexit("failed to parse %s data", avcodec_get_name(codecid));
+        ptr += ret;
+        size -= ret;
+
+        if (packet->size) {
+            packet->pts = parser->pts;
+            packet->dts = parser->dts;
+            packet->pos = parser->pos;
+            ret = avcodec_send_packet(codeccontext, packet);
             if (ret < 0)
-                dlexit("failed to parse %s data", avcodec_get_name(codecid));
-            d += ret;
-            s -= ret;
+                dlexit("failed to send a packet for decoding: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret));
 
-            if (packet->size) {
-                packet->pts = (int64_t) format->get_timestamp();
-                ret = avcodec_send_packet(codeccontext, packet);
-                if (ret < 0)
-                    dlexit("failed to send a packet for decoding: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret));
-
-                while (ret >= 0) {
-                    ret = avcodec_receive_frame(codeccontext, frame);
-                    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
-                        break;
-                    else if (ret < 0)
-                        dlexit("error during decoding frame");
-
-                    //dlmessage("pre-frame %3d", codeccontext->frame_number);
-
-                    got_frame = 1;
+            while (ret >= 0) {
+                ret = avcodec_receive_frame(codeccontext, frame);
+                if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
                     break;
-                }
+                else if (ret < 0)
+                    dlexit("error during decoding frame");
+
+                got_frame = 1;
+                break;
             }
         }
     }
@@ -1201,30 +1204,33 @@ int dlffvideo::attach(dlformat* f)
 
 decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
 {
-    decode_t results = {0, 0, 0, 0};
+    decode_t results = {0, -1ll, 0ll, 0ll};
     int ret;
 
     /* start timer */
     unsigned long long start = get_utime();
 
     /* decode the next avc frame */
-    int got_frame = 0;
-    while (!got_frame) {
-        size_t s = format->read(buf, size);
-        if (s==0)
-            break;
+    do {
+        if (size==0) {
+            size = format->read(buf, bufsize);
+            if (size==0)
+                break;
+            ptr = buf;
+        }
 
         /* use the parser to split the data into frames */
-        uint8_t *d = buf;
-        while (s > 0) {
-            ret = av_parser_parse2(parser, codeccontext, &packet->data, &packet->size, d, s, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+        if (!got_frame) {
+            ret = av_parser_parse2(parser, codeccontext, &packet->data, &packet->size, ptr, size, format->get_pts(), format->get_dts(), 0);
             if (ret < 0)
                 dlexit("failed to parse %s data", avcodec_get_name(codecid));
-            d += ret;
-            s -= ret;
+            ptr += ret;
+            size -= ret;
 
             if (packet->size) {
-                packet->pts = (int64_t) format->get_timestamp();
+                packet->pts = parser->pts;
+                packet->dts = parser->dts;
+                packet->pos = parser->pos;
                 ret = avcodec_send_packet(codeccontext, packet);
                 if (ret < 0)
                     dlexit("failed to send a packet for decoding");
@@ -1253,11 +1259,11 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
 
             /* get timestamp from decoder */
             sts_t sts = frame->pts;
-            if (sts<0 || sts<=last_sts) {
+            if (sts<0 || sts==last_sts) {
                 /* extrapolate a timestamp if necessary */
                 frames_since_pts++;
-                //sts = last_sts + frames_since_pts * llround(180000.0/framerate); /* this is the more correct version */
-                sts = last_sts = last_sts + llround(180000.0/framerate); /* this one covers up a bug in the passing in of timestamps */
+                sts = last_sts + frames_since_pts * llround(180000.0/framerate); /* this is the more correct version */
+                //sts = last_sts = last_sts + llround(180000.0/framerate); /* this one covers up a bug in the passing in of timestamps */
                 //dlmessage("ext video sts=%s", describe_sts(sts));
             } else {
                 last_sts = sts;
@@ -1272,7 +1278,9 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
         }
 
         //av_packet_unref(packet);
-    }
+    } while (!got_frame);
+
+    got_frame = 0;
 
     return results;
 }
