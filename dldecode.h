@@ -96,7 +96,7 @@ public:
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
-    virtual const char *description() { return "yuv video"; }
+    virtual const char *description() { return "yuv"; }
 
 private:
     unsigned maxframes;
@@ -119,7 +119,7 @@ public:
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
-    virtual const char *description() { return "mpeg2 video"; }
+    virtual const char *description() { return "mpeg2"; }
 
 protected:
     /* libmpeg2 variables */
@@ -139,7 +139,7 @@ public:
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
-    virtual const char *description() { return "pcm audio"; }
+    virtual const char *description() { return "pcm"; }
 
 protected:
     size_t audio_packet_size;
@@ -160,7 +160,7 @@ public:
     virtual decode_t decode(unsigned char *frame, size_t size);
 
 public:
-    virtual const char *description() { return "mpeg1 audio"; }
+    virtual const char *description() { return "mpeg1"; }
 
 private:
     /* mpg123 variables */
@@ -179,7 +179,7 @@ public:
     virtual decode_t decode(unsigned char *frame, size_t size);
 
 public:
-    virtual const char *description() { return "mpeg2 ac3 audio"; }
+    virtual const char *description() { return "mpeg2 ac3"; }
 
 private:
     /* liba52 variables */
@@ -208,7 +208,7 @@ public:
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
-    virtual const char *description() { return "hevc video"; }
+    virtual const char *description() { return "hevc"; }
 
 protected:
     /* libde265 variables */
@@ -233,7 +233,7 @@ public:
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
-    virtual const char *description() { return codeccontext->codec->long_name; }
+    virtual const char *description() { return codeccontext->codec->name; }
 
 protected:
     /* ffmpeg variables */
@@ -263,7 +263,7 @@ public:
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
-    virtual const char *description() { return codeccontext->codec->long_name; }
+    virtual const char *description() { return codeccontext->codec->name; }
 
 protected:
     /* ffmpeg variables */

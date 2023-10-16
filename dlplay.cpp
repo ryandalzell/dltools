@@ -700,7 +700,7 @@ int main(int argc, char *argv[])
         if (!video && !audio)
             dlexit("error: neither video nor audio to play in file \"%s\"", filename);
 
-        dlmessage("found %s and %s in %s from %s source", video? video->description() : "no video", audio? audio->description() : "no audio", vid_fmt->description(), source->description());
+        dlmessage("info: found %s video and %s audio in %s from %s source", video? video->description() : "no video", audio? audio->description() : "no audio", vid_fmt->description(), source->description());
 
         if (video && verbose>=1)
             dlmessage("info: video format is %dx%d%c%.2f %s", pic_width, pic_height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);

@@ -136,7 +136,6 @@ dlmpeg2::dlmpeg2()
 dlmpeg2::~dlmpeg2()
 {
     if (mpeg2dec) {
-        dlmessage("closing mpeg2 library");
         mpeg2_close(mpeg2dec);
     }
 }
@@ -628,7 +627,7 @@ int dlliba52::attach(dlformat *f)
     /* queue the synchronised data */
     memcpy(ac3_frame, data+sync, read-sync);
     ac3_length = read-sync;
-    dlmessage("found a52 frame of %d bytes, %d in buffer, initial pts=%s", ret, ac3_length, describe_sts(last_sts));
+    //dlmessage("found a52 frame of %d bytes, %d in buffer, initial pts=%s", ret, ac3_length, describe_sts(last_sts));
 
     /* report the format parameters */
     int channels = 0;
@@ -1197,7 +1196,7 @@ int dlffvideo::attach(dlformat* f)
 
     /* dump input information to stderr */
     if (verbose>=1)
-        dlmessage("avc: %dx%d%c%.2f", width, height, interlaced? 'i' : 'p', framerate);
+        dlmessage("video format is %dx%d%c%.2f", width, height, interlaced? 'i' : 'p', framerate);
 
     return 0;
 }
