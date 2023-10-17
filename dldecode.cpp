@@ -1158,8 +1158,9 @@ int dlffvideo::attach(dlformat* f)
             packet->dts = parser->dts;
             packet->pos = parser->pos;
             ret = avcodec_send_packet(codeccontext, packet);
+            /* errors here are not critical until the first frame is decoded
             if (ret < 0)
-                dlexit("failed to send a packet for decoding: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret));
+                dlmessage("failed to send a packet for decoding: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret)); */
 
             while (ret >= 0) {
                 ret = avcodec_receive_frame(codeccontext, frame);
