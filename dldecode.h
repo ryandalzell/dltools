@@ -47,10 +47,6 @@ protected:
     /* data source */
     dlformat *format;
 
-    /* buffer variables */
-    size_t size;
-    unsigned char *data;
-
     /* timestamp variables */
     sts_t timestamp;
     sts_t last_sts;
@@ -84,7 +80,8 @@ protected:
 class dlyuv : public dldecode
 {
 public:
-    dlyuv() { lumaonly = 0; imagesize = NULL; fourcc = NULL; }
+    dlyuv();
+    virtual ~dlyuv();
 
     /* yuv specific options */
     void set_lumaonly(int l) { lumaonly = l; }
@@ -100,6 +97,10 @@ public:
 
 private:
     unsigned maxframes;
+
+    /* buffer variables */
+    size_t size;
+    unsigned char *data;
 
     /* display parameters */
     int lumaonly;
@@ -146,7 +147,7 @@ protected:
     int number_channels;
     int bits_per_sample;
     unsigned char *pkt;
-    unsigned char *start, *end;
+    const unsigned char *start, *end;
 };
 
 /* mpg123 class */
@@ -244,8 +245,8 @@ protected:
     AVPacket *packet;
 
     /* data buffer */
-    unsigned char *buf, *ptr;
-    size_t bufsize, size;
+    size_t size;
+    const unsigned char *ptr;
     int got_frame;
 
     /* error string */

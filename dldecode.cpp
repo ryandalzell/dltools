@@ -16,9 +16,6 @@ dldecode::dldecode()
 {
     /* source */
     format = NULL;
-    /* buffer */
-    size = 0;
-    data = NULL;
     verbose = 0;
     /* timestamp */
     last_sts = 0;
@@ -31,8 +28,6 @@ dldecode::dldecode()
 
 dldecode::~dldecode()
 {
-    if (data)
-        free(data);
 }
 
 int dldecode::attach(dlformat *f)
@@ -50,6 +45,19 @@ void dldecode::set_field_order(int tff)
 void dldecode::set_blank_field(int order)
 {
     blank_field = order;
+}
+
+dlyuv::dlyuv()
+{
+    /* buffer */
+    size = 0;
+    data = NULL;
+}
+
+dlyuv::~dlyuv()
+{
+    if (data)
+        free(data);
 }
 
 int dlyuv::attach(dlformat *f)
@@ -145,24 +153,21 @@ int dlmpeg2::attach(dlformat *f)
     /* attach the input source */
     format = f;
 
-    /* allocate the read buffer */
-    size = 32*1024;
-    data = (unsigned char *) malloc(size);
-
     /* find the first sequence header */
     int seq_found = 0;
-    int read = 1;
+    const unsigned char *data;
+    size_t read = 0;
     do {
         mpeg2_state_t state = mpeg2_parse(mpeg2dec);
         switch (state) {
             case STATE_BUFFER:
                 /* read a chunk of data from input */
-                read = format->read(data, size);
+                data = format->read(&read);
                 if (read>0) {
                     /* tag with most recent available timestamp */
                     sts_t sts = format->get_pts();
                     mpeg2_tag_picture(mpeg2dec, (uint32_t)sts, uint32_t(sts>>32));
-                    mpeg2_buffer(mpeg2dec, data, data+read);
+                    mpeg2_buffer(mpeg2dec, (unsigned char *)data, (unsigned char *)data+read);
                 }
                 break;
 
@@ -187,13 +192,14 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
 {
     decode_t results = {0, -1ll, 0ll, 0ll};
 
-    int read;
+    const unsigned char *data;
+    size_t read;
     do {
         mpeg2_state_t state = mpeg2_parse(mpeg2dec);
         switch (state) {
             case STATE_BUFFER:
                 /* read a chunk of data from input */
-                read = format->read(data, size);
+                data = format->read(&read);
                 if (read==0 || format->get_source()->eof()) {
                     results.size = 0;
                     return results;
@@ -202,7 +208,7 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
                     /* tag with most recent available timestamp */
                     sts_t sts = format->get_pts();
                     mpeg2_tag_picture(mpeg2dec, (uint32_t)sts, uint32_t(sts>>32));
-                    mpeg2_buffer(mpeg2dec, data, data+read);
+                    mpeg2_buffer(mpeg2dec, (unsigned char *)data, (unsigned char *)data+read);
                 } else
                     return results;
                 break;
@@ -287,12 +293,9 @@ int dlpcm::attach(dlformat *f)
     /* attach the input source */
     format = f;
 
-    /* allocate the read buffer */
-    size = 184;
-    data = (unsigned char *) malloc(size);
-
     /* find the audio format */
-    int read = format->read(data, size);    /* the first read will sync to the start of a PES packet */
+    size_t read;
+    const unsigned char *data = format->read(&read);    /* the first read will sync to the start of a PES packet */
     if (read==0) {
         if (format->get_source()->eof() || format->get_source()->error()) {
             dlmessage("failed to sync s302m audio");
@@ -332,11 +335,12 @@ decode_t dlpcm::decode(unsigned char *samples, size_t sampsize) // sampsize is i
     decode_t results = {0, -1ll, 0ll, 0ll};
 
     size_t numsamps = 0;
+    size_t read;
     do {
 
         if (start==end) {
             /* read from input and check for exceptions */
-            int read = format->read(data, size);
+            const unsigned char *data = format->read(&read);
             if (read==0) {
                 if (format->get_source()->error()) {
                     dlmessage("error reading input stream \"%s\": %s", format->get_source()->name(), strerror(errno));
@@ -367,16 +371,16 @@ decode_t dlpcm::decode(unsigned char *samples, size_t sampsize) // sampsize is i
         }
 
         /* we are pointing at the aes3 data header initially */
-        size_t new_aps = data[0]<<8 | data[1];
+        size_t new_aps = start[0]<<8 | start[1];
         if (new_aps > audio_packet_size)
             pkt = (unsigned char *)realloc(pkt, new_aps);
         audio_packet_size = new_aps;
-        if (((data[2]>>6) & 0x3) *2+2 != number_channels) {
+        if (((start[2]>>6) & 0x3) *2+2 != number_channels) {
             dlmessage("aes3 data header changed");
             break;
         }
-        //int channel_identification = (data[3] & 0x3)<<6 | data[2]>>2;
-        if (((data[3] >> 4) & 0x3) *4+16 != bits_per_sample) {
+        //int channel_identification = (start[3] & 0x3)<<6 | start[2]>>2;
+        if (((start[3] >> 4) & 0x3) *4+16 != bits_per_sample) {
             dlmessage("aes3 data header changed");
             break;
         }
@@ -388,7 +392,7 @@ decode_t dlpcm::decode(unsigned char *samples, size_t sampsize) // sampsize is i
         for (size_t i=0; i<audio_packet_size; ) {
             if (start==end) {
                 /* read from input and check for exceptions */
-                int read = format->read(data, size);
+                const unsigned char *data = format->read(&read);
                 if (read==0) {
                     if (format->get_source()->error()) {
                         dlmessage("error reading input stream \"%s\": %s", format->get_source()->name(), strerror(errno));
@@ -477,14 +481,10 @@ int dlmpg123::attach(dlformat *f)
     /* attach the input source */
     format = f;
 
-    /* allocate the read buffer */
-    size = 184;
-    data = (unsigned char *) malloc(size);
-
     /* find the audio format */
     do {
-        size_t bytes;
-        int read = format->read(data, size);
+        size_t bytes, read;
+        const unsigned char *data = format->read(&read);
         if (read==0) {
             if (format->get_source()->eof() || format->get_source()->error()) {
                 dlmessage("failed to sync mpa audio");
@@ -521,7 +521,8 @@ decode_t dlmpg123::decode(unsigned char *samples, size_t sampsize)
 
     /* feed the audio decoder */
     do {
-        int read = format->read(data, size);
+        size_t read;
+        const unsigned char *data = format->read(&read);
         if (read==0) {
             if (format->get_source()->error()) {
                 dlmessage("error reading input stream \"%s\": %s", format->get_source()->name(), strerror(errno));
@@ -586,22 +587,19 @@ int dlliba52::attach(dlformat *f)
     /* attach the input source */
     format = f;
 
-    /* allocate the read buffer */
-    size = 184;
-    data = (unsigned char *) malloc(size);
-
     /* find the ac3 audio format */
     int flags = 0, sample_rate = 0, bit_rate = 0;
 
     /* allocate the audio buffers */
-    ac3_size = 3840+188;
+    ac3_size = 6*256*5*sizeof(uint16_t); //3840+188;
     ac3_frame = (unsigned char *)malloc(ac3_size);
 
     unsigned int sync = 0;
+    const unsigned char *buf;
     size_t read;
     int ret = 0;
     do {
-        read = format->read(data, size);
+        buf = format->read(&read);
         if (read==0) {
             if (format->get_source()->eof() || format->get_source()->error()) {
                 dlmessage("failed to sync ac3 audio");
@@ -618,16 +616,16 @@ int dlliba52::attach(dlformat *f)
 
         /* look for sync in ac3 stream FIXME this won't work if sync is in last 7 bytes of packet */
         for (sync=0; sync<read-7; sync++) {
-            ret = a52_syncinfo(data+sync, &flags, &sample_rate, &bit_rate);
+            ret = a52_syncinfo((unsigned char *)buf+sync, &flags, &sample_rate, &bit_rate);
             if (ret)
                 break;
         }
     } while (ret==0 || last_sts<0);
 
-    /* queue the synchronised data */
-    memcpy(ac3_frame, data+sync, read-sync);
+    /* queue the synchronised buf */
+    memcpy(ac3_frame, buf+sync, read-sync);
     ac3_length = read-sync;
-    //dlmessage("found a52 frame of %d bytes, %d in buffer, initial pts=%s", ret, ac3_length, describe_sts(last_sts));
+    dlmessage("found a52 frame of %d bytes, %d in buffer, sync=%d, initial pts=%s", ret, ac3_length, sync, describe_sts(last_sts));
 
     /* report the format parameters */
     int channels = 0;
@@ -668,14 +666,14 @@ static inline int float32_to_int32_hack(int32_t i)
 decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
 {
     decode_t results = {0, -1ll, 0ll, 0ll};
-    int read;
+    size_t read;
 
     /* sync to next frame */
     int length = 0;
     int flags, sample_rate, bit_rate;
     do {
         if (ac3_length<7) {
-            read = format->read(data, size);
+            const unsigned char *buf = format->read(&read);
             if (read==0) {
                 if (format->get_source()->error()) {
                     dlmessage("error reading input stream \"%s\": %s", format->get_source()->name(), strerror(errno));
@@ -692,9 +690,9 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
             if (sts>=0 && sts>last_sts) {
                 last_sts = sts;
                 frames_since_pts = 0;
-                //dlmessage("new audio pts=%s", describe_timestamp(pts));
+                //dlmessage("new audio pts=%s", describe_sts(sts));
             }
-            memcpy(ac3_frame+ac3_length, data, read);
+            memcpy(ac3_frame+ac3_length, buf, read);
             ac3_length += read;
         }
 
@@ -721,7 +719,7 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
     do {
         /* read data from transport stream to complete frame */
         while (ac3_length < length) {
-            read = format->read(data, size);
+            const unsigned char *buf = format->read(&read);
             if (read<=0) {
                 if (format->get_source()->error()) {
                     dlmessage("error reading input stream \"%s\": %s", format->get_source()->name(), strerror(errno));
@@ -732,7 +730,7 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
                     continue;
                 }
             }
-            memcpy(ac3_frame+ac3_length, data, read);
+            memcpy(ac3_frame+ac3_length, buf, read);
             ac3_length += read;
         }
     } while (0);
@@ -742,7 +740,7 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
     sample_t level = 1.0;
     sample_t bias = 384.0;
     if (a52_frame(a52_state, ac3_frame, &flags, &level, bias))
-        dlmessage("failed: a52_block");
+        dlmessage("failed: a52_frame");
 
     /* decode audio frame */
     int i, j;
@@ -767,8 +765,11 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
     ac3_length = ac3_length-length;
 
     /* extrapolate a timestamp if necessary */
+    //static sts_t prev_sts;
     results.timestamp = last_sts + (sts_t)(frames_since_pts*180000ll*6ll*256ll/48000ll);
     frames_since_pts++;
+    //dlmessage("    audio pts=%s diff=%d", describe_sts(results.timestamp), results.timestamp-prev_sts);
+    //prev_sts = results.timestamp;
 
     return results;
 }
@@ -804,10 +805,6 @@ int dlhevc::attach(dlformat *f)
     /* attach the input source */
     format = f;
 
-    /* allocate the read buffer */
-    size = 32*1024;
-    data = (unsigned char *) malloc(size);
-
     /* decode the first hevc frame */
     image = de265_peek_next_picture(ctx);
     while (!image) {
@@ -821,10 +818,11 @@ int dlhevc::attach(dlformat *f)
             image = de265_peek_next_picture(ctx);
         else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
             /* read a chunk of input data */
-            int n = format->read(data, size);
+            size_t read;
+            const unsigned char *data = format->read(&read);
             if (n) {
                 sts_t timestamp = format->get_pts();
-                err = de265_push_data(ctx, data, n, timestamp, NULL);
+                err = de265_push_data(ctx, data, read, timestamp, NULL);
                 if (!de265_isOK(err)) {
                     dlerror("failed to push hevc data to decoder: %s", de265_get_error_text(err));
                 }
@@ -886,10 +884,11 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                 image = de265_get_next_picture(ctx);
             else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
                 /* read a chunk of input data */
-                int read = format->read(data, size);
+                size_t read;
+                const unsigned char *data = format->read(&read);
                 if (read==0 || format->get_source()->eof()) {
                     format->get_source()->rewind();
-                    read = format->read(data, size);
+                    data = format->read(&read);
                 }
                 if (read>0) {
                     /* use most recent available timestamp */
@@ -948,10 +947,11 @@ decode_t dlhevc::decode(unsigned char *uyvy, size_t uyvysize)
                     image = de265_get_next_picture(ctx);
                 } else if (more && err==DE265_ERROR_WAITING_FOR_INPUT_DATA) {
                     /* read a chunk of input data */
-                    int read = format->read(data, size);
+                    size_t read;
+                    const unsigned char *data = format->read(&read);
                     if (read==0 || format->get_source()->eof()) {
                         format->get_source()->rewind();
-                        read = format->read(data, size);
+                        data = format->read(&read);
                     }
                     if (read>0) {
                         /* use most recent available timestamp */
@@ -1079,7 +1079,6 @@ void dlffvideo::init()
 {
     codeccontext = NULL;
     frame = NULL;
-    bufsize = 4096;
     size = 0;
     ptr = NULL;
     got_frame = 0;
@@ -1124,8 +1123,8 @@ int dlffvideo::attach(dlformat* f)
     }
 
     /* initialise a data buffer */
-    buf = (unsigned char *) malloc(bufsize + AV_INPUT_BUFFER_PADDING_SIZE);
-    memset(buf + bufsize, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+    //buf = (unsigned char *) malloc(bufsize + AV_INPUT_BUFFER_PADDING_SIZE);
+    //memset(buf + bufsize, 0, AV_INPUT_BUFFER_PADDING_SIZE);
 
     /* init the decoder, with or without reference counting */
     AVDictionary *opts = NULL;
@@ -1140,7 +1139,7 @@ int dlffvideo::attach(dlformat* f)
     got_frame = 0;
     while (!got_frame) {
         if (size==0) {
-            size = format->read(buf, bufsize);
+            const unsigned char *buf = format->read(&size);
             if (size==0)
                 break;
             ptr = buf;
@@ -1213,7 +1212,7 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
     /* decode the next avc frame */
     do {
         if (size==0) {
-            size = format->read(buf, bufsize);
+            const unsigned char *buf = format->read(&size);
             if (size==0)
                 break;
             ptr = buf;

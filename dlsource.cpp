@@ -170,8 +170,11 @@ size_t dlfile::read(unsigned char *buf, size_t bytes, dltoken_t t)
 
 const unsigned char* dlfile::read(size_t *bytes, dltoken_t t)
 {
-    /* check internal buffer is large enough */
-    checksize(*bytes);
+    if (*bytes==0)
+        *bytes = bufsize;
+    else
+        /* check internal buffer is large enough */
+        checksize(*bytes);
 
     size_t read = ::read(file[t], buffer, *bytes);
     if (read<0)

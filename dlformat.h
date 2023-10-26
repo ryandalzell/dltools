@@ -78,6 +78,8 @@ public:
 protected:
     int pid;
     long long pts, dts;
+    unsigned char *packet;
+    bool packet_valid;
 };
 
 #ifdef HAVE_FFMPEG

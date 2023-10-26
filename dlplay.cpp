@@ -495,11 +495,11 @@ int main(int argc, char *argv[])
                     switch (stream_type) {
                         case 0x02:
                         case 0x80:
-#ifdef HAVE_FFMPEG
-                            video = new dlffvideo(AV_CODEC_ID_MPEG2VIDEO);
-#else
+//#ifdef HAVE_FFMPEG
+//                            video = new dlffvideo(AV_CODEC_ID_MPEG2VIDEO);
+//#else
                             video = new dlmpeg2;
-#endif
+//#endif
                             break;
 
                         case 0x24:
