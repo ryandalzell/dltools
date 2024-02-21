@@ -51,6 +51,14 @@ unsigned int completed;
 unsigned int late, dropped, flushed;
 bool pause_mode = 0;
 
+typedef struct TimeCode_ {
+    int ff;
+    int ss;
+    int mm;
+    int hh;
+    BMDTimecodeFlags tflag;
+} TimeCode;
+
 class callback : public IDeckLinkVideoOutputCallback, public IDeckLinkAudioOutputCallback
 {
 public:
@@ -133,6 +141,53 @@ HRESULT callback::RenderAudioSamples(bool preroll)
 {
     return S_OK;
 }
+
+static void set_timecode(int fr, bool fractional, TimeCode *timecode, bool reset)
+{
+    static int f = 0;
+    static int s = 0;
+    static int m = 0;
+    static int h = 0;
+    static BMDTimecodeFlags timeCodeFlag = 0;
+    
+    if (reset) {
+        f = s = m = h = 0;
+        timeCodeFlag = 0;
+    } else {
+        if (f >= fr - 1) {
+            f = 0;
+            s++;
+        }
+        else
+            f++;
+
+        if (s >= 60) {
+            s = 0;
+            m++;
+        }
+
+        if (m >= 60) {
+            m = 0;
+            h++;
+        }
+
+        if (h >= 24)
+            h = 0;
+
+        timeCodeFlag = bmdTimecodeFlagDefault;
+        if (!(fr%30) && fractional && !f && !s && m % 10) {
+            timeCodeFlag = bmdTimecodeIsDropFrame;
+            f = fr > 30 ? 4 : 2;
+        }
+    }
+    timecode->ff = fr > 30 ? f >> 1 : f;
+    timecode->ss = s;
+    timecode->mm = m;
+    timecode->hh = h;
+    timecode->tflag = timeCodeFlag;
+    //printf("timecode [%.2d : %.2d : %.2d : %.2d] \n", timecode->hh, timecode->mm, timecode->ss, timecode->ff);    
+    return;
+};
 
 /*****************************************/
 
@@ -245,6 +300,15 @@ int main(int argc, char *argv[])
 
     /* custom memory allocator */
     class dlalloc alloc;
+
+    /* timecode */
+    TimeCode timecode;
+    BMDTimecodeFormat   timeCodeFormat = 0;
+    BMDVideoOutputFlags videoOutputFlags = bmdVideoOutputFlagDefault;
+
+    /* get maxframenum */
+    unsigned maxfrn = 0;
+    bool reset_timecode = true;
 
     /* parse command line for options */
     while (1) {
@@ -682,6 +746,7 @@ int main(int argc, char *argv[])
             interlaced = video->interlaced;
             framerate = video->framerate;
             pixelformat = video->pixelformat;
+	    maxfrn = video->maxfrn;
         }
 
         /* initialise the audio encoder */
@@ -784,9 +849,20 @@ int main(int argc, char *argv[])
                 dlmessage("info: video mode %s %s", name, halfframerate?"(half rate)":"");
         }
 
+        /* vanc timecode enabled */
+        if (mode->GetDisplayMode() == bmdModeNTSC ||
+            mode->GetDisplayMode() == bmdModeNTSC2398 ||
+            mode->GetDisplayMode() == bmdModePAL) {
+            timeCodeFormat = bmdTimecodeVITC;
+            videoOutputFlags |= bmdVideoOutputVITC;
+        } else {
+            timeCodeFormat = bmdTimecodeRP188Any;
+            videoOutputFlags |= bmdVideoOutputRP188;
+       }
+
         /* set the video output mode */
         if (video) {
-            HRESULT result = output->EnableVideoOutput(mode->GetDisplayMode(), bmdVideoOutputFlagDefault);
+            HRESULT result = output->EnableVideoOutput(mode->GetDisplayMode(), videoOutputFlags);
             if (result!=S_OK)
                 dlapierror(result, "failed to enable video output");
         }
@@ -969,6 +1045,21 @@ int main(int argc, char *argv[])
 
             /* enqueue previous frame */
             if (frame && video) {
+                /* set timecode for the current frame */
+                set_timecode((int)((framerate_scale + (framerate_duration - 1)) / framerate_duration),
+                             framerate_duration % 10 ? true : false,
+                             &timecode,
+                             reset_timecode);
+
+                reset_timecode = false;                     
+                //printf("frame %d, timecode[%.2d:%.2d:%.2d.%.2d]\n", timecode.ff, timecode.hh, timecode.mm, timecode.ss, timecode.ff);
+                frame->SetTimecodeFromComponents(timeCodeFormat,
+                                                 timecode.hh,
+                                                 timecode.mm,
+                                                 timecode.ss,
+                                                 timecode.ff,
+                                                 timecode.tflag);
+
                 unsigned long long start = get_utime();
                 HRESULT result = output->ScheduleVideoFrame(frame, vid.timestamp, lround(180000.0/framerate), 180000);
                 queuetime += get_utime() - start;
@@ -1031,6 +1122,11 @@ int main(int argc, char *argv[])
                 decodetime += get_utime() - start;
                 video_start_time = mmin(vid.timestamp, video_start_time);
                 video_end_time = mmax(vid.timestamp, video_end_time);
+
+                //printf("framenum = %d, maxfrn = %d\n", framenum, maxfrn);
+                /* maxfrn != 0 only if input is yuv, reset timecode at end of file */
+                if (maxfrn)
+                    reset_timecode = framenum % maxfrn ? false : true;
 
                 if (verbose>=3)
                     dlmessage("info: frame %d timestamp %s, decode %.1fms render %.1fms", framenum, describe_sts(vid.timestamp), vid.decode_time/1000.0, vid.render_time/1000.0);

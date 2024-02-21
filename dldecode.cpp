@@ -87,6 +87,7 @@ int dlyuv::attach(dlformat *f)
 
     /* calculate the number of frames in the input */
     maxframes = format->get_source()->size() / size;
+    maxfrn = maxframes;
 
     return 0;
 }

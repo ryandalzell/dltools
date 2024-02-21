@@ -62,6 +62,7 @@ public: /* yes public, we're not designing a type library here */
     bool interlaced;
     float framerate;
     pixelformat_t pixelformat;
+    unsigned maxfrn;
 
     /* decoder debug */
 public:
