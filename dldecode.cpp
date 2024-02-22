@@ -52,6 +52,10 @@ dlyuv::dlyuv()
     /* buffer */
     size = 0;
     data = NULL;
+    /* display parameters */
+    lumaonly = 0;
+    imagesize = NULL;
+    fourcc = NULL;
 }
 
 dlyuv::~dlyuv()
