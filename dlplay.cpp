@@ -56,6 +56,7 @@ typedef struct TimeCode_ {
     int ss;
     int mm;
     int hh;
+    bool oddflag;
     BMDTimecodeFlags tflag;
 } TimeCode;
 
@@ -175,7 +176,7 @@ static void set_timecode(int fr, bool fractional, TimeCode *timecode, bool reset
             h = 0;
 
         timeCodeFlag = bmdTimecodeFlagDefault;
-        if (!(fr%30) && fractional && !f && !s && m % 10) {
+        if (!(fr % 30) && fractional && !f && !s && m % 10) {
             timeCodeFlag = bmdTimecodeIsDropFrame;
             f = fr > 30 ? 4 : 2;
         }
@@ -185,6 +186,7 @@ static void set_timecode(int fr, bool fractional, TimeCode *timecode, bool reset
     timecode->mm = m;
     timecode->hh = h;
     timecode->tflag = timeCodeFlag;
+    timecode->oddflag = f & 1;
     //printf("timecode [%.2d : %.2d : %.2d : %.2d] \n", timecode->hh, timecode->mm, timecode->ss, timecode->ff);    
     return;
 };
@@ -198,6 +200,7 @@ void usage(int exitcode)
     fprintf(stderr, "  -s, --sizeformat    : specify display size format: 480i,480p,576i,720p,1080i,1080p [optional +framerate] (default: autodetect)\n");
     fprintf(stderr, "  -f, --fourcc        : specify pixel fourcc format: i420,i422,uyvy (default: i420)\n");
     fprintf(stderr, "  -I, --interface     : address of interface to listen for multicast data (default: first network interface)\n");
+    fprintf(stderr, "  -r, --resettime     : enable timecode reset when input wrap around (default: off)\n");
     fprintf(stderr, "  -a, --firstframe    : index of first frame in input to display (default: 0)\n");
     fprintf(stderr, "  -n, --numframes     : total number of frames to display (default: no limit)\n");
     fprintf(stderr, "  -2, --halfrate      : allow using half frame rate, e.g. 30fps when 60fps is not supported (default: off)\n");
@@ -281,6 +284,7 @@ int main(int argc, char *argv[])
     int audioonly = 0;
     int index = 0;
     int verbose = 0;
+    bool resettime = false;
 
     /* decoders */
     class dldecode *video = NULL;
@@ -304,6 +308,8 @@ int main(int argc, char *argv[])
     /* timecode */
     TimeCode timecode;
     BMDTimecodeFormat   timeCodeFormat = 0;
+    bool setVITC1Timecode = false;
+    bool setVITC2Timecode = false;
     BMDVideoOutputFlags videoOutputFlags = bmdVideoOutputFlagDefault;
 
     /* get maxframenum */
@@ -318,6 +324,7 @@ int main(int argc, char *argv[])
             {"ts",        0, NULL, 't'},
             {"transportstream", 0, NULL, 't'},
             {"interface", 1, NULL, 'I'},
+	    {"resettime", 0, NULL, 'r'},
             {"firstframe",1, NULL, 'a'},
             {"numframes", 1, NULL, 'n'},
             {"halfrate",  0, NULL, '2'},
@@ -336,7 +343,7 @@ int main(int argc, char *argv[])
             {NULL,        0, NULL,  0 }
         };
 
-        int optchar = getopt_long(argc, argv, "s:f:tI:a:n:2l=~p:o:i:qvh", long_options, NULL);
+        int optchar = getopt_long(argc, argv, "s:f:tI:ra:n:2l=~p:o:i:qvh", long_options, NULL);
         if (optchar==-1)
             break;
 
@@ -357,6 +364,10 @@ int main(int argc, char *argv[])
                 interface = optarg;
                 dlmessage("interface=%s", interface);
                 break;
+
+            case 'r':
+                resettime = true;
+		break;
 
             case 'a':
                 firstframe = atoi(optarg);
@@ -746,7 +757,7 @@ int main(int argc, char *argv[])
             interlaced = video->interlaced;
             framerate = video->framerate;
             pixelformat = video->pixelformat;
-	    maxfrn = video->maxfrn;
+            maxfrn = video->maxfrn;
         }
 
         /* initialise the audio encoder */
@@ -850,15 +861,8 @@ int main(int argc, char *argv[])
         }
 
         /* vanc timecode enabled */
-        if (mode->GetDisplayMode() == bmdModeNTSC ||
-            mode->GetDisplayMode() == bmdModeNTSC2398 ||
-            mode->GetDisplayMode() == bmdModePAL) {
-            timeCodeFormat = bmdTimecodeVITC;
-            videoOutputFlags |= bmdVideoOutputVITC;
-        } else {
-            timeCodeFormat = bmdTimecodeRP188Any;
-            videoOutputFlags |= bmdVideoOutputRP188;
-       }
+        timeCodeFormat = bmdTimecodeRP188Any;
+        videoOutputFlags |= bmdVideoOutputRP188;
 
         /* set the video output mode */
         if (video) {
@@ -1042,7 +1046,7 @@ int main(int argc, char *argv[])
                 /* sleep wait */
                 usleep(250000);
             /* else don't wait */
-
+          
             /* enqueue previous frame */
             if (frame && video) {
                 /* set timecode for the current frame */
@@ -1051,17 +1055,39 @@ int main(int argc, char *argv[])
                              &timecode,
                              reset_timecode);
 
-                reset_timecode = false;                     
+                reset_timecode = false;
+                setVITC1Timecode = false;
+                setVITC2Timecode = false;
+
+		if (mode->GetFieldDominance() != bmdProgressiveFrame) {
+		    // An interlaced or PsF frame has both VITC1 and VITC2 set with the same timecode value (SMPTE ST 12-2:2014 7.2)
+		    setVITC1Timecode = true;
+		    setVITC2Timecode = true;
+	        }
+	        else if (framerate_scale / framerate_duration <= 30)	{
+		    // If this isn't a High-P mode, then just use VITC1 (SMPTE ST 12-2:2014 7.2)
+		    setVITC1Timecode = true;
+	        }
+	        else {
+		    // If this is a High-P mode then use VITC1 on even frames and VITC2 on odd frames. This is done because the 
+		    // frames field of the RP188 VITC timecode cannot hold values greater than 30 (SMPTE ST 12-2:2014 7.2, 9.2)
+		    if (timecode.oddflag)
+			setVITC2Timecode = true;
+		    else
+			setVITC1Timecode = true;
+		}
+	                   
                 //printf("frame %d, timecode[%.2d:%.2d:%.2d.%.2d]\n", timecode.ff, timecode.hh, timecode.mm, timecode.ss, timecode.ff);
-                frame->SetTimecodeFromComponents(timeCodeFormat,
-                                                 timecode.hh,
-                                                 timecode.mm,
-                                                 timecode.ss,
-                                                 timecode.ff,
-                                                 timecode.tflag);
+                if (setVITC1Timecode) 
+		    frame->SetTimecodeFromComponents(bmdTimecodeRP188VITC1, timecode.hh, timecode.mm, timecode.ss, timecode.ff, timecode.tflag);
+  
+                if (setVITC2Timecode)
+                    frame->SetTimecodeFromComponents(bmdTimecodeRP188VITC2, timecode.hh, timecode.mm, timecode.ss, timecode.ff, timecode.tflag | bmdTimecodeFieldMark);
 
                 unsigned long long start = get_utime();
+
                 HRESULT result = output->ScheduleVideoFrame(frame, vid.timestamp, lround(180000.0/framerate), 180000);
+                
                 queuetime += get_utime() - start;
                 if (result != S_OK) {
                     switch (result) {
@@ -1107,12 +1133,14 @@ int main(int argc, char *argv[])
 
                 /* extract the frame buffer pointer without type punning */
                 result = frame->GetBytes(&voidptr);
+
                 if (result!=S_OK)
                     dlapierror(result, "error: failed to get pointer to data in video frame");
                 unsigned char *uyvy = (unsigned char *)voidptr;
 
                 /* read the next frame */
                 vid = video->decode(uyvy, frame->GetRowBytes()*frame->GetHeight());
+
                 if (vid.size==0) {
                     dlmessage("error: failed to decode video frame %d in file \"%s\"", framenum, filename);
                     if (source->timeout())
@@ -1126,7 +1154,7 @@ int main(int argc, char *argv[])
                 //printf("framenum = %d, maxfrn = %d\n", framenum, maxfrn);
                 /* maxfrn != 0 only if input is yuv, reset timecode at end of file */
                 if (maxfrn)
-                    reset_timecode = framenum % maxfrn ? false : true;
+                    reset_timecode = resettime && !(framenum % maxfrn) ? true : false;
 
                 if (verbose>=3)
                     dlmessage("info: frame %d timestamp %s, decode %.1fms render %.1fms", framenum, describe_sts(vid.timestamp), vid.decode_time/1000.0, vid.render_time/1000.0);
