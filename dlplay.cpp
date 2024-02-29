@@ -307,7 +307,6 @@ int main(int argc, char *argv[])
 
     /* timecode */
     TimeCode timecode;
-    BMDTimecodeFormat   timeCodeFormat = 0;
     bool setVITC1Timecode = false;
     bool setVITC2Timecode = false;
     BMDVideoOutputFlags videoOutputFlags = bmdVideoOutputFlagDefault;
@@ -861,7 +860,6 @@ int main(int argc, char *argv[])
         }
 
         /* vanc timecode enabled */
-        timeCodeFormat = bmdTimecodeRP188Any;
         videoOutputFlags |= bmdVideoOutputRP188;
 
         /* set the video output mode */
