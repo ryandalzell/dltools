@@ -324,7 +324,7 @@ int main(int argc, char *argv[])
             {"ts",        0, NULL, 't'},
             {"transportstream", 0, NULL, 't'},
             {"interface", 1, NULL, 'I'},
-	    {"resettime", 0, NULL, 'r'},
+            {"resettime", 0, NULL, 'r'},
             {"firstframe",1, NULL, 'a'},
             {"numframes", 1, NULL, 'n'},
             {"halfrate",  0, NULL, '2'},
@@ -367,7 +367,7 @@ int main(int argc, char *argv[])
 
             case 'r':
                 resettime = true;
-		break;
+                break;
 
             case 'a':
                 firstframe = atoi(optarg);
@@ -1046,7 +1046,7 @@ int main(int argc, char *argv[])
                 /* sleep wait */
                 usleep(250000);
             /* else don't wait */
-          
+
             /* enqueue previous frame */
             if (frame && video) {
                 /* set timecode for the current frame */
@@ -1059,35 +1059,35 @@ int main(int argc, char *argv[])
                 setVITC1Timecode = false;
                 setVITC2Timecode = false;
 
-		if (mode->GetFieldDominance() != bmdProgressiveFrame) {
-		    // An interlaced or PsF frame has both VITC1 and VITC2 set with the same timecode value (SMPTE ST 12-2:2014 7.2)
-		    setVITC1Timecode = true;
-		    setVITC2Timecode = true;
-	        }
-	        else if (framerate_scale / framerate_duration <= 30)	{
-		    // If this isn't a High-P mode, then just use VITC1 (SMPTE ST 12-2:2014 7.2)
-		    setVITC1Timecode = true;
-	        }
-	        else {
-		    // If this is a High-P mode then use VITC1 on even frames and VITC2 on odd frames. This is done because the 
-		    // frames field of the RP188 VITC timecode cannot hold values greater than 30 (SMPTE ST 12-2:2014 7.2, 9.2)
-		    if (timecode.oddflag)
-			setVITC2Timecode = true;
-		    else
-			setVITC1Timecode = true;
-		}
-	                   
+                if (mode->GetFieldDominance() != bmdProgressiveFrame) {
+                    // An interlaced or PsF frame has both VITC1 and VITC2 set with the same timecode value (SMPTE ST 12-2:2014 7.2)
+                    setVITC1Timecode = true;
+                    setVITC2Timecode = true;
+                }
+                else if (framerate_scale / framerate_duration <= 30) {
+                    // If this isn't a High-P mode, then just use VITC1 (SMPTE ST 12-2:2014 7.2)
+                    setVITC1Timecode = true;
+                }
+                else {
+                    // If this is a High-P mode then use VITC1 on even frames and VITC2 on odd frames. This is done because the
+                    // frames field of the RP188 VITC timecode cannot hold values greater than 30 (SMPTE ST 12-2:2014 7.2, 9.2)
+                    if (timecode.oddflag)
+                    setVITC2Timecode = true;
+                    else
+                    setVITC1Timecode = true;
+                }
+
                 //printf("frame %d, timecode[%.2d:%.2d:%.2d.%.2d]\n", timecode.ff, timecode.hh, timecode.mm, timecode.ss, timecode.ff);
                 if (setVITC1Timecode) 
-		    frame->SetTimecodeFromComponents(bmdTimecodeRP188VITC1, timecode.hh, timecode.mm, timecode.ss, timecode.ff, timecode.tflag);
-  
+                    frame->SetTimecodeFromComponents(bmdTimecodeRP188VITC1, timecode.hh, timecode.mm, timecode.ss, timecode.ff, timecode.tflag);
+
                 if (setVITC2Timecode)
                     frame->SetTimecodeFromComponents(bmdTimecodeRP188VITC2, timecode.hh, timecode.mm, timecode.ss, timecode.ff, timecode.tflag | bmdTimecodeFieldMark);
 
                 unsigned long long start = get_utime();
 
                 HRESULT result = output->ScheduleVideoFrame(frame, vid.timestamp, lround(180000.0/framerate), 180000);
-                
+
                 queuetime += get_utime() - start;
                 if (result != S_OK) {
                     switch (result) {
