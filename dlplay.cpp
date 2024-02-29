@@ -56,8 +56,6 @@ typedef struct TimeCode_ {
     int ss;
     int mm;
     int hh;
-    bool oddflag;
-    BMDTimecodeFlags tflag;
 } TimeCode;
 
 class callback : public IDeckLinkVideoOutputCallback, public IDeckLinkAudioOutputCallback
@@ -143,51 +141,74 @@ HRESULT callback::RenderAudioSamples(bool preroll)
     return S_OK;
 }
 
-static void set_timecode(int fr, bool fractional, TimeCode *timecode, bool reset)
+static void set_timecode(IDeckLinkMutableVideoFrame *frame, BMDTimeScale framerate_scale, BMDTimeValue framerate_duration, bool progressive, TimeCode *timecode, bool reset)
 {
-    static int f = 0;
-    static int s = 0;
-    static int m = 0;
-    static int h = 0;
-    static BMDTimecodeFlags timeCodeFlag = 0;
-    
+    const int framerate = (int)((framerate_scale + (framerate_duration - 1)) / framerate_duration);
+    const bool fractional = framerate_duration % 10 ? true : false;
+
+    BMDTimecodeFlags timeCodeFlag = 0;
     if (reset) {
-        f = s = m = h = 0;
-        timeCodeFlag = 0;
+        timecode->ff = timecode->ss = timecode->mm = timecode->hh = 0;
+        timeCodeFlag = bmdTimecodeFlagDefault;
     } else {
-        if (f >= fr - 1) {
-            f = 0;
-            s++;
+        if (timecode->ff >= framerate - 1) {
+            timecode->ff = 0;
+            timecode->ss++;
         }
         else
-            f++;
+            timecode->ff++;
 
-        if (s >= 60) {
-            s = 0;
-            m++;
+        if (timecode->ss >= 60) {
+            timecode->ss = 0;
+            timecode->mm++;
         }
 
-        if (m >= 60) {
-            m = 0;
-            h++;
+        if (timecode->mm >= 60) {
+            timecode->mm = 0;
+            timecode->hh++;
         }
 
-        if (h >= 24)
-            h = 0;
+        if (timecode->hh >= 24)
+            timecode->hh = 0;
 
         timeCodeFlag = bmdTimecodeFlagDefault;
-        if (!(fr % 30) && fractional && !f && !s && m % 10) {
+        if (!(framerate % 30) && fractional && !timecode->ff && !timecode->ss && timecode->mm % 10) {
             timeCodeFlag = bmdTimecodeIsDropFrame;
-            f = fr > 30 ? 4 : 2;
+            timecode->ff = framerate > 30 ? 4 : 2;
         }
     }
-    timecode->ff = fr > 30 ? f >> 1 : f;
-    timecode->ss = s;
-    timecode->mm = m;
-    timecode->hh = h;
-    timecode->tflag = timeCodeFlag;
-    timecode->oddflag = f & 1;
-    //printf("timecode [%.2d : %.2d : %.2d : %.2d] \n", timecode->hh, timecode->mm, timecode->ss, timecode->ff);    
+    int ff = framerate > 30 ? timecode->ff >> 1 : timecode->ff;
+    bool oddflag = timecode->ff & 1;
+
+    /* set the timecode in the frame */
+    bool setVITC1Timecode = false;
+    bool setVITC2Timecode = false;
+
+    if (!progressive) {
+        // An interlaced or PsF frame has both VITC1 and VITC2 set with the same timecode value (SMPTE ST 12-2:2014 7.2)
+        setVITC1Timecode = true;
+        setVITC2Timecode = true;
+    }
+    else if (framerate_scale / framerate_duration <= 30) {
+        // If this isn't a High-P mode, then just use VITC1 (SMPTE ST 12-2:2014 7.2)
+        setVITC1Timecode = true;
+    }
+    else {
+        // If this is a High-P mode then use VITC1 on even frames and VITC2 on odd frames. This is done because the
+        // frames field of the RP188 VITC timecode cannot hold values greater than 30 (SMPTE ST 12-2:2014 7.2, 9.2)
+        if (oddflag)
+            setVITC2Timecode = true;
+        else
+            setVITC1Timecode = true;
+    }
+
+    //printf("frame %d, timecode[%.2d:%.2d:%.2d.%.2d]\n", timecode.ff, timecode.hh, timecode.mm, timecode.ss, timecode.ff);
+    if (setVITC1Timecode)
+        frame->SetTimecodeFromComponents(bmdTimecodeRP188VITC1, timecode->hh, timecode->mm, timecode->ss, ff, timeCodeFlag);
+
+    if (setVITC2Timecode)
+        frame->SetTimecodeFromComponents(bmdTimecodeRP188VITC2, timecode->hh, timecode->mm, timecode->ss, ff, timeCodeFlag | bmdTimecodeFieldMark);
+
     return;
 };
 
@@ -1050,39 +1071,13 @@ int main(int argc, char *argv[])
             /* enqueue previous frame */
             if (frame && video) {
                 /* set timecode for the current frame */
-                set_timecode((int)((framerate_scale + (framerate_duration - 1)) / framerate_duration),
-                             framerate_duration % 10 ? true : false,
+                set_timecode(frame,
+                             framerate_scale,
+                             framerate_duration,
+                             mode->GetFieldDominance() == bmdProgressiveFrame,
                              &timecode,
                              reset_timecode);
-
                 reset_timecode = false;
-                bool setVITC1Timecode = false;
-                bool setVITC2Timecode = false;
-
-                if (mode->GetFieldDominance() != bmdProgressiveFrame) {
-                    // An interlaced or PsF frame has both VITC1 and VITC2 set with the same timecode value (SMPTE ST 12-2:2014 7.2)
-                    setVITC1Timecode = true;
-                    setVITC2Timecode = true;
-                }
-                else if (framerate_scale / framerate_duration <= 30) {
-                    // If this isn't a High-P mode, then just use VITC1 (SMPTE ST 12-2:2014 7.2)
-                    setVITC1Timecode = true;
-                }
-                else {
-                    // If this is a High-P mode then use VITC1 on even frames and VITC2 on odd frames. This is done because the
-                    // frames field of the RP188 VITC timecode cannot hold values greater than 30 (SMPTE ST 12-2:2014 7.2, 9.2)
-                    if (timecode.oddflag)
-                    setVITC2Timecode = true;
-                    else
-                    setVITC1Timecode = true;
-                }
-
-                //printf("frame %d, timecode[%.2d:%.2d:%.2d.%.2d]\n", timecode.ff, timecode.hh, timecode.mm, timecode.ss, timecode.ff);
-                if (setVITC1Timecode)
-                    frame->SetTimecodeFromComponents(bmdTimecodeRP188VITC1, timecode.hh, timecode.mm, timecode.ss, timecode.ff, timecode.tflag);
-
-                if (setVITC2Timecode)
-                    frame->SetTimecodeFromComponents(bmdTimecodeRP188VITC2, timecode.hh, timecode.mm, timecode.ss, timecode.ff, timecode.tflag | bmdTimecodeFieldMark);
 
                 unsigned long long start = get_utime();
 
