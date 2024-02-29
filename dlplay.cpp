@@ -305,16 +305,6 @@ int main(int argc, char *argv[])
     /* custom memory allocator */
     class dlalloc alloc;
 
-    /* timecode */
-    TimeCode timecode;
-    bool setVITC1Timecode = false;
-    bool setVITC2Timecode = false;
-    BMDVideoOutputFlags videoOutputFlags = bmdVideoOutputFlagDefault;
-
-    /* get maxframenum */
-    unsigned maxfrn = 0;
-    bool reset_timecode = true;
-
     /* parse command line for options */
     while (1) {
         static struct option long_options[] = {
@@ -756,7 +746,6 @@ int main(int argc, char *argv[])
             interlaced = video->interlaced;
             framerate = video->framerate;
             pixelformat = video->pixelformat;
-            maxfrn = video->maxfrn;
         }
 
         /* initialise the audio encoder */
@@ -859,8 +848,12 @@ int main(int argc, char *argv[])
                 dlmessage("info: video mode %s %s", name, halfframerate?"(half rate)":"");
         }
 
+        /* timecode */
+        TimeCode timecode = {0};
+        bool reset_timecode = true;
+
         /* vanc timecode enabled */
-        videoOutputFlags |= bmdVideoOutputRP188;
+        BMDVideoOutputFlags videoOutputFlags = bmdVideoOutputFlagDefault | bmdVideoOutputRP188;
 
         /* set the video output mode */
         if (video) {
@@ -1054,8 +1047,8 @@ int main(int argc, char *argv[])
                              reset_timecode);
 
                 reset_timecode = false;
-                setVITC1Timecode = false;
-                setVITC2Timecode = false;
+                bool setVITC1Timecode = false;
+                bool setVITC2Timecode = false;
 
                 if (mode->GetFieldDominance() != bmdProgressiveFrame) {
                     // An interlaced or PsF frame has both VITC1 and VITC2 set with the same timecode value (SMPTE ST 12-2:2014 7.2)
@@ -1076,7 +1069,7 @@ int main(int argc, char *argv[])
                 }
 
                 //printf("frame %d, timecode[%.2d:%.2d:%.2d.%.2d]\n", timecode.ff, timecode.hh, timecode.mm, timecode.ss, timecode.ff);
-                if (setVITC1Timecode) 
+                if (setVITC1Timecode)
                     frame->SetTimecodeFromComponents(bmdTimecodeRP188VITC1, timecode.hh, timecode.mm, timecode.ss, timecode.ff, timecode.tflag);
 
                 if (setVITC2Timecode)
@@ -1150,9 +1143,9 @@ int main(int argc, char *argv[])
                 video_end_time = mmax(vid.timestamp, video_end_time);
 
                 //printf("framenum = %d, maxfrn = %d\n", framenum, maxfrn);
-                /* maxfrn != 0 only if input is yuv, reset timecode at end of file */
-                if (maxfrn)
-                    reset_timecode = resettime && !(framenum % maxfrn) ? true : false;
+                /* video->maxfrn != 0 only if input is yuv, reset timecode at end of file */
+                if (video->maxfrn)
+                    reset_timecode = resettime && !(framenum % video->maxfrn) ? true : false;
 
                 if (verbose>=3)
                     dlmessage("info: frame %d timestamp %s, decode %.1fms render %.1fms", framenum, describe_sts(vid.timestamp), vid.decode_time/1000.0, vid.render_time/1000.0);
