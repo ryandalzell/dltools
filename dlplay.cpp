@@ -817,8 +817,15 @@ int main(int argc, char *argv[])
             /* find mode for given width and height */
             while (iterator->Next(&mode) == S_OK) {
                 mode->GetFrameRate(&framerate_duration, &framerate_scale);
-                if (verbose>=2)
-                    dlmessage("mode available: %ldx%ld%c%.2f", mode->GetWidth(), mode->GetHeight(), mode->GetFieldDominance()!=bmdProgressiveFrame? 'i' : 'p', (double)framerate_scale/framerate_duration);
+                if (verbose>=2) {
+                    const char *name = NULL;
+                    mode->GetName(&name);
+                    //bool interlaced = mode->GetFieldDominance()!=bmdProgressiveFrame;
+                    //dlmessage("mode available: %ldx%ld%c%.2f (%s)", mode->GetWidth(), mode->GetHeight(), interlaced? 'i' : 'p', (double)framerate_scale/framerate_duration*(interlaced?2.0:1.0), name);
+                    dlmessage("mode available: %s", name);
+                    if (name)
+                        delete name;
+                }
                 if (mode->GetWidth()==dis_width && mode->GetHeight()==dis_height) {
                     if ((mode->GetFieldDominance()==bmdProgressiveFrame) ^ interlaced) {
                         mode->GetFrameRate(&framerate_duration, &framerate_scale);
@@ -843,9 +850,11 @@ int main(int argc, char *argv[])
                 dlexit("error: failed to find mode for %dx%d%c%.2f", pic_width, pic_height, interlaced? 'i' : 'p', framerate);
 
             /* display mode name */
-            const char *name;
+            const char *name = NULL;
             if (mode->GetName(&name)==S_OK)
                 dlmessage("info: video mode %s %s", name, halfframerate?"(half rate)":"");
+            if (name)
+                delete name;
         }
 
         /* timecode */
@@ -1250,7 +1259,7 @@ int main(int argc, char *argv[])
                         char v[32] = {0}, a[32] = {0};
                         strncpy(v, describe_sts(vdiff), sizeof(v)-1);
                         strncpy(a, describe_sts(adiff), sizeof(a)-1);
-                        if (verbose>=2)
+                        if (verbose>=3)
                             dlmessage("loop: vid=%s aud=%s", v, a);
                         if (vdiff<0)
                             dlmessage("video went back in time: %s", v);
@@ -1264,7 +1273,7 @@ int main(int argc, char *argv[])
                 }
                 else if (last_vid) {
                     sts_t vdiff = vid.timestamp - last_vid;
-                    if (verbose>=2)
+                    if (verbose>=3)
                         dlmessage("loop: vid=%s", describe_sts(vdiff));
                     if (vdiff<0) {
                         dlmessage("video went back in time: %s", describe_sts(vdiff));

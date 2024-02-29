@@ -71,22 +71,14 @@ int main(int argc, char *argv[])
             /* list all supported output display modes */
             printf("  output modes:");
             IDeckLinkDisplayMode *display_mode = NULL;
-            while (displaymode_iterator->Next(&display_mode) == S_OK)
+            for (int i=0; displaymode_iterator->Next(&display_mode) == S_OK; i++)
             {
-
-                /* obtain the display mode's properties */
-                long height = display_mode->GetHeight();
-                BMDTimeValue framerate_duration;
-                BMDTimeScale framerate_scale;
-                display_mode->GetFrameRate(&framerate_duration, &framerate_scale);
-                BMDFieldDominance field_dominance = display_mode->GetFieldDominance();
-
-                if (framerate_duration==BMDTimeValue(1000))
-                    printf(" %ld%c%d", height, field_dominance==bmdProgressiveFrame? 'p' : 'i', int(framerate_scale / framerate_duration));
-                else
-                    printf(" %ld%c%.2f", height, field_dominance==bmdProgressiveFrame? 'p' : 'i', (double)framerate_scale / (double)framerate_duration);
+                const char *name = NULL;
+                display_mode->GetName(&name);
+                printf("%c %s", i? ',' : ' ', name);
 
                 /* tidy up */
+                delete name;
                 display_mode->Release();
             }
             printf("\n");
@@ -116,22 +108,14 @@ int main(int argc, char *argv[])
             /* list all supported output display modes */
             printf("  input modes:");
             IDeckLinkDisplayMode *display_mode = NULL;
-            while (displaymode_iterator->Next(&display_mode) == S_OK)
+            for (int i=0; displaymode_iterator->Next(&display_mode) == S_OK; i++)
             {
-
-                /* obtain the display mode's properties */
-                long height = display_mode->GetHeight();
-                BMDTimeValue framerate_duration;
-                BMDTimeScale framerate_scale;
-                display_mode->GetFrameRate(&framerate_duration, &framerate_scale);
-                BMDFieldDominance field_dominance = display_mode->GetFieldDominance();
-
-                if (framerate_duration==BMDTimeValue(1000))
-                    printf(" %ld%c%d", height, field_dominance==bmdProgressiveFrame? 'p' : 'i', int(framerate_scale / framerate_duration));
-                else
-                    printf(" %ld%c%.2f", height, field_dominance==bmdProgressiveFrame? 'p' : 'i', (double)framerate_scale / (double)framerate_duration);
+                const char *name = NULL;
+                display_mode->GetName(&name);
+                printf("%c %s", i? ',' : ' ', name);
 
                 /* tidy up */
+                delete name;
                 display_mode->Release();
             }
             printf("\n");
