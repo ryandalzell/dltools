@@ -1142,10 +1142,9 @@ int main(int argc, char *argv[])
                 video_start_time = mmin(vid.timestamp, video_start_time);
                 video_end_time = mmax(vid.timestamp, video_end_time);
 
-                //printf("framenum = %d, maxfrn = %d\n", framenum, maxfrn);
-                /* video->maxfrn != 0 only if input is yuv, reset timecode at end of file */
-                if (video->maxfrn)
-                    reset_timecode = resettime && !(framenum % video->maxfrn) ? true : false;
+                /* reset timecode at end of file, only supported with yuv files */
+                if (resettime && video->atend())
+                    reset_timecode = true;
 
                 if (verbose>=3)
                     dlmessage("info: frame %d timestamp %s, decode %.1fms render %.1fms", framenum, describe_sts(vid.timestamp), vid.decode_time/1000.0, vid.render_time/1000.0);

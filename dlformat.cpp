@@ -71,11 +71,6 @@ long long dlformat::get_dts()
     return -1ll;
 }
 
-dlsource* dlformat::get_source()
-{
-    return source;
-}
-
 /* elementary stream format decoder class */
 
 /* transport stream format decoder class */

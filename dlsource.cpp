@@ -115,6 +115,7 @@ int dlfile::rewind(dltoken_t t)
     int r = lseek(file[t], 0, SEEK_SET);
     if (r<0)
         dlerror("failed to seek in file \"%s\"", filename);
+    eof_flag[t] = 0;
 
     return r;
 }

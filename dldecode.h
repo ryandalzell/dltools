@@ -38,6 +38,7 @@ public:
     virtual ~dldecode();
 
     virtual int attach(dlformat *format);
+    virtual bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize) = 0;
 
     /* verbose level */
@@ -62,7 +63,6 @@ public: /* yes public, we're not designing a type library here */
     bool interlaced;
     float framerate;
     pixelformat_t pixelformat;
-    unsigned maxfrn;
 
     /* decoder debug */
 public:
@@ -90,7 +90,7 @@ public:
     void set_fourcc(const char *f) { fourcc = f; }
 
     virtual int attach(dlformat *format);
-    bool atend();
+    virtual bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
@@ -117,7 +117,6 @@ public:
     ~dlmpeg2();
 
     virtual int attach(dlformat *format);
-    bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
@@ -137,7 +136,6 @@ public:
     ~dlpcm();
 
     virtual int attach(dlformat *format);
-    bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
@@ -206,7 +204,7 @@ public:
     ~dlhevc();
 
     virtual int attach(dlformat *format);
-    bool atend();
+    virtual bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
@@ -231,7 +229,6 @@ public:
 
     void init();
     virtual int attach(dlformat *format);
-    bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:
@@ -261,7 +258,6 @@ public:
     ~dlffmpeg();
 
     virtual int attach(dlformat *format);
-    bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:

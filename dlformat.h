@@ -17,6 +17,7 @@ public:
     virtual ~dlformat();
 
     /* format operators */
+    virtual int rewind(dltoken_t token=0) { return source->rewind(token); }
     virtual int attach(dlsource *source);
 
     /* copy to buffer read */
@@ -29,7 +30,12 @@ public:
     virtual long long get_dts();
 
     /* expose source interfaces */
-    dlsource *get_source();
+    //virtual const char *description() { return source->description(); }
+    virtual const char *name() { return source->name(); }
+    virtual size_t filesize() { return source->size(); }
+    virtual off_t pos() { return source->pos(token); }
+    virtual bool eof() { return source->eof(token); }
+    virtual bool error() { return source->error(token); }
 
     /* format metadata */
     virtual const char *description() { return "raw"; }
