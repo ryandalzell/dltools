@@ -1080,9 +1080,7 @@ int main(int argc, char *argv[])
                 reset_timecode = false;
 
                 unsigned long long start = get_utime();
-
                 HRESULT result = output->ScheduleVideoFrame(frame, vid.timestamp, lround(180000.0/framerate), 180000);
-
                 queuetime += get_utime() - start;
                 if (result != S_OK) {
                     switch (result) {
@@ -1128,14 +1126,12 @@ int main(int argc, char *argv[])
 
                 /* extract the frame buffer pointer without type punning */
                 result = frame->GetBytes(&voidptr);
-
                 if (result!=S_OK)
                     dlapierror(result, "error: failed to get pointer to data in video frame");
                 unsigned char *uyvy = (unsigned char *)voidptr;
 
                 /* read the next frame */
                 vid = video->decode(uyvy, frame->GetRowBytes()*frame->GetHeight());
-
                 if (vid.size==0) {
                     dlmessage("error: failed to decode video frame %d in file \"%s\"", framenum, filename);
                     if (source->timeout())
