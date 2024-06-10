@@ -38,7 +38,7 @@ int dlformat::attach(dlsource* s)
 size_t dlformat::read(unsigned char *buf, size_t bytes)
 {
     size_t size = source->read(buf, bytes, token);
-    if (size!=bytes) {
+    if (size==0) {
         /* no timestamp so simply loop input */
         source->rewind(token);
         size = source->read(buf, bytes, token);
@@ -50,7 +50,7 @@ const unsigned char *dlformat::read(size_t *bytes)
 {
     size_t size = *bytes;
     const unsigned char *data = source->read(bytes, token);
-    if (data==NULL || size!=*bytes) {
+    if (data==NULL || *bytes==0) {
         /* no timestamp so simply loop input */
         source->rewind(token);
         *bytes = size; /* discard previous read */

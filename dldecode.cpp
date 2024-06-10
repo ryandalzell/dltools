@@ -204,7 +204,7 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
     decode_t results = {0, -1ll, 0ll, 0ll};
 
     const unsigned char *data;
-    size_t read;
+    size_t read = 0;
     do {
         mpeg2_state_t state = mpeg2_parse(mpeg2dec);
         switch (state) {
