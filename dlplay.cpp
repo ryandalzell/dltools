@@ -202,7 +202,8 @@ static void set_timecode(IDeckLinkMutableVideoFrame *frame, BMDTimeScale framera
             setVITC1Timecode = true;
     }
 
-    //printf("frame %d, timecode[%.2d:%.2d:%.2d.%.2d]\n", timecode.ff, timecode.hh, timecode.mm, timecode.ss, timecode.ff);
+    //printf("frame %d, timecode[%.2d:%.2d:%.2d.%.2d]%s\n", timecode->ff, timecode->hh, timecode->mm, timecode->ss, ff,
+    //       timeCodeFlag & bmdTimecodeIsDropFrame? " (drop)" : "");
     if (setVITC1Timecode)
         frame->SetTimecodeFromComponents(bmdTimecodeRP188VITC1, timecode->hh, timecode->mm, timecode->ss, ff, timeCodeFlag);
 
@@ -221,7 +222,7 @@ void usage(int exitcode)
     fprintf(stderr, "  -s, --sizeformat    : specify display size format: 480i,480p,576i,720p,1080i,1080p [optional +framerate] (default: autodetect)\n");
     fprintf(stderr, "  -f, --fourcc        : specify pixel fourcc format: i420,i422,uyvy (default: i420)\n");
     fprintf(stderr, "  -I, --interface     : address of interface to listen for multicast data (default: first network interface)\n");
-    fprintf(stderr, "  -r, --resettime     : enable timecode reset when input wrap around (default: off)\n");
+    fprintf(stderr, "  -r, --resettime     : reset timecode to zero when input yuv file wraps around (default: off)\n");
     fprintf(stderr, "  -a, --firstframe    : index of first frame in input to display (default: 0)\n");
     fprintf(stderr, "  -n, --numframes     : total number of frames to display (default: no limit)\n");
     fprintf(stderr, "  -2, --halfrate      : allow using half frame rate, e.g. 30fps when 60fps is not supported (default: off)\n");
@@ -497,6 +498,9 @@ int main(int argc, char *argv[])
     if (config->SetFlag(bmdDeckLinkConfigOutput1080pAsPsF, false))
         dlmessage("warning: failed to set card configuration to not use PsF");
 
+    /* initialise timecode */
+    TimeCode timecode = {0};
+    bool reset_timecode = true;
 
     /* play input files sequentially */
     unsigned int restart = 1, exit = 0;
@@ -877,10 +881,6 @@ int main(int argc, char *argv[])
             if (name)
                 delete name;
         }
-
-        /* timecode */
-        TimeCode timecode = {0};
-        bool reset_timecode = true;
 
         /* vanc timecode enabled */
         BMDVideoOutputFlags videoOutputFlags = bmdVideoOutputFlagDefault | bmdVideoOutputRP188;
