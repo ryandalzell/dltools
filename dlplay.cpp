@@ -1105,14 +1105,26 @@ int main(int argc, char *argv[])
                     return 2;
                 }
 
+                /* find best start time from video and audio */
+                sts_t start_time = 0;
+                /* audio only handled below */
+                if (videoonly)
+                    start_time = video_start_time;
+                //else if (llabs(video_start_time-audio_start_time)>180000)
+                //    start_time = mmax(video_start_time, audio_start_time);
+                else if (video_start_time==0 && audio_start_time>180000)
+                    start_time = audio_start_time;
+                else
+                    start_time = mmin(video_start_time, audio_start_time);
+
                 /* start the playback */
-                if (output->StartScheduledPlayback(mmin(video_start_time, audio_start_time), 180000, 1.0) != S_OK)
+                if (output->StartScheduledPlayback(start_time, 180000, 1.0) != S_OK)
                     dlexit("error: failed to start video playback");
 
                 if (verbose>=1)
                     dlmessage("info: pre-rolled %d frames", queuenum);
                 if (verbose>=1)
-                    dlmessage("info: start time of video is %lld, %s", video_start_time, describe_sts(video_start_time));
+                    dlmessage("info: start time of video is %lld, %s", start_time, describe_sts(start_time));
             }
 
             /* decode the next frame */
