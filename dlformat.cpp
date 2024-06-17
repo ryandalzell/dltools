@@ -150,7 +150,7 @@ const unsigned char *dltstream::read(size_t *bytes)
 
         /* skip adaption field */
         int adaptation_field_control = (packet[3] >> 4) & 0x3;
-        if (adaptation_field_control==3)
+        if (adaptation_field_control==2 || adaptation_field_control==3)
             ptr += 1 + packet[4];
 
         /* skip pes header */
