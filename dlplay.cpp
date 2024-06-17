@@ -502,6 +502,13 @@ int main(int argc, char *argv[])
     TimeCode timecode = {0};
     bool reset_timecode = true;
 
+    /* start the status thread */
+    exit_thread = 0;
+    if (pthread_create(&status_thread, NULL, display_status, output)<0)
+        dlerror("failed to create status thread");
+
+    dlmessage("press q to exit, p to pause, s to swap fields...");
+
     /* play input files sequentially */
     unsigned int restart = 1, exit = 0;
     while (restart && !exit) {
@@ -937,13 +944,6 @@ int main(int argc, char *argv[])
         } history_frame_t;
         history_frame_t history_buffer[MAX_HISTORY_FRAMES];
 
-        /* start the status thread */
-        exit_thread = 0;
-        if (pthread_create(&status_thread, NULL, display_status, output)<0)
-            dlerror("failed to create status thread");
-
-        dlmessage("press q to exit, p to pause, s to swap fields...");
-
         /* initialise terminal for user input */
 #ifdef USE_TERMIOS
         class dlterm term;
@@ -1294,9 +1294,6 @@ int main(int argc, char *argv[])
             }
         }
 
-        /* stop the status display */
-        exit_thread = 1;
-
         /* stop the video output */
         output->StopScheduledPlayback(0, NULL, 0);
         output->DisableVideoOutput();
@@ -1321,8 +1318,11 @@ int main(int argc, char *argv[])
         delete aud_fmt;
         delete video;
         delete audio;
-        pthread_join(status_thread, NULL);
     }
+
+    /* stop the status display */
+    exit_thread = 1;
+    pthread_join(status_thread, NULL);
 
     /* tidy up */
     config->Release();
