@@ -25,7 +25,9 @@ typedef enum {
     I420,
     I422,
     I444,
-    UYVY
+    UYVY,
+    YU15,
+    YU20
 } pixelformat_t;
 
 /* timestamp */
@@ -54,5 +56,6 @@ const char *describe_pts(pts_t t);
 const char *describe_sts(sts_t t);
 const char *describe_filetype(filetype_t f);
 size_t pixelformat_get_size(pixelformat_t pixelformat, int width, int height);
+bool pixelformat_is_8bit(pixelformat_t pixelformat);
 
 #endif

@@ -178,7 +178,9 @@ const char *pixelformatname[] = {
     "I420",
     "I422",
     "I444",
-    "UYVY"
+    "UYVY",
+    "YU15",
+    "YU20"
 };
 
 int divine_pixel_format(const char *filename, pixelformat_t *pixelformat)
@@ -188,6 +190,10 @@ int divine_pixel_format(const char *filename, pixelformat_t *pixelformat)
 
     if (strstr(filename, "uyvy")!=NULL || strstr(filename, "UYVY")!=NULL)
         *pixelformat = UYVY;
+    else if (strstr(filename, "yu15")!=NULL || strstr(filename, "YU15")!=NULL)
+        *pixelformat = YU20;
+    else if (strstr(filename, "yu20")!=NULL || strstr(filename, "YU20")!=NULL)
+        *pixelformat = YU20;
     else if (strstr(filename, "444")!=NULL)
         *pixelformat = I444;
     else if (strstr(filename, "422")!=NULL)
@@ -366,7 +372,16 @@ size_t pixelformat_get_size(pixelformat_t pixelformat, int width, int height)
         case I422:
         case UYVY: return width*height*2;
         case I444: return width*height*3;
+        case YU15: return 2*width*height + 4*width*height/4;
+        case YU20: return 2*width*height + 4*width*height/2;
         case UNKNOWN: dlexit("unknown pixelformat: %d", pixelformat);
     }
     return 0;
+}
+
+bool pixelformat_is_8bit(pixelformat_t pixelformat)
+{
+    if (pixelformat==YU15 || pixelformat==YU20)
+        return 0;
+    return 1;
 }

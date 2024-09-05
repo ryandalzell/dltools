@@ -220,7 +220,7 @@ void usage(int exitcode)
     fprintf(stderr, "%s: play raw video files\n", appname);
     fprintf(stderr, "usage: %s [options] <file/url>\n", appname);
     fprintf(stderr, "  -s, --sizeformat    : specify display size format: 480i,480p,576i,720p,1080i,1080p [optional +framerate] (default: autodetect)\n");
-    fprintf(stderr, "  -f, --fourcc        : specify pixel fourcc format: i420,i422,uyvy (default: i420)\n");
+    fprintf(stderr, "  -f, --fourcc        : specify pixel fourcc format: i420,i422,uyvy,yu15,yu20 (default: i420)\n");
     fprintf(stderr, "  -I, --interface     : address of interface to listen for multicast data (default: first network interface)\n");
     fprintf(stderr, "  -r, --resettime     : reset timecode to zero when input yuv file wraps around (default: off)\n");
     fprintf(stderr, "  -a, --firstframe    : index of first frame in input to display (default: 0)\n");
@@ -1132,7 +1132,11 @@ int main(int argc, char *argv[])
                 unsigned long long start = get_utime();
 
                 /* allocate a new frame object */
-                HRESULT result = output->CreateVideoFrame(pic_width, pic_height, pic_width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame);
+                HRESULT result;
+                if (pixelformat_is_8bit(pixelformat))
+                    result = output->CreateVideoFrame(pic_width, pic_height, pic_width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame);
+                else
+                    result = output->CreateVideoFrame(pic_width, pic_height, ((pic_width+47)/48)*128, bmdFormat10BitYUV, bmdFrameFlagDefault, &frame);
                 if (result!=S_OK)
                     dlapierror(result, "error: failed to create video frame");
 
