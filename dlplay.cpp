@@ -478,10 +478,6 @@ int main(int argc, char *argv[])
     /* create callback object */
     class callback the_callback(output);
 
-    /* assign the custom memory allocator */
-    if (output->SetVideoOutputFrameMemoryAllocator(&alloc)!=S_OK)
-        dlexit("%s: error: could not set a custom memory allocator");
-
     /* configure the decklink card to output on SDI single-link only
      * and smpte level A for 3G, and PsF set to off,
      * this is a necessary precaution as it appears that these configurations
@@ -894,6 +890,16 @@ int main(int argc, char *argv[])
 
         /* set the video output mode */
         if (video) {
+            /* inform allocator of frame size */
+            int32_t rowbytes;
+            if (pixelformat_is_8bit(pixelformat)) {
+                output->RowBytesForPixelFormat(bmdFormat8BitYUV, pic_width, &rowbytes);
+                alloc.init(rowbytes*pic_height);
+            } else {
+                output->RowBytesForPixelFormat(bmdFormat8BitYUV, pic_width, &rowbytes);
+                alloc.init(rowbytes*pic_height);
+            }
+
             HRESULT result = output->EnableVideoOutput(mode->GetDisplayMode(), videoOutputFlags);
             if (result!=S_OK)
                 dlapierror(result, "failed to enable video output");
@@ -1132,16 +1138,19 @@ int main(int argc, char *argv[])
                 unsigned long long start = get_utime();
 
                 /* allocate a new frame object */
-                HRESULT result;
+                IDeckLinkVideoBuffer *buffer;
+                HRESULT result = alloc.AllocateVideoBuffer(&buffer);
+                if (result!=S_OK)
+                    dlapierror(result, "error: failed to allocate video buffer");
                 if (pixelformat_is_8bit(pixelformat))
-                    result = output->CreateVideoFrame(pic_width, pic_height, pic_width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame);
+                    result = output->CreateVideoFrameWithBuffer(pic_width, pic_height, pic_width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, buffer, &frame);
                 else
-                    result = output->CreateVideoFrame(pic_width, pic_height, ((pic_width+47)/48)*128, bmdFormat10BitYUV, bmdFrameFlagDefault, &frame);
+                    result = output->CreateVideoFrameWithBuffer(pic_width, pic_height, ((pic_width+47)/48)*128, bmdFormat10BitYUV, bmdFrameFlagDefault, buffer, &frame);
                 if (result!=S_OK)
                     dlapierror(result, "error: failed to create video frame");
 
                 /* extract the frame buffer pointer without type punning */
-                result = frame->GetBytes(&voidptr);
+                result = buffer->GetBytes(&voidptr);
                 if (result!=S_OK)
                     dlapierror(result, "error: failed to get pointer to data in video frame");
                 unsigned char *uyvy = (unsigned char *)voidptr;
@@ -1172,7 +1181,7 @@ int main(int argc, char *argv[])
                     history_buffer[num_history_frames].timestamp = vid.timestamp;
                     num_history_frames++;
                 } else {
-                    history_buffer[0].frame->Release();
+                    history_buffer[0].frame->Release(); /* NOTE this also releases the associated video buffer */
                     memmove(&history_buffer[0], &history_buffer[1], (MAX_HISTORY_FRAMES-1)*sizeof(history_frame_t));
                     history_buffer[MAX_HISTORY_FRAMES-1].frame = frame;
                     history_buffer[MAX_HISTORY_FRAMES-1].timestamp = vid.timestamp;

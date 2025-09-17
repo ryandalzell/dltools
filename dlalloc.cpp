@@ -10,15 +10,55 @@
 #include "dlutil.h"
 #include "dlalloc.h"
 
+/* there must be a better way than this! */
+class dlvideobuf;
+static dlvideobuf *heap[POOLSIZE];
+static unsigned spare;
+
+ULONG STDMETHODCALLTYPE dlvideobuf::AddRef()
+{
+    //dlmessage("videobuf %2d addref: refcnt=%d", index, refcnt+1);
+    return ++refcnt;
+}
+
+ULONG STDMETHODCALLTYPE dlvideobuf::Release()
+{
+    ULONG ret = --refcnt;
+    //dlmessage("videobuf %2d release: refcnt=%d", index, refcnt);
+    if (!ret) {
+        /* put buffer on spare heap */
+        heap[spare++] = this;
+    }
+    return ret;
+}
+
 dlalloc::dlalloc()
 {
-    refcnt = 0;
+    refcnt = 1;
+    bufsize = 0;
+
+    /* init pool */
     index = 0;
+    spare = 0;
+    memset(pool, 0, sizeof(dlvideobuf *) * POOLSIZE);
+    memset(heap, 0, sizeof(dlvideobuf *) * POOLSIZE);
 }
 
 dlalloc::~dlalloc()
 {
-    Decommit();
+    unsigned i;
+
+    for (i=0; i<index; i++)
+        if (pool[i])
+            delete pool[i];
+
+    index = 0;
+    memset(pool, 0, sizeof(void *) * POOLSIZE);
+}
+
+void dlalloc::init(uint32_t bufferSize)
+{
+    bufsize = bufferSize;
 }
 
 ULONG STDMETHODCALLTYPE dlalloc::AddRef()
@@ -31,54 +71,32 @@ ULONG STDMETHODCALLTYPE dlalloc::Release()
     return --refcnt;
 }
 
-HRESULT STDMETHODCALLTYPE dlalloc::AllocateBuffer(unsigned int size, void **buf)
+HRESULT dlalloc::AllocateVideoBuffer(IDeckLinkVideoBuffer ** allocated)
 {
+    if (!allocated)
+        return E_POINTER;
+    if (bufsize==0)
+        return E_UNEXPECTED;
+
     /* first try to reuse a spare buffer */
     if (spare>0) {
-        *buf = heap[--spare];
+        *allocated = heap[--spare];
         return S_OK;
     }
 
     /* else allocate a new buffer */
-    if (index==POOLSIZE)
+    if (index==POOLSIZE) {
+        dlmessage("all buffers in pool of size %d are allocated", POOLSIZE);
         return E_OUTOFMEMORY;
+    }
 
-    if (posix_memalign(&pool[index], 1024, size) != 0)
+    void *buf;
+    if (posix_memalign(&buf, 1024, bufsize) != 0)
         return E_OUTOFMEMORY;
+    pool[index] = new dlvideobuf(buf, index);
 
-    *buf = pool[index];
+    *allocated = pool[index];
     index++;
-
-    return S_OK;
-}
-
-HRESULT STDMETHODCALLTYPE dlalloc::ReleaseBuffer(void *buf)
-{
-    /* put buffer on spare heap */
-    heap[spare++] = buf;
-    return S_OK;
-}
-
-HRESULT STDMETHODCALLTYPE dlalloc::Commit()
-{
-    index = 0;
-    spare = 0;
-    memset(pool, 0, sizeof(void *) * POOLSIZE);
-    memset(heap, 0, sizeof(void *) * POOLSIZE);
-
-    return S_OK;
-}
-
-HRESULT STDMETHODCALLTYPE dlalloc::Decommit()
-{
-    unsigned i;
-
-    for (i=0; i<index; i++)
-        if (pool[i])
-            free(pool[i]);
-
-    index = 0;
-    memset(pool, 0, sizeof(void *) * POOLSIZE);
 
     return S_OK;
 }

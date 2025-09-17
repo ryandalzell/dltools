@@ -229,8 +229,15 @@ HRESULT DeckLinkCapture::VideoInputFrameArrived(IDeckLinkVideoInputFrame* videof
             /* write video frame to file */
             if (fileout) {
                 int framesize = videoframe->GetRowBytes() * videoframe->GetHeight();
+                IDeckLinkVideoBuffer* videoBuffer;
                 void *framedata;
-                videoframe->GetBytes(&framedata);
+
+                HRESULT result = videoframe->QueryInterface(IID_IDeckLinkVideoBuffer, (void**)&videoBuffer);
+                if (result!=S_OK)
+                    dlapierror(result, "failed to query video frame");
+                result = videoBuffer->GetBytes(&framedata);
+                if (result!=S_OK)
+                    dlapierror(result, "failed to access frame buffer address");
                 int write = fwrite(framedata, framesize, 1, fileout);
                 if (write!=1)
                     dlerror("failed to write %d bytes to output");
