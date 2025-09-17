@@ -180,6 +180,8 @@ static void set_timecode(IDeckLinkMutableVideoFrame *frame, BMDTimeScale framera
     int ff = framerate > 30 ? timecode->ff >> 1 : timecode->ff;
     bool oddflag = timecode->ff & 1;
 
+    //dlmessage("timecode: %02d:%02d:%02d:%02d%s", timecode->hh, timecode->mm, timecode->ss, timecode->ff, reset? " - reset":"");
+
     /* set the timecode in the frame */
     bool setVITC1Timecode = false;
     bool setVITC2Timecode = false;
@@ -1076,15 +1078,6 @@ int main(int argc, char *argv[])
 
             /* enqueue previous frame */
             if (frame && video) {
-                /* set timecode for the current frame */
-                set_timecode(frame,
-                             framerate_scale,
-                             framerate_duration,
-                             mode->GetFieldDominance() == bmdProgressiveFrame,
-                             &timecode,
-                             reset_timecode);
-                reset_timecode = false;
-
                 unsigned long long start = get_utime();
                 HRESULT result = output->ScheduleVideoFrame(frame, vid.timestamp, lround(180000.0/framerate), 180000);
                 queuetime += get_utime() - start;
@@ -1166,6 +1159,15 @@ int main(int argc, char *argv[])
                 decodetime += get_utime() - start;
                 video_start_time = mmin(vid.timestamp, video_start_time);
                 video_end_time = mmax(vid.timestamp, video_end_time);
+
+                /* set timecode for the next frame */
+                set_timecode(frame,
+                             framerate_scale,
+                             framerate_duration,
+                             mode->GetFieldDominance() == bmdProgressiveFrame,
+                             &timecode,
+                             reset_timecode);
+                reset_timecode = false;
 
                 /* reset timecode at end of file, only supported with yuv files */
                 if (resettime && video->atend())
