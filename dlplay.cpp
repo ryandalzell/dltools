@@ -46,6 +46,7 @@ int exit_thread;
 
 /* display statistics */
 const int PREROLL_FRAMES = 60;
+const int MAX_HISTORY_FRAMES = PREROLL_FRAMES*3/2;  /* the history buffer needs to be larger than preroll for pause mode to work */
 bool preroll;
 unsigned int completed;
 unsigned int late, dropped, flushed;
@@ -509,7 +510,8 @@ int main(int argc, char *argv[])
     if (pthread_create(&status_thread, NULL, display_status, output)<0)
         dlerror("failed to create status thread");
 
-    dlmessage("press q to exit, p to pause, s to swap fields...");
+    if (verbose>=0)
+        dlmessage("press q to exit, p to pause, s to swap fields");
 
     /* play input files sequentially */
     unsigned int restart = 1, exit = 0;
@@ -948,7 +950,6 @@ int main(int argc, char *argv[])
 
         /* video frame history buffer */
         int num_history_frames = 0;
-        const int MAX_HISTORY_FRAMES = 30;
         typedef struct {
             IDeckLinkVideoFrame *frame;
             sts_t timestamp;
@@ -969,7 +970,7 @@ int main(int argc, char *argv[])
         int blocknum = 0;
         unsigned long long queuetime = 0;
         unsigned long long decodetime = 0;
-        while (true) {
+        while (!exit) {
 
             /* check for user input */
 #ifdef USE_TERMIOS
@@ -977,7 +978,7 @@ int main(int argc, char *argv[])
                 int c = term.readchar();
 
                 /* pause */
-                if (c=='p' && video) {
+                if ((c=='p' || c==' ') && video) {
                     /* enter pause mode */
                     pause_mode = 1;
 
@@ -997,7 +998,10 @@ int main(int argc, char *argv[])
                                 break;
                             }
                         }
+                    //dlmessage("pause_index=%d time=%lld history_buffer=[%lld, %lld]", pause_index, time, history_buffer[0].timestamp, history_buffer[num_history_frames-1].timestamp);
 
+                    if (verbose>=0)
+                        dlmessage("press j or left arrow to step back, k or right arrow to step forward");
                     if (verbose>=1)
                         dlmessage("current time is %s, pause timestamp %s", describe_sts(time), describe_sts(history_buffer[pause_index].timestamp));
 
@@ -1013,22 +1017,26 @@ int main(int argc, char *argv[])
                         /* blocking terminal read */
                         c = term.readchar();
 
-                        if (c=='j')
+                        if (c=='j' || c==68)    // left arrow is three codes, but 68 is the unique code
                             if (pause_index>0)
                                 output->DisplayVideoFrameSync(history_buffer[--pause_index].frame);
 
-                        if (c=='k')
+                        if (c=='k' || c==67)
                             if (pause_index<num_history_frames-1)
                                 output->DisplayVideoFrameSync(history_buffer[++pause_index].frame);
 
-                    } while (c!='p' && c!='q');
+                        /* keys to exit pause mode */
+                    } while (c!='p' && c!=' ' && c!='q' && c!='Q' && c!='\n');
 
-                    /* preroll from end of history buffer to current pause index */
-                    for (int i=num_history_frames-1; i>pause_index; i--)
-                        if (output->ScheduleVideoFrame(history_buffer[i].frame, history_buffer[i].timestamp, lround(180000.0/framerate), 180000)==S_OK)
-                            video_start_time = history_buffer[i].timestamp;
-                        else
-                            break;
+                    /* preroll from current frame to end of history buffer */
+                    queuenum = 0;
+                    video_start_time = 1ll<<35;
+                    for (int i = pause_index+1; i<num_history_frames-1; i++)
+                        if (output->ScheduleVideoFrame(history_buffer[i].frame, history_buffer[i].timestamp, lround(180000.0/framerate), 180000)==S_OK) {
+                            video_start_time = mmin(video_start_time, history_buffer[i].timestamp);
+                            queuenum++;
+                        } else
+                            dlmessage("failed to preroll out of pause mode: index=%d", i);
 
                     /* resume the audio output */
                     if (audio) {
@@ -1044,7 +1052,6 @@ int main(int argc, char *argv[])
 
                     /* resume scheduled playback */
                     preroll = 1;
-                    queuenum = 0;
 
                     /* exit pause */
                     pause_mode = 0;
@@ -1053,19 +1060,21 @@ int main(int argc, char *argv[])
                 if (c=='s' && video) {
                     topfieldfirst = !topfieldfirst;
                     video->set_field_order(topfieldfirst);
-                    dlmessage("setting deinterlace field order to %s field first", topfieldfirst? "top" : "bottom");
+                    if (verbose>=0)
+                        dlmessage("setting deinterlace field order to %s field first", topfieldfirst? "top" : "bottom");
                 }
 
                 /* verbose */
                 if (c=='v') {
                     verbose++;
-                    break;
+                }
+                if (c=='V') {
+                    verbose--;
                 }
 
                 /* quit */
-                if (c=='q' || c=='\n') {
+                if (c=='q' || c=='Q' || c=='\n' || c==27) {
                     exit = 1;
-                    break;
                 }
             }
 #endif
