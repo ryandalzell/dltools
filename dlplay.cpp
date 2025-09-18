@@ -642,7 +642,7 @@ int main(int argc, char *argv[])
                         case 0x03:
                         case 0x04:
                             audio = new dlmpg123;
-                            aud_size = 32768;
+                            aud_size = 48000*2; // 0.5 sec
                             break;
 
                         case 0x1c:
