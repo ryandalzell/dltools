@@ -69,7 +69,7 @@ public:
 
     /* implementation of IDeckLinkVideoOutputCallback */
     /* IUnknown needs only a dummy implementation */
-    virtual HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, LPVOID *ppv) {return E_NOINTERFACE;}
+    virtual HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, LPVOID *ppv) {(void)iid; (void)ppv; return E_NOINTERFACE;}
     virtual ULONG STDMETHODCALLTYPE   AddRef()  {return 1;}
     virtual ULONG STDMETHODCALLTYPE   Release() {return 1;}
 
@@ -116,6 +116,7 @@ bool test()
 
 HRESULT callback::ScheduledFrameCompleted(IDeckLinkVideoFrame* frame, BMDOutputFrameCompletionResult result)
 {
+    (void) frame;
     switch (result) {
         case bmdOutputFrameDisplayedLate: late++; break;
         case bmdOutputFrameDropped: dropped++; break;
@@ -138,6 +139,7 @@ HRESULT callback::ScheduledPlaybackHasStopped ()
 
 HRESULT callback::RenderAudioSamples(bool preroll)
 {
+    (void) preroll;
     return S_OK;
 }
 
@@ -468,8 +470,10 @@ int main(int argc, char *argv[])
     IDeckLink *card;
     int i;
     for (i=0; i<=index; i++)
-        if (iterator->Next(&card)!=S_OK)
+        if (iterator->Next(&card)!=S_OK) {
             dlexit("error: failed to find DeckLink card with index %d", i);
+        iterator->Release();
+    }
 
     /* obtain the audio/video output interface */
     void *voidptr;
@@ -853,8 +857,7 @@ int main(int argc, char *argv[])
                     //bool interlaced = mode->GetFieldDominance()!=bmdProgressiveFrame;
                     //dlmessage("mode available: %ldx%ld%c%.2f (%s)", mode->GetWidth(), mode->GetHeight(), interlaced? 'i' : 'p', (double)framerate_scale/framerate_duration*(interlaced?2.0:1.0), name);
                     dlmessage("mode available: %s", name);
-                    if (name)
-                        delete name;
+                    free((char *)name);
                 }
                 if (mode->GetWidth()==dis_width && mode->GetHeight()==dis_height) {
                     if ((mode->GetFieldDominance()==bmdProgressiveFrame) ^ interlaced) {
@@ -873,6 +876,7 @@ int main(int argc, char *argv[])
                         }
                     }
                 }
+                mode->Release();
             }
             iterator->Release();
 
@@ -883,8 +887,7 @@ int main(int argc, char *argv[])
             const char *name = NULL;
             if (mode->GetName(&name)==S_OK)
                 dlmessage("info: video mode %s %s", name, halfframerate?"(half rate)":"");
-            if (name)
-                delete name;
+            free((char *)name);
         }
 
         /* vanc timecode enabled */
@@ -950,7 +953,7 @@ int main(int argc, char *argv[])
             IDeckLinkVideoFrame *frame;
             sts_t timestamp;
         } history_frame_t;
-        history_frame_t history_buffer[MAX_HISTORY_FRAMES];
+        history_frame_t history_buffer[MAX_HISTORY_FRAMES] = {{NULL, 0ll}};
 
         /* initialise terminal for user input */
 #ifdef USE_TERMIOS
@@ -1314,6 +1317,8 @@ int main(int argc, char *argv[])
         output->DisableVideoOutput();
         if (audio)
             output->DisableAudioOutput();
+        mode->Release();
+        output->Release();
 
         /* release all frames in the history buffer */
         for (i=0; i<num_history_frames; i++)

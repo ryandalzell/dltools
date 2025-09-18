@@ -20,6 +20,8 @@ dlformat::dlformat()
 
 dlformat::~dlformat()
 {
+    if (data)
+        free(data);
 }
 
 int dlformat::attach(dlsource* s)

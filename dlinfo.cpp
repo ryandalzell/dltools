@@ -26,8 +26,9 @@ int main(int argc, char *argv[])
     const char *version;
     if (api->GetString(BMDDeckLinkAPIVersion, &version) == S_OK) {
         printf("info: decklink api %s\n", version);
+        free((char *)version);
     }
-    //free(version);
+    api->Release();
 
     /* enumerate all cards in this system */
     int num_devices = 0;
@@ -78,12 +79,13 @@ int main(int argc, char *argv[])
                 printf("%c %s", i? ',' : ' ', name);
 
                 /* tidy up */
-                delete name;
+                free((char *)name);
                 display_mode->Release();
             }
             printf("\n");
 
-
+            displaymode_iterator->Release();
+            interface->Release();
         }
 
         /* list the video input display modes supported by the card */
@@ -115,12 +117,13 @@ int main(int argc, char *argv[])
                 printf("%c %s", i? ',' : ' ', name);
 
                 /* tidy up */
-                delete name;
+                free((char *)name);
                 display_mode->Release();
             }
             printf("\n");
 
-
+            displaymode_iterator->Release();
+            interface->Release();
         }
 
         /* list the available profiles of the card */
@@ -241,6 +244,7 @@ int main(int argc, char *argv[])
                 company = "";
             printf("    label: %s, serial %s, company %s\n", label, serialno, company);
 
+            config->Release();
         }
 
         /* tidy up */
