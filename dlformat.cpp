@@ -78,19 +78,16 @@ long long dlformat::get_dts()
 /* transport stream format decoder class */
 dltstream::dltstream(int p)
 {
-    source = NULL;
     pid = p;
     pts = dts = -1ll;
     packet = NULL;
     packet_valid = false;
-    data = NULL;
-    size = 0;
 }
 
 dltstream::~dltstream()
 {
-    if (data)
-        free(data);
+    if (packet)
+        free(packet);
 }
 
 int dltstream::attach(dlsource *s)

@@ -1318,7 +1318,6 @@ int main(int argc, char *argv[])
         if (audio)
             output->DisableAudioOutput();
         mode->Release();
-        output->Release();
 
         /* release all frames in the history buffer */
         for (i=0; i<num_history_frames; i++)
@@ -1345,6 +1344,7 @@ int main(int argc, char *argv[])
     pthread_join(status_thread, NULL);
 
     /* tidy up */
+    output->Release();
     config->Release();
     card->Release();
     iterator->Release();
