@@ -903,7 +903,7 @@ int main(int argc, char *argv[])
                 output->RowBytesForPixelFormat(bmdFormat8BitYUV, pic_width, &rowbytes);
                 alloc.init(rowbytes*pic_height);
             } else {
-                output->RowBytesForPixelFormat(bmdFormat8BitYUV, pic_width, &rowbytes);
+                output->RowBytesForPixelFormat(bmdFormat10BitYUV, pic_width, &rowbytes);
                 alloc.init(rowbytes*pic_height);
             }
 
