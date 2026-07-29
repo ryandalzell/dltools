@@ -204,7 +204,6 @@ public:
     ~dlhevc();
 
     virtual int attach(dlformat *format);
-    virtual bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
 public:

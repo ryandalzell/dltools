@@ -831,7 +831,7 @@ int dlhevc::attach(dlformat *f)
             /* read a chunk of input data */
             size_t read;
             const unsigned char *data = format->read(&read);
-            if (n) {
+            if (read) {
                 sts_t timestamp = format->get_pts();
                 err = de265_push_data(ctx, data, read, timestamp, NULL);
                 if (!de265_isOK(err)) {
