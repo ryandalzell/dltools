@@ -53,7 +53,9 @@ const unsigned char *dlformat::read(size_t *bytes)
 {
     size_t size = *bytes;
     const unsigned char *data = source->read(bytes, token);
-    if (data==NULL || *bytes!=size) {
+    /* a request of zero bytes means read whatever is available, so only a read
+       returning nothing is the end of the input, not one of a different size */
+    if (data==NULL || (size? *bytes!=size : *bytes==0)) {
         /* no timestamp so simply loop input */
         source->rewind(token);
         *bytes = size; /* discard previous read */
