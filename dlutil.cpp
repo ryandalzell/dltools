@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <string.h>
 #include <stdarg.h>
+#include <ctype.h>
 #include <sys/time.h>
 
 #include "dlutil.h"
@@ -170,6 +171,34 @@ void dlabort(const char *format, ...)
     va_end(ap);
 
     abort();
+}
+
+/* parse an integer command line argument, exits on any error */
+long parse_int_arg(const char *string, long min, long max, const char *name)
+{
+    if (string==NULL || *string=='\0')
+        dlexit("missing value for %s", name);
+
+    /* strtol reports overflow in errno, which is not otherwise cleared */
+    errno = 0;
+    char *end;
+    long value = strtol(string, &end, 10);
+
+    /* reject a string with no digits at all */
+    if (end==string)
+        dlexit("invalid value for %s: \"%s\" is not a number", name, string);
+
+    /* reject anything trailing the number except whitespace */
+    while (isspace((unsigned char)*end))
+        end++;
+    if (*end!='\0')
+        dlexit("invalid value for %s: unexpected \"%s\" after number in \"%s\"", name, end, string);
+
+    /* reject overflow and out of range values */
+    if (errno==ERANGE || value<min || value>max)
+        dlexit("value out of range for %s: \"%s\" is not between %ld and %ld", name, string, min, max);
+
+    return value;
 }
 
 /* pixel format strings */

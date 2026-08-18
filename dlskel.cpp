@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <getopt.h>
+#include <limits.h>
 
 #include "DeckLinkAPI.h"
 
@@ -57,9 +58,7 @@ int main(int argc, char *argv[])
 
         switch (optchar) {
             case 'n':
-                numframes = atoi(optarg);
-                if (numframes<=0)
-                    dlexit("invalid value for numframes: %d", numframes);
+                numframes = parse_int_arg(optarg, 1, INT_MAX, "number of frames");
                 break;
 
             case 'o':

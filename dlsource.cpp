@@ -333,7 +333,7 @@ int dlsock::open(const char *port)
         dlerror("error creating socket");
 
     name.sin_family = AF_INET;
-    name.sin_port = htons(atoi(port));
+    name.sin_port = htons(parse_int_arg(port, 1, 65535, "port number"));
     name.sin_addr.s_addr = multicast? inet_addr(multicast) : INADDR_ANY;
 
     /* assign a name to the socket */
@@ -534,7 +534,7 @@ int dltcpsock::open(const char *port)
 
     name.sin_family = AF_INET;
     name.sin_addr.s_addr = INADDR_ANY;
-    name.sin_port = htons(atoi(port));
+    name.sin_port = htons(parse_int_arg(port, 1, 65535, "port number"));
 
     /* bind the listening socket */
     if (bind(sock, (struct sockaddr *)&name, sizeof(name))<0) {

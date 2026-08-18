@@ -14,6 +14,7 @@
 #include <math.h>
 #include <inttypes.h>
 #include <errno.h>
+#include <limits.h>
 
 extern "C" {
     #include <mpeg2dec/mpeg2.h>
@@ -386,15 +387,11 @@ int main(int argc, char *argv[])
                 break;
 
             case 'a':
-                firstframe = atoi(optarg);
-                if (firstframe<0)
-                    dlexit("invalid value for index of first frame: %d", firstframe);
+                firstframe = parse_int_arg(optarg, 0, INT_MAX, "index of first frame");
                 break;
 
             case 'n':
-                numframes = atoi(optarg);
-                if (numframes<1)
-                    dlexit("invalid value for number of frames: %d", numframes);
+                numframes = parse_int_arg(optarg, 1, INT_MAX, "number of frames");
                 break;
 
             case '2':
@@ -414,21 +411,15 @@ int main(int argc, char *argv[])
                 break;
 
             case 'p':
-                vid_pid = atoi(optarg);
-                if (vid_pid<=1 || vid_pid>8191)
-                    dlexit("invalid value for video pid: %d", vid_pid);
+                vid_pid = parse_int_arg(optarg, 2, 8191, "video pid");
                 break;
 
             case 'o':
-                aud_pid = atoi(optarg);
-                if (aud_pid<=1 || aud_pid>8191)
-                    dlexit("invalid value for audio pid: %d", aud_pid);
+                aud_pid = parse_int_arg(optarg, 2, 8191, "audio pid");
                 break;
 
             case 'i':
-                index = atoi(optarg);
-                if (index<0)
-                    dlexit("invalid value for card index: %d", index);
+                index = parse_int_arg(optarg, 0, INT_MAX, "card index");
                 break;
 
             case 'q':
@@ -535,8 +526,9 @@ int main(int argc, char *argv[])
                 *colon = '\0'; /* mark end of address */
             }
 
-            /* open network socket */
-            if (strtol(address, NULL, 10)>=224 && strtol(address, NULL, 10)<=239)
+            /* open network socket, 224-239 is the multicast range */
+            long first_octet = strtol(address, NULL, 10);
+            if (first_octet>=224 && first_octet<=239)
                 /* multicast */
                 source = new dlsock(address, interface);
             else
