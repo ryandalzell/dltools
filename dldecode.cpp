@@ -1137,6 +1137,9 @@ int dlffvideo::attach(dlformat* f)
     //buf = (unsigned char *) malloc(bufsize + AV_INPUT_BUFFER_PADDING_SIZE);
     //memset(buf + bufsize, 0, AV_INPUT_BUFFER_PADDING_SIZE);
 
+    /* decode with as many threads as the host will support */
+    codeccontext->thread_count = 0;
+
     /* init the decoder, with or without reference counting */
     AVDictionary *opts = NULL;
     //if (api_mode == API_MODE_NEW_API_REF_COUNT)
@@ -1347,6 +1350,9 @@ int dlffmpeg::attach(dlformat* f)
     codeccontext = avcodec_alloc_context3(codec);
     avcodec_parameters_to_context(codeccontext, stream->codecpar);
     //av_codec_set_packet_timebase(codeccontext, stream->time_base);
+
+    /* decode with as many threads as the host will support */
+    codeccontext->thread_count = 0;
 
     /* init the decoders, with or without reference counting */
     AVDictionary *opts = NULL;
