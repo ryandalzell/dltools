@@ -54,34 +54,6 @@ void convert_i420_uyvy(const unsigned char *i420, unsigned char *uyvy, int width
     }
 }
 
-void convert_yu20_v210(const unsigned char *yu20, unsigned char *uyvy, int width, int height, pixelformat_t pixelformat)
-{
-    const int rowbytes = ((width+47)/48)*128;
-
-    /* otherwise for 4:2:0 and 4:2:2 */
-    for (int y=0; y<height; y++) {
-        const uint16_t *yuv[3];
-        yuv[0] = (uint16_t*)yu20 + width*y;
-        if (pixelformat==YU20) {
-            yuv[1] = (uint16_t*)yu20 + width*height + (width/2)*y;
-            yuv[2] = (uint16_t*)yu20 + width*height*6/4 + (width/2)*y;
-        } else { /* YU15 */
-            yuv[1] = (uint16_t*)yu20 + width*height + (width/2)*(y/2);
-            yuv[2] = (uint16_t*)yu20 + width*height*5/4 + (width/2)*(y/2);
-        }
-        uint32_t *v210 = (uint32_t *) (uyvy + (rowbytes * y));
-        for (int x=0; x<width/6; x++) {
-            *(v210++) = uint32_t(*(yuv[2]+0))<<20 | uint32_t(*(yuv[0]+0))<<10 | uint32_t(*(yuv[1]+0));
-            *(v210++) = uint32_t(*(yuv[0]+2))<<20 | uint32_t(*(yuv[1]+1))<<10 | uint32_t(*(yuv[0]+1));
-            *(v210++) = uint32_t(*(yuv[1]+2))<<20 | uint32_t(*(yuv[0]+3))<<10 | uint32_t(*(yuv[2]+1));
-            *(v210++) = uint32_t(*(yuv[0]+5))<<20 | uint32_t(*(yuv[2]+2))<<10 | uint32_t(*(yuv[0]+4));
-            yuv[0] += 6;
-            yuv[1] += 3;
-            yuv[2] += 3;
-        }
-    }
-}
-
 /* read a 10-bit sample, repeating the last one to pad a short group, and clip it
    to the legal range as 0-3 and 1020-1023 are reserved for sdi timing references */
 static inline uint32_t sample10(const uint16_t *plane, int i, int n)
@@ -117,6 +89,21 @@ void convert_yuv10_v210(const unsigned char *yuv[3], const int stride[3], unsign
         unsigned char *tail = (unsigned char *) out;
         memset(tail, 0, v210 + rowbytes*(y+1) - tail);
     }
+}
+
+/* pack 10-bit planar yuv held in one contiguous buffer into v210 */
+void convert_yu20_v210(const unsigned char *yu20, unsigned char *v210, int width, int height, pixelformat_t pixelformat)
+{
+    const uint16_t *luma = (const uint16_t *) yu20;
+
+    /* the chroma planes are half width, and half height as well in 4:2:0 */
+    const unsigned char *yuv[3];
+    yuv[0] = (const unsigned char *) luma;
+    yuv[1] = (const unsigned char *) (luma + width*height);
+    yuv[2] = (const unsigned char *) (luma + (pixelformat==YU20? width*height*6/4 : width*height*5/4));
+    const int stride[3] = { width*2, (width/2)*2, (width/2)*2 };
+
+    convert_yuv10_v210(yuv, stride, v210, width, height, pixelformat);
 }
 
 void convert_yuv_uyvy(const unsigned char *yuv[3], unsigned char *uyvy, int width, int height, pixelformat_t pixelformat)
