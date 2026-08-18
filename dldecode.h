@@ -12,6 +12,7 @@ extern "C" {
     #include <libde265/de265.h>
 #endif
 #ifdef HAVE_FFMPEG
+    #include <libavcodec/avcodec.h>
     #include <libavutil/imgutils.h>
     #include <libavformat/avformat.h>
 #endif

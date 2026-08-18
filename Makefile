@@ -4,7 +4,7 @@
 # Build options
 LIBYUV = 1
 HEVC = 1
-FFMPEG = 0
+FFMPEG = 1
 
 # Build configuration
 PREFIX ?= /usr/local
