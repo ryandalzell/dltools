@@ -7,7 +7,7 @@ HEVC = 1
 FFMPEG = 0
 
 # Build configuration
-BINDIR = /usr/local/bin
+PREFIX ?= /usr/local
 SDKDIR = /usr/local/decklink/include
 PLATFORM = $(shell uname -p)
 
@@ -50,7 +50,8 @@ clean :
 	rm -f $(APPS) $(foreach i,$(APPS),$i.o) dlplay dlplay.o dldecode.o $(OBJS)
 
 install: all
-	install --strip $(filter-out dlskel,$(APPS) dlplay) $(BINDIR)
+	install -d $(PREFIX)/bin
+	install --strip $(filter-out dlskel,$(APPS) dlplay) $(PREFIX)/bin
 
 $(APPS):
 	$(CXX) -o $@ $^ $(LFLAGS)
