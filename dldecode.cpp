@@ -1195,6 +1195,8 @@ int dlffvideo::attach(dlformat* f)
         case AV_PIX_FMT_YUVJ422P : pixelformat = I422; break;
         case AV_PIX_FMT_YUV420P  :
         case AV_PIX_FMT_YUVJ420P : pixelformat = I420; break;
+        case AV_PIX_FMT_YUV422P10LE : pixelformat = YU20; break;
+        case AV_PIX_FMT_YUV420P10LE : pixelformat = YU15; break;
         //case AV_PIX_FMT_GRAY8    : pixelformat = Y800; break;
         default : dlexit("unknown chroma format: %s", av_get_pix_fmt_name(codeccontext->pix_fmt));
     }
@@ -1263,9 +1265,14 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
             unsigned long long decode = get_utime();
             results.decode_time = decode - start;
 
-            /* copy frame to uyvy buffer */
-            convert_yuv_uyvy((const unsigned char **)frame->data, uyvy, width, height, pixelformat);
-            results.size = width*height*2;
+            /* copy frame to the output buffer, 10-bit formats are packed as v210 */
+            if (pixelformat_is_8bit(pixelformat)) {
+                convert_yuv_uyvy((const unsigned char **)frame->data, uyvy, width, height, pixelformat);
+                results.size = width*height*2;
+            } else {
+                convert_yuv10_v210((const unsigned char **)frame->data, frame->linesize, uyvy, width, height, pixelformat);
+                results.size = ((width+47)/48)*128 * height;
+            }
 
             /* get timestamp from decoder */
             sts_t sts = frame->pts;
@@ -1360,6 +1367,8 @@ int dlffmpeg::attach(dlformat* f)
         case AV_PIX_FMT_YUVJ422P : pixelformat = I422; break;
         case AV_PIX_FMT_YUV420P  :
         case AV_PIX_FMT_YUVJ420P : pixelformat = I420; break;
+        case AV_PIX_FMT_YUV422P10LE : pixelformat = YU20; break;
+        case AV_PIX_FMT_YUV420P10LE : pixelformat = YU15; break;
         //case AV_PIX_FMT_GRAY8    : pixelformat = Y800; break;
         default : dlexit("unknown chroma format: %s", av_get_pix_fmt_name(codeccontext->pix_fmt));
     }
@@ -1442,9 +1451,14 @@ decode_t dlffmpeg::decode(unsigned char *uyvy, size_t uyvysize)
             unsigned long long decode = get_utime();
             results.decode_time = decode - start;
 
-            /* copy frame to uyvy buffer */
-            convert_yuv_uyvy((const unsigned char **)frame->data, uyvy, width, height, pixelformat);
-            results.size = width*height*2;
+            /* copy frame to the output buffer, 10-bit formats are packed as v210 */
+            if (pixelformat_is_8bit(pixelformat)) {
+                convert_yuv_uyvy((const unsigned char **)frame->data, uyvy, width, height, pixelformat);
+                results.size = width*height*2;
+            } else {
+                convert_yuv10_v210((const unsigned char **)frame->data, frame->linesize, uyvy, width, height, pixelformat);
+                results.size = ((width+47)/48)*128 * height;
+            }
             /* get pts from decoder */
             sts_t sts = 2*frame->pts;
             if (sts<0 || sts<=last_sts) {

@@ -4,6 +4,8 @@
  * Copyright  : (c) 2011 4i2i Communications Ltd.
  */
 
+#include <string.h>
+
 #include "dlutil.h"
 
 #ifdef HAVE_LIBYUV
@@ -77,6 +79,43 @@ void convert_yu20_v210(const unsigned char *yu20, unsigned char *uyvy, int width
             yuv[1] += 3;
             yuv[2] += 3;
         }
+    }
+}
+
+/* read a 10-bit sample, repeating the last one to pad a short group, and clip it
+   to the legal range as 0-3 and 1020-1023 are reserved for sdi timing references */
+static inline uint32_t sample10(const uint16_t *plane, int i, int n)
+{
+    uint16_t v = plane[i<n? i : n-1] & 0x3ff;
+    return uint32_t(v<4? 4 : v>1019? 1019 : v);
+}
+
+/* pack 10-bit planar yuv in separate planes into v210, honouring the plane strides */
+void convert_yuv10_v210(const unsigned char *yuv[3], const int stride[3], unsigned char *v210, int width, int height, pixelformat_t pixelformat)
+{
+    const int rowbytes = ((width+47)/48)*128;
+
+    /* chroma is subsampled vertically in 4:2:0 but not in 4:2:2 */
+    const int chroma_shift = pixelformat==YU15? 1 : 0;
+    const int chroma_width = (width+1)/2;
+
+    for (int y=0; y<height; y++) {
+        const uint16_t *ly = (const uint16_t *) (yuv[0] + stride[0]*y);
+        const uint16_t *cb = (const uint16_t *) (yuv[1] + stride[1]*(y>>chroma_shift));
+        const uint16_t *cr = (const uint16_t *) (yuv[2] + stride[2]*(y>>chroma_shift));
+        uint32_t *out = (uint32_t *) (v210 + rowbytes*y);
+
+        /* every four words of v210 hold six pixels */
+        for (int x=0, c=0; x<width; x+=6, c+=3) {
+            *(out++) = sample10(cr,c+0,chroma_width)<<20 | sample10(ly,x+0,width)<<10 | sample10(cb,c+0,chroma_width);
+            *(out++) = sample10(ly,x+2,width)<<20 | sample10(cb,c+1,chroma_width)<<10 | sample10(ly,x+1,width);
+            *(out++) = sample10(cb,c+2,chroma_width)<<20 | sample10(ly,x+3,width)<<10 | sample10(cr,c+1,chroma_width);
+            *(out++) = sample10(ly,x+5,width)<<20 | sample10(cr,c+2,chroma_width)<<10 | sample10(ly,x+4,width);
+        }
+
+        /* clear the padding at the end of the row */
+        unsigned char *tail = (unsigned char *) out;
+        memset(tail, 0, v210 + rowbytes*(y+1) - tail);
     }
 }
 
