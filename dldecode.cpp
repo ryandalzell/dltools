@@ -441,6 +441,13 @@ decode_t dlpcm::decode(unsigned char *samples, size_t sampsize) // sampsize is i
                     samples[numsamps+3] = ff_reverse[((ptr[3]&0x0f)<<4) | (ptr[4]>>4)];
                     ptr += 5;
                     break;
+                case 20:
+                    samples[numsamps+0] = ff_reverse[((ptr[0]&0x0f)<<4) | (ptr[1]>>4)];
+                    samples[numsamps+1] = ff_reverse[((ptr[1]&0x0f)<<4) | (ptr[2]>>4)];
+                    samples[numsamps+2] = ff_reverse[((ptr[3]&0x0f)<<4) | (ptr[4]>>4)];
+                    samples[numsamps+3] = ff_reverse[((ptr[4]&0x0f)<<4) | (ptr[5]>>4)];
+                    ptr += 6;
+                    break;
                 case 24:
                     samples[numsamps+0] = ff_reverse[ptr[1]];
                     samples[numsamps+1] = ff_reverse[ptr[2]];
