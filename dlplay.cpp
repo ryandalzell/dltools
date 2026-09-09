@@ -587,11 +587,11 @@ int main(int argc, char *argv[])
                     switch (stream_type) {
                         case 0x02:
                         case 0x80:
-//#ifdef HAVE_FFMPEG
-//                            video = new dlffvideo(AV_CODEC_ID_MPEG2VIDEO);
-//#else
+#ifdef HAVE_FFMPEG
+                            video = new dlffvideo(AV_CODEC_ID_MPEG2VIDEO);
+#else
                             video = new dlmpeg2;
-//#endif
+#endif
                             break;
 
                         case 0x24:
@@ -691,9 +691,11 @@ int main(int argc, char *argv[])
             case M2V :
                 vid_fmt = new dlestream;
                 vid_fmt->attach(source);
+#ifdef HAVE_FFMPEG
+                video = new dlffvideo(AV_CODEC_ID_MPEG2VIDEO);
+#else
                 video = new dlmpeg2;
-                // TODO does this need dims in advance.
-                //video = new dlffvideo(AV_CODEC_ID_MPEG2VIDEO);
+#endif
                 videoonly = 1;
                 break;
 
