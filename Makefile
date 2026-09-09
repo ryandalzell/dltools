@@ -50,7 +50,7 @@ clean :
 	rm -f $(APPS) $(foreach i,$(APPS),$i.o) dlplay dlplay.o dldecode.o $(OBJS)
 
 install: all
-	install -d $(PREFIX)/bin
+	[ -d $(PREFIX)/bin ] || install -d $(PREFIX)/bin
 	install --strip $(filter-out dlskel,$(APPS) dlplay) $(PREFIX)/bin
 
 $(APPS):
