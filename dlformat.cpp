@@ -78,6 +78,241 @@ long long dlformat::get_dts()
 
 /* elementary stream format decoder class */
 
+/* yuv4mpeg2 format decoder class */
+dly4m::dly4m()
+{
+    width = height = 0;
+    interlaced = false;
+    framerate = 0.0;
+    pixelformat = UNKNOWN;
+    framesize = 0;
+    streamhdrsize = framehdrsize = 0;
+    numframes = frames_read = 0;
+}
+
+int dly4m::attach(dlsource *s)
+{
+    /* attach the input source */
+    source = s;
+    token = source->attach();
+
+    /* allocate the buffer */
+    size = 64*1024;     /* arbitrary size to start with */
+    data = (unsigned char *) malloc(size);
+
+    /* parse the stream header */
+    if (read_stream_header()<0)
+        return -1;
+
+    /* the frame headers are assumed to be the same length throughout the
+       stream, so the first one gives the number of frames in the input */
+    if (read_frame_header()<0)
+        return -1;
+    numframes = (source->size() - streamhdrsize) / (framesize + framehdrsize);
+
+    /* rewind to the first frame header */
+    return rewind();
+}
+
+int dly4m::rewind(dltoken_t t)
+{
+    /* the frame headers are parsed on our own token, so rewind that one */
+    if (source->rewind(token)<0)
+        return -1;
+    frames_read = 0;
+
+    /* the stream header is only present at the start of the input */
+    return read_stream_header();
+}
+
+/* read a header, which is a line of text terminated by a newline, from the
+   input, and return its length in bytes, including the newline */
+size_t dly4m::read_header(char *header, size_t maxlen)
+{
+    size_t len = 0;
+
+    while (len<maxlen-1) {
+        unsigned char c;
+        if (source->read(&c, 1, token)!=1)
+            return 0;
+        if (c=='\n') {
+            header[len] = '\0';
+            return len+1;
+        }
+        header[len++] = c;
+    }
+
+    /* header is too long to be valid */
+    return 0;
+}
+
+int dly4m::read_stream_header()
+{
+    char header[1024];
+
+    streamhdrsize = read_header(header, sizeof(header));
+    if (streamhdrsize==0)
+        dlexit("failed to read yuv4mpeg2 stream header in \"%s\"", name());
+    if (strncmp(header, "YUV4MPEG2", 9)!=0)
+        dlexit("not a yuv4mpeg2 stream: \"%s\"", name());
+
+    /* the colourspace parameter is optional, the spec default is 4:2:0 */
+    pixelformat = I420;
+    interlaced = false;
+    framerate = 0.0;
+    width = height = 0;
+
+    /* the parameters are single letter tags, separated by whitespace */
+    for (char *tag = strtok(header+9, " \t"); tag; tag = strtok(NULL, " \t")) {
+        switch (tag[0]) {
+            case 'W':
+                width = atoi(tag+1);
+                break;
+
+            case 'H':
+                height = atoi(tag+1);
+                break;
+
+            case 'F':
+            {
+                /* frame rate is a rational number, numerator:denominator */
+                int num = 0, den = 0;
+                if (sscanf(tag+1, "%d:%d", &num, &den)!=2 || den==0)
+                    dlexit("invalid frame rate in yuv4mpeg2 stream header: %s", tag);
+                framerate = (float)num / (float)den;
+                break;
+            }
+
+            case 'I':
+                /* p is progressive, t and b are interlaced, m is mixed */
+                interlaced = tag[1]=='t' || tag[1]=='b';
+                if (tag[1]=='m')
+                    dlmessage("warning: mixed interlace mode in yuv4mpeg2 stream, assuming progressive");
+                break;
+
+            case 'C':
+            {
+                static const struct {
+                    const char *name;
+                    pixelformat_t pixelformat;
+                } colourspaces[] = {
+                    { "420",      I420 },
+                    { "420jpeg",  I420 },
+                    { "420paldv", I420 },
+                    { "420mpeg2", I420 },
+                    { "422",      I422 },
+                    { "444",      I444 },
+                    { "420p10",   YU15 },
+                    { "422p10",   YU20 },
+                };
+
+                unsigned i;
+                for (i=0; i<sizeof(colourspaces)/sizeof(colourspaces[0]); i++)
+                    if (strcmp(tag+1, colourspaces[i].name)==0) {
+                        pixelformat = colourspaces[i].pixelformat;
+                        break;
+                    }
+                if (i==sizeof(colourspaces)/sizeof(colourspaces[0]))
+                    dlexit("unsupported colourspace in yuv4mpeg2 stream: %s", tag+1);
+                break;
+            }
+
+            /* aspect ratio and comments are not used */
+            case 'A':
+            case 'X':
+                break;
+
+            default:
+                dlmessage("warning: unknown parameter in yuv4mpeg2 stream header: %s", tag);
+                break;
+        }
+    }
+
+    if (width<=0 || height<=0)
+        dlexit("invalid image size in yuv4mpeg2 stream header: %dx%d", width, height);
+    if (framerate<=0.0)
+        dlexit("missing frame rate in yuv4mpeg2 stream header");
+
+    framesize = pixelformat_get_size(pixelformat, width, height);
+
+    return 0;
+}
+
+int dly4m::read_frame_header()
+{
+    char header[1024];
+
+    framehdrsize = read_header(header, sizeof(header));
+    if (framehdrsize==0)
+        /* end of input */
+        return -1;
+    if (strncmp(header, "FRAME", 5)!=0)
+        dlexit("lost synchronisation with yuv4mpeg2 stream in \"%s\"", name());
+
+    return 0;
+}
+
+size_t dly4m::read(unsigned char *buf, size_t bytes)
+{
+    /* the frame data is preceded by a frame header */
+    if (read_frame_header()<0) {
+        /* loop the input */
+        if (rewind()<0 || read_frame_header()<0)
+            return 0;
+    }
+
+    size_t read = source->read(buf, bytes, token);
+    if (read!=bytes) {
+        /* a truncated frame at the end of the input, so loop */
+        if (rewind()<0 || read_frame_header()<0)
+            return 0;
+        read = source->read(buf, bytes, token);
+    }
+    frames_read++;
+
+    return read;
+}
+
+const unsigned char *dly4m::read(size_t *bytes)
+{
+    /* a zero copy read of a whole frame, the frame header is discarded */
+    size_t size = *bytes? *bytes : framesize;
+
+    if (read_frame_header()<0) {
+        /* loop the input */
+        if (rewind()<0 || read_frame_header()<0) {
+            *bytes = 0;
+            return NULL;
+        }
+    }
+
+    *bytes = size;
+    const unsigned char *data = source->read(bytes, token);
+    if (data==NULL || *bytes!=size) {
+        /* a truncated frame at the end of the input, so loop */
+        if (rewind()<0 || read_frame_header()<0) {
+            *bytes = 0;
+            return NULL;
+        }
+        *bytes = size;
+        data = source->read(bytes, token);
+    }
+    frames_read++;
+
+    return data;
+}
+
+int dly4m::get_video_format(int *w, int *h, bool *i, float *f, pixelformat_t *p)
+{
+    if (w) *w = width;
+    if (h) *h = height;
+    if (i) *i = interlaced;
+    if (f) *f = framerate;
+    if (p) *p = pixelformat;
+
+    return 0;
+}
+
 /* transport stream format decoder class */
 dltstream::dltstream(int p)
 {

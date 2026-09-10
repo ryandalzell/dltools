@@ -227,6 +227,7 @@ void usage(int exitcode)
     fprintf(stderr, "usage: %s [options] <file/url>\n", appname);
     fprintf(stderr, "  -s, --sizeformat    : specify display size format: 480i,480p,576i,720p,1080i,1080p [optional +framerate] (default: autodetect)\n");
     fprintf(stderr, "  -f, --fourcc        : specify pixel fourcc format: i420,i422,uyvy,yu15,yu20 (default: i420)\n");
+    fprintf(stderr, "  -F, --framerate     : override the frame rate of the input, e.g. 25, 59.94, 30000:1001 (default: from the input)\n");
     fprintf(stderr, "  -I, --interface     : address of interface to listen for multicast data (default: first network interface)\n");
     fprintf(stderr, "  -r, --resettime     : reset timecode to zero when input yuv file wraps around (default: off)\n");
     fprintf(stderr, "  -a, --firstframe    : index of first frame in input to display (default: 0)\n");
@@ -302,6 +303,7 @@ int main(int argc, char *argv[])
     /* command line defaults */
     char *sizeformat = NULL;
     char *fourcc = NULL;
+    float framerate_override = 0.0;
     const char *interface = NULL;
     int firstframe = 0;
     unsigned numframes = 0;
@@ -338,6 +340,7 @@ int main(int argc, char *argv[])
         static struct option long_options[] = {
             {"sizeformat",1, NULL, 's'},
             {"format",    1, NULL, 'f'},
+            {"framerate", 1, NULL, 'F'},
             {"ts",        0, NULL, 't'},
             {"transportstream", 0, NULL, 't'},
             {"interface", 1, NULL, 'I'},
@@ -360,7 +363,7 @@ int main(int argc, char *argv[])
             {NULL,        0, NULL,  0 }
         };
 
-        int optchar = getopt_long(argc, argv, "s:f:tI:ra:n:2l=~p:o:i:qvh", long_options, NULL);
+        int optchar = getopt_long(argc, argv, "s:f:F:tI:ra:n:2l=~p:o:i:qvh", long_options, NULL);
         if (optchar==-1)
             break;
 
@@ -371,6 +374,10 @@ int main(int argc, char *argv[])
 
             case 'f':
                 fourcc = optarg;
+                break;
+
+            case 'F':
+                framerate_override = parse_framerate_arg(optarg, "frame rate");
                 break;
 
             case 't':
@@ -669,9 +676,14 @@ int main(int argc, char *argv[])
             }
 
             case YUV:
+            case YUV4MPEG:
             {
-                vid_fmt = new dlformat;
-                vid_fmt->attach(source);
+                if (filetype==YUV4MPEG)
+                    vid_fmt = new dly4m;
+                else
+                    vid_fmt = new dlformat;
+                if (vid_fmt->attach(source)<0)
+                    dlexit("failed to attach the %s format decoder to the source", describe_filetype(filetype));
                 dlyuv *yuv = new dlyuv();
 
                 /* yuv specific options */
@@ -776,6 +788,13 @@ int main(int argc, char *argv[])
             interlaced = video->interlaced;
             framerate = video->framerate;
             pixelformat = video->pixelformat;
+
+            /* the command line frame rate overrides the frame rate of the input,
+               the decoder needs it too as it times the frames it produces */
+            if (framerate_override>0.0) {
+                framerate = framerate_override;
+                video->framerate = framerate_override;
+            }
         }
 
         /* initialise the audio encoder */
@@ -805,8 +824,8 @@ int main(int argc, char *argv[])
 
         /* determine display dimensions */
         if (sizeformat) {
-            /* lookup specified format */
-            if (divine_video_format(sizeformat, &dis_width, &dis_height, &interlaced, &framerate)<0)
+            /* lookup specified format, but don't undo an explicit frame rate */
+            if (divine_video_format(sizeformat, &dis_width, &dis_height, &interlaced, framerate_override>0.0? NULL : &framerate)<0)
                 dlexit("failed to determine output video format from filename: %s", sizeformat);
         } else {
             /* determine from picture parameters */

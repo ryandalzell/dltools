@@ -40,6 +40,9 @@ public:
     /* format metadata */
     virtual const char *description() { return "raw"; }
 
+    /* video format, if the container carries it, otherwise -1 */
+    virtual int get_video_format(int *width, int *height, bool *interlaced, float *framerate, pixelformat_t *pixelformat) { return -1; }
+
 protected:
     /* data source */
     dlsource *source;
@@ -57,6 +60,49 @@ class dlestream : public dlformat
 public:
     /* format metadata */
     virtual const char *description() { return "elementary stream"; }
+};
+
+/* yuv4mpeg2 format decoder class */
+class dly4m : public dlformat
+{
+public:
+    dly4m();
+
+    /* format operators */
+    virtual int rewind(dltoken_t token=0);
+    virtual int attach(dlsource *source);
+
+    /* copy to buffer read */
+    virtual size_t read(unsigned char *buf, size_t bytes);
+    /* zero copy read (depending on implementation) */
+    virtual const unsigned char *read(size_t *bytes);
+
+    /* the video format is carried in the stream header */
+    virtual int get_video_format(int *width, int *height, bool *interlaced, float *framerate, pixelformat_t *pixelformat);
+
+    /* report size and position of the frame data, excluding the headers */
+    virtual size_t filesize() { return numframes*framesize; }
+    virtual off_t pos() { return frames_read*framesize; }
+
+    /* format metadata */
+    virtual const char *description() { return "yuv4mpeg2"; }
+
+protected:
+    /* header parsers */
+    size_t read_header(char *header, size_t maxlen);
+    int read_stream_header();
+    int read_frame_header();
+
+    /* video format from the stream header */
+    int width, height;
+    bool interlaced;
+    float framerate;
+    pixelformat_t pixelformat;
+
+    /* stream geometry */
+    size_t framesize;
+    size_t streamhdrsize, framehdrsize;
+    unsigned numframes, frames_read;
 };
 
 /* transport stream format decoder class */

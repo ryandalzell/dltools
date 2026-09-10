@@ -133,6 +133,8 @@ filetype_t dlfile::autodetect()
         return HEVC;
     else if (strstr(filename, ".av1")!=NULL)
         return AV1;
+    else if (strstr(filename, ".y4m")!=NULL || strstr(filename, ".Y4M")!=NULL)
+        return YUV4MPEG;
     else if (strstr(filename, ".ts")!=NULL || strstr(filename, ".trp")!=NULL || strstr(filename, ".mpg")!=NULL)
         return TS;
     else if (strstr(filename, ".mp4")!=NULL)

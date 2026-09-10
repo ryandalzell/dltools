@@ -75,20 +75,27 @@ int dlyuv::attach(dlformat *f)
     /* attach the input source */
     format = f;
 
-    /* determine the video format */
-    if (divine_video_format(imagesize, &width, &height, &interlaced, &framerate)<0)
-        if (divine_video_format(format->name(), &width, &height, &interlaced, &framerate)<0)
-            dlexit("failed to determine output video format: displayformat=%s filename=%s", size, format->name());
-
-    /* override the pixelformat if a fourcc is specified */
-    pixelformat = I420;
-    if (fourcc) {
-        if (divine_pixel_format(fourcc, &pixelformat)<0)
-            dlexit("failed to determine input pixel format from fourcc: %s", fourcc);
+    /* the container may carry the video format, otherwise divine it */
+    if (format->get_video_format(&width, &height, &interlaced, &framerate, &pixelformat)==0) {
+        /* the container is authoritative, so any command line format is ignored */
+        if ((imagesize || fourcc) && verbose>=0)
+            dlmessage("warning: using video format from %s container, not the command line", format->description());
     } else {
-        /* not an error if these don't find a match */
-        if (divine_pixel_format(imagesize, &pixelformat)<0)
-            divine_pixel_format(format->name(), &pixelformat);
+        /* determine the video format */
+        if (divine_video_format(imagesize, &width, &height, &interlaced, &framerate)<0)
+            if (divine_video_format(format->name(), &width, &height, &interlaced, &framerate)<0)
+                dlexit("failed to determine output video format: displayformat=%s filename=%s", imagesize, format->name());
+
+        /* override the pixelformat if a fourcc is specified */
+        pixelformat = I420;
+        if (fourcc) {
+            if (divine_pixel_format(fourcc, &pixelformat)<0)
+                dlexit("failed to determine input pixel format from fourcc: %s", fourcc);
+        } else {
+            /* not an error if these don't find a match */
+            if (divine_pixel_format(imagesize, &pixelformat)<0)
+                divine_pixel_format(format->name(), &pixelformat);
+        }
     }
 
     /* allocate the read buffer */

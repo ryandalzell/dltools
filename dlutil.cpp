@@ -201,6 +201,44 @@ long parse_int_arg(const char *string, long min, long max, const char *name)
     return value;
 }
 
+float parse_framerate_arg(const char *string, const char *name)
+{
+    if (string==NULL || *string=='\0')
+        dlexit("missing value for %s", name);
+
+    /* strtod reports overflow in errno, which is not otherwise cleared */
+    errno = 0;
+    char *end;
+    double value = strtod(string, &end);
+
+    /* reject a string with no digits at all */
+    if (end==string)
+        dlexit("invalid value for %s: \"%s\" is not a number", name, string);
+
+    /* a frame rate may also be a rational, as numerator:denominator or / */
+    if (*end==':' || *end=='/') {
+        const char *denominator = end+1;
+        double den = strtod(denominator, &end);
+        if (end==denominator)
+            dlexit("invalid value for %s: missing denominator in \"%s\"", name, string);
+        if (den<=0.0)
+            dlexit("invalid value for %s: denominator is not positive in \"%s\"", name, string);
+        value /= den;
+    }
+
+    /* reject anything trailing the number except whitespace */
+    while (isspace((unsigned char)*end))
+        end++;
+    if (*end!='\0')
+        dlexit("invalid value for %s: unexpected \"%s\" after number in \"%s\"", name, end, string);
+
+    /* reject overflow and out of range values */
+    if (errno==ERANGE || value<1.0 || value>1000.0)
+        dlexit("value out of range for %s: \"%s\" is not between 1 and 1000 frames per second", name, string);
+
+    return (float)value;
+}
+
 /* pixel format strings */
 const char *pixelformatname[] = {
     "",

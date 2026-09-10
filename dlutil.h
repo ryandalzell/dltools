@@ -47,6 +47,7 @@ void dlstatus(const char *format, ...);
 void dlabort(const char *format, ...);
 
 long parse_int_arg(const char *string, long min, long max, const char *name);
+float parse_framerate_arg(const char *string, const char *name);
 int divine_pixel_format(const char *filename, pixelformat_t *pixelformat);
 int divine_video_format(const char *filename, int *width, int *height, bool *interlaced, float *framerate);
 unsigned long long int get_time();
