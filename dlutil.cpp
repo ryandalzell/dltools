@@ -386,7 +386,7 @@ const char *describe_filetype(filetype_t f)
     "m4v",
     "avc",
     "hevc",
-    "av1"
+    "av1",
     "ts",
     "ffmpeg",
     };
