@@ -615,7 +615,7 @@ int main(int argc, char *argv[])
 #ifdef HAVE_FFMPEG
                             video = new dlffvideo(AV_CODEC_ID_H264);
 #else
-                            dlexit("error: no support for ffmpeg decoder in this build");
+                            dlexit("error: no support for avc decoder in this build");
 #endif
                             break;
                     }
@@ -756,7 +756,7 @@ int main(int argc, char *argv[])
                 video = new dlffvideo(AV_CODEC_ID_AV1);
                 videoonly = 1;
 #else
-                dlexit("error: no support for hevc decoder in this build");
+                dlexit("error: no support for av1 decoder in this build");
 #endif
                 break;
 
