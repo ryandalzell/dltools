@@ -337,6 +337,13 @@ int dlpcm::attach(dlformat *f)
     if (verbose>=1)
         dlmessage("audio format is 48kHz x%d channels of %d-bit (packet size %d)", number_channels, bits_per_sample, audio_packet_size);
 
+    /* the fourth sample size is reserved in smpte 302m, and a stream which is
+       not 302m at all is quite likely to land on it */
+    if (bits_per_sample>24) {
+        dlmessage("unsupported 302m sample size: %d", bits_per_sample);
+        return -1;
+    }
+
     /* allocate the packet buffer */
     pkt = (unsigned char *) malloc(audio_packet_size);
 
@@ -488,7 +495,8 @@ decode_t dlpcm::decode(unsigned char *samples, size_t sampsize) // sampsize is i
                     ptr += 7;
                     break;
                 default:
-                    dlmessage("unsupported 302m sample size: %d", bits_per_sample);
+                    /* the sample size is checked when the decoder is attached */
+                    dlexit("unsupported 302m sample size: %d", bits_per_sample);
             }
         }
 

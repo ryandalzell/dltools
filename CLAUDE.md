@@ -113,6 +113,16 @@ A queue holds only the skew between the pids, which is well under a second in a 
 mux. `MAX_QUEUE_BYTES` (4MB) caps it: past that, the oldest packets for that pid are
 dropped with one warning, which means a consumer has stopped reading.
 
+`find_pid_for_stream_type`, also in `dlts.cpp`, is what chooses the pids: it reads the
+PAT and PMT and returns the first pid carrying one of a list of stream types, along
+with the type it found, which is how `dlplay` picks a decoder. Stream type 0x06 is
+private data and does not name a codec, so the descriptors of that elementary stream
+are consulted: a DVB AC-3 descriptor or an `AC-3` registration reports 0x81 (so DVB
+AC-3 audio reaches `dlliba52`, not `dlpcm`), a `BSSD` registration reports 302M, and a
+codec with no decoder here reports a stream type which is not in the list, so the pid
+is skipped and the search goes on. Private data with nothing to identify it is still
+assumed to be SMPTE 302M.
+
 ### Looping
 
 For elementary streams, looping is in `dlformat::read()`, which rewinds its own reader

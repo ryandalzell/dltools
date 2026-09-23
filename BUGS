@@ -11,3 +11,8 @@ which the stream signals with repeat_first_field, but every frame is scheduled
 for one frame period of the display mode. Such a stream also plays out as
 1080p29.97 rather than 1080i59.94, because ffmpeg reports the coded frames as
 progressive. Reproduced with gladiator.1080i60.ts
+
+* dlplay: the -p, --video-pid and -o, --audio-pid options are parsed into the
+same variables which find_pid_for_stream_type() then overwrites, so for a
+transport stream the pids given on the command line are ignored and the first
+program is always played

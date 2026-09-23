@@ -205,6 +205,53 @@ int next_pes_packet_data(unsigned char *data, long long *pts, long long *dts, in
     return 0;
 }
 
+/* the stream type of private data in a transport stream does not say what the
+   data is, the descriptors of the elementary stream do: dvb signals ac3 audio as
+   private data with an ac3 descriptor, and smpte 302m audio with a registration
+   descriptor of "BSSD". return the stream type which normally carries the codec
+   the descriptors describe, or zero if they do not describe one */
+static int stream_type_of_private_data(const unsigned char *descriptors, size_t length)
+{
+    for (size_t i=0; i+2<=length; i+=2+descriptors[i+1]) {
+        int tag = descriptors[i];
+        int len = descriptors[i+1];
+
+        /* a descriptor which runs past the end of the data is not usable */
+        if (i+2+len>length)
+            break;
+
+        switch (tag) {
+            case 0x05:
+                /* registration descriptor, a four character format identifier */
+                if (len>=4 && memcmp(descriptors+i+2, "BSSD", 4)==0)
+                    return 0x06;    /* smpte 302m audio, decoded as private data */
+                if (len>=4 && memcmp(descriptors+i+2, "AC-3", 4)==0)
+                    return 0x81;
+                break;
+
+            case 0x6a:
+                /* dvb ac3 descriptor */
+                return 0x81;
+
+            /* there is no decoder for these here, but naming the stream type
+               which normally carries them means the pid is not selected */
+            case 0x7a:
+                /* dvb enhanced ac3 descriptor */
+                return 0x87;
+
+            case 0x7b:
+                /* dvb dts descriptor */
+                return 0x82;
+
+            case 0x7c:
+                /* dvb aac descriptor */
+                return 0x11;
+        }
+    }
+
+    return 0;
+}
+
 int find_pid_for_stream_type(int stream_types[], int num_stream_types, int *found_type, dlsource *source)
 {
     unsigned char packet[188];
@@ -264,10 +311,16 @@ int find_pid_for_stream_type(int stream_types[], int num_stream_types, int *foun
         size_t index = 13 + program_info_length;
 
         /* find the pid which carries one of the given stream types */
-        while (index<read) {
+        while (index+5<=read) {
             int stream_type = packet[index];
             int pid = (packet[index+1]<<8 | packet[index+2]) & 0x1fff;
             int es_info_length = (packet[index+3]<<8 | packet[index+4]) & 0xfff;
+            /* private data can be any codec, so ask the descriptors which it is */
+            if (stream_type==0x06) {
+                int private_type = stream_type_of_private_data(packet+index+5, mmin((size_t)es_info_length, read-index-5));
+                if (private_type)
+                    stream_type = private_type;
+            }
             /* try to match stream type */
             for (int i=0; i<num_stream_types; i++)
                 if (stream_types[i]==stream_type) {
@@ -278,6 +331,7 @@ int find_pid_for_stream_type(int stream_types[], int num_stream_types, int *foun
              * stream_type==0x80 - user private, assume mpeg2 video
              * stream_type==0x03 - mpeg1 audio
              * stream_type==0x04 - mpeg2 audio
+             * stream_type==0x06 - private data, assume smpte 302m audio
              * stream_type==0x81 - user private, assume ac3 audio
              * stream_type==0x1b - h.264 video
              * stream_type==0x24 - hevc video */
