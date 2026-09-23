@@ -824,7 +824,7 @@ int main(int argc, char *argv[])
 
         /* in audio only mode there is no video format filter to describe the container */
         dlformat *fmt = vid_fmt? vid_fmt : aud_fmt;
-        dlmessage("info: found %s video and %s audio in %s from %s source", video? video->description() : "no video", audio? audio->description() : "no audio", fmt? fmt->description() : "an unknown container", source->description());
+        dlmessage("info: found %s video and %s audio in %s from %s source", video? video->description() : "no", audio? audio->description() : "no", fmt? fmt->description() : "an unknown container", source->description());
 
         if (video && verbose>=1)
             dlmessage("info: video format is %dx%d%c%.2f %s", pic_width, pic_height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);
