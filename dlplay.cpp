@@ -242,7 +242,7 @@ void usage(int exitcode)
     fprintf(stderr, "  -q, --quiet         : decrease verbosity, can be used multiple times\n");
     fprintf(stderr, "  -v, --verbose       : increase verbosity, can be used multiple times\n");
     fprintf(stderr, "  --                  : disable argument processing\n");
-    fprintf(stderr, "  -h, --help          : print this usage message\n");
+    fprintf(stderr, "  -h, --help, --usage : print this usage message\n");
     exit(exitcode);
 }
 
@@ -359,6 +359,7 @@ int main(int argc, char *argv[])
             {"index",     1, NULL, 'i'},
             {"quiet",     0, NULL, 'q'},
             {"verbose",   0, NULL, 'v'},
+            {"usage",     0, NULL, 'h'},
             {"help",      0, NULL, 'h'},
             {NULL,        0, NULL,  0 }
         };
