@@ -635,6 +635,8 @@ dlliba52::~dlliba52()
 {
     if (a52_state)
         a52_free(a52_state);
+    if (ac3_frame)
+        free(ac3_frame);
 }
 
 int dlliba52::attach(dlformat *f)
