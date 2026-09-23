@@ -292,6 +292,10 @@ size_t dlmmap::read(unsigned char *buf, size_t bytes)
 /* zero copy read using memory mapped pointer */
 const unsigned char *dlmmap::read(size_t *bytes)
 {
+    /* a request of zero bytes means read whatever is available */
+    if (*bytes==0)
+        *bytes = bufsize;
+
     const unsigned char *ret = ptr;
     if (ptr+*bytes>addr+length)
         *bytes = addr+length-ptr;

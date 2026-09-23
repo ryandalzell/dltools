@@ -37,7 +37,7 @@ extern "C" {
 
 /* compile options */
 #define USE_TERMIOS
-//#define USE_MMAP
+#define USE_MMAP
 
 const char *appname = "dlplay";
 

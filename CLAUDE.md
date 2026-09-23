@@ -94,6 +94,9 @@ for network input.
 `source->rewind()`) before any format filter is attached, so the probe never disturbs
 a reader.
 
+File input is memory mapped (`USE_MMAP` at the top of `dlplay.cpp`, on by default);
+build with it commented out to fall back to `dlfile` and ordinary `read()`.
+
 ### Looping
 
 Input looping is not in the playout loop — it is in `dlformat::read()`, which rewinds
