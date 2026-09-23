@@ -17,6 +17,7 @@ typedef struct {
     unsigned char *data;
     size_t size;
     long long pts, dts;
+    bool discontinuity;     /* the first packet of a new pass through the input */
 } pespacket_t;
 
 /* a single reader on a transport stream, fanning pes packets out to a queue for

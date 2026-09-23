@@ -40,7 +40,9 @@ int next_packet(unsigned char *packet, dlsource *source)
         while (read!=188) {
             int ret = source->read(packet, 188-read);
             if (ret<=0) {
-                dlmessage("failed to read %d bytes of a transport stream packet", 188-read);
+                /* the end of the input is not an error, a partial packet is */
+                if (read)
+                    dlmessage("failed to read the last %d bytes of a transport stream packet", 188-read);
                 return -1;
             }
             read += ret;
@@ -305,6 +307,7 @@ dldemux::dldemux()
         stream[i].assembly.data = NULL;
         stream[i].assembly.size = 0;
         stream[i].assembly.pts = stream[i].assembly.dts = -1ll;
+        stream[i].assembly.discontinuity = false;
         stream[i].assembly_size = 0;
         stream[i].started = false;
         stream[i].queued = 0;
@@ -382,6 +385,7 @@ void dldemux::queue_packet(int index)
     s->assembly.data = (unsigned char *) malloc(s->assembly_size);
     s->assembly.size = 0;
     s->assembly.pts = s->assembly.dts = -1ll;
+    s->assembly.discontinuity = false;
 
     /* the queue only has to hold the skew between the pids in the stream */
     while (s->queued>MAX_QUEUE_BYTES && !s->queue.empty()) {
@@ -413,12 +417,14 @@ long long dldemux::rebase_timestamp(long long timestamp)
     return timestamp;
 }
 
-/* the input has jumped, so the packets under assembly are incomplete */
+/* the input has jumped, so the packets under assembly are incomplete, and the next
+   packet of every pid joins data which is not continuous with what came before */
 void dldemux::resync()
 {
     for (int i=0; i<num_streams; i++) {
         stream[i].assembly.size = 0;
         stream[i].assembly.pts = stream[i].assembly.dts = -1ll;
+        stream[i].assembly.discontinuity = true;
         stream[i].started = false;
     }
 }

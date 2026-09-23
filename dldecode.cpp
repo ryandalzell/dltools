@@ -564,6 +564,11 @@ decode_t dlmpg123::decode(unsigned char *samples, size_t sampsize)
             }
         }
 
+        /* the input has jumped, so throw away the part of a frame the decoder is
+           holding rather than joining it to data which does not follow it */
+        if (format->discontinuity())
+            mpg123_open_feed(m);
+
         sts_t sts = format->get_pts();
         if (sts>=0 && sts>last_sts) {
             results.timestamp = last_sts = sts;
@@ -1246,6 +1251,19 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
             if (size==0)
                 break;
             ptr = buf;
+
+            /* the input has jumped, so throw away the part of a frame the parser
+               is holding rather than joining it to data which does not follow it */
+            if (format->discontinuity()) {
+                av_parser_close(parser);
+                parser = av_parser_init(codecid);
+                if (parser==NULL)
+                    dlexit("failed to re-initialise the %s parser", avcodec_get_name(codecid));
+                avcodec_flush_buffers(codeccontext);
+                got_frame = 0;
+                last_sts = -1ll;
+                frames_since_pts = 0;
+            }
         }
 
         /* use the parser to split the data into frames */

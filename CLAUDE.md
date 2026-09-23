@@ -126,6 +126,13 @@ exits on any that go backwards — see the loop debugging block in the playout l
 through the input continues from the highest timestamp of the previous pass. The
 offset is common to all pids, so their relative timing is unchanged across the loop.
 
+The data either side of a loop is not continuous, and a decoder which is holding part
+of a frame will otherwise join the two and emit a frame with the wrong timestamp. So
+the first PES packet of each pid in a new pass is marked, `dlformat::discontinuity()`
+reports it for the packet just read, and a decoder throws away what it has buffered:
+`dlffvideo` re-initialises its parser and flushes the codec, `dlmpg123` re-opens its
+feed. `dlliba52` and `dlpcm` do not do this yet.
+
 ### Decoder probing
 
 `dldecode::attach()` **consumes input** — decoders parse forward looking for a

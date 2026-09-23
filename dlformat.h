@@ -30,6 +30,10 @@ public:
     virtual long long get_pts();
     virtual long long get_dts();
 
+    /* true when the data just read does not continue the data before it, so that
+       a decoder can discard what it has buffered instead of joining the two */
+    virtual bool discontinuity() { return false; }
+
     /* expose source interfaces */
     //virtual const char *description() { return source->description(); }
     virtual const char *name() { return source->name(); }
@@ -127,6 +131,7 @@ public:
     /* return most recent pts */
     virtual long long get_pts();
     virtual long long get_dts();
+    virtual bool discontinuity() { return packet.discontinuity; }
 
     /* format metadata */
     virtual const char *description() { return "transport stream"; }
