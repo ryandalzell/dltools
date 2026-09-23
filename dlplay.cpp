@@ -1255,7 +1255,9 @@ int main(int argc, char *argv[])
                     audio_end_time = mmax(aud.timestamp, audio_end_time);
 
                     /* buffer decoded audio */
-                    uint32_t scheduled, num_sample_frames = aud.size/2;
+                    /* the audio output is enabled with two channels of 16-bit
+                       samples, so a sample frame is four bytes */
+                    uint32_t scheduled, num_sample_frames = aud.size/4;
                     HRESULT result = output->ScheduleAudioSamples(aud_data, num_sample_frames, aud.timestamp, 180000, &scheduled);
                     //dlmessage("buffer level %d: decoded %d bytes at timestamp %s and scheduled %d samples", buffered, aud.size, describe_sts(aud.timestamp), scheduled);
                     if (result != S_OK) {
