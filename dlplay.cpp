@@ -1228,7 +1228,9 @@ int main(int argc, char *argv[])
                 /* reschedule audio that wasn't queued last time */
                 if (aud_rem>0) {
                     uint32_t scheduled;
-                    HRESULT result = output->ScheduleAudioSamples(aud_data+aud_size-aud_rem*4, aud_rem, aud.timestamp, 180000, &scheduled); // FIXME timestamp
+                    /* the unscheduled samples are at the end of what was decoded,
+                       not at the end of the buffer it was decoded into */
+                    HRESULT result = output->ScheduleAudioSamples(aud_data+aud.size-aud_rem*4, aud_rem, aud.timestamp, 180000, &scheduled); // FIXME timestamp
                     if (result != S_OK) {
                         dlmessage("error: block %d: failed to re-schedule audio data", blocknum);
                         delete audio;

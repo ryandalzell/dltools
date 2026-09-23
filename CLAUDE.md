@@ -145,7 +145,9 @@ afterwards to choose the Decklink display mode. Members are deliberately public
 adding accessors.
 
 `decode()` writes converted pixels directly into a caller-supplied Decklink buffer
-and returns a `decode_t` carrying the size and the timestamp.
+and returns a `decode_t` carrying the size and the timestamp. `decode_t::size` is
+a count of **bytes** for audio as well as video, so `dlplay` divides it by four to
+get sample frames for a stereo 16-bit output.
 
 ### Timebases
 

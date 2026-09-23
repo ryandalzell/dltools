@@ -494,7 +494,8 @@ decode_t dlpcm::decode(unsigned char *samples, size_t sampsize) // sampsize is i
 
     } while (discontinuity); //(numsamps<sampsize);
 
-    results.size += numsamps / 2; /* number of samples */
+    /* numsamps counts bytes in the sample buffer, four per sample frame */
+    results.size += numsamps;
     frames_since_pts += numsamps /4; /* number of sample frames */
 
     /* extrapolate a timestamp if necessary,
@@ -835,7 +836,7 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
             s[i*512+j*2+1] = (int16_t) float32_to_int32_hack(f[j+256]);
         }
     }
-    results.size = 6*256*2; /* in samples */
+    results.size = 6*256*2*sizeof(int16_t); /* in bytes */
 
     /* keep leftover data for next frame */
     if (ac3_length-length)

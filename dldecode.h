@@ -24,7 +24,7 @@ extern "C" {
 
 /* decoder data types */
 typedef struct {
-    size_t size;
+    size_t size;            /* in bytes, for video and audio alike */
     sts_t timestamp;
     unsigned long long decode_time;
     unsigned long long render_time;
