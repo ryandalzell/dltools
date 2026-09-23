@@ -733,7 +733,29 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
     do {
         /* sync to next frame */
         do {
-            if (ac3_length<7) {
+            /* look for sync in the buffered ac3 data, a sync word is seven bytes
+               so the last offset worth testing is seven bytes from the end */
+            int sync;
+            for (sync=0; sync+7<=ac3_length; sync++) {
+                length = a52_syncinfo(ac3_frame+sync, &flags, &sample_rate, &bit_rate);
+                if (length)
+                    break;
+                //else
+                //    dlmessage("ac_length=%d ac3_frame=%02x %02x %02x %02x", ac3_length, *(ac3_frame+sync+0), *(ac3_frame+sync+1), *(ac3_frame+sync+2), *(ac3_frame+sync+3));
+            }
+
+            /* discard the bytes before the sync word, so that the frame starts at
+               the front of the buffer, or all but the last six bytes if there was
+               no sync word, as a sync word can straddle the next read */
+            if (sync) {
+                if (verbose>=2 && length)
+                    dlmessage("discarding %d bytes before the sync word of an ac3 frame", sync);
+                memmove(ac3_frame, ac3_frame+sync, ac3_length-sync);
+                ac3_length -= sync;
+            }
+
+            /* read more input if there is no whole sync word in the buffer */
+            if (length==0) {
                 const unsigned char *buf = format->read(&read);
                 if (read==0) {
                     if (format->error()) {
@@ -745,6 +767,10 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
                         format->rewind();
                         continue;
                     }
+
+                    /* the input has no more audio to give, so there is no frame */
+                    results.size = 0;
+                    return results;
                 }
 
                 sts_t sts = format->get_pts();
@@ -766,23 +792,6 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
                 ac3_length += read;
             }
 
-            /* look for sync in ac3 stream */
-            int sync;
-            for (sync=0; sync<ac3_length-7; sync++) {
-                length = a52_syncinfo(ac3_frame+sync, &flags, &sample_rate, &bit_rate);
-                if (length)
-                    break;
-                //else
-                //    dlmessage("ac_length=%d ac3_frame=%02x %02x %02x %02x", ac3_length, *(ac3_frame+sync+0), *(ac3_frame+sync+1), *(ac3_frame+sync+2), *(ac3_frame+sync+3));
-            }
-
-            /* if no luck */
-            if (length==0) {
-                /* reset buffer for next loop */
-                memmove(ac3_frame, ac3_frame+sync, ac3_length-sync);
-                ac3_length = ac3_length-sync;
-            }
-
         } while (length==0);
 
         /* read data from transport stream to complete frame */
@@ -799,11 +808,13 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
                 }
             }
 
-            /* the rest of this frame is not in the input, so start another one */
+            /* the rest of this frame is not in the input, so start another one
+               from the data just read */
             if (format->discontinuity()) {
                 if (verbose>=2)
                     dlmessage("discarding %d bytes of an incomplete ac3 frame at a discontinuity in the input", ac3_length);
-                ac3_length = 0;
+                memcpy(ac3_frame, buf, read);
+                ac3_length = read;
                 length = 0;
                 break;
             }
