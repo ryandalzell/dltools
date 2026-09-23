@@ -111,7 +111,7 @@ dldecode.o: dldecode.cpp dldecode.h dlutil.h \
  /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
  /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
  /usr/local/decklink/include/DeckLinkAPIDeckControl.h dlformat.h \
- dlsource.h dlconv.h
+ dlsource.h dlts.h dlconv.h
 dlformat.o: dlformat.cpp dlformat.h dlutil.h \
  /usr/local/decklink/include/DeckLinkAPI.h \
  /usr/local/decklink/include/LinuxCOM.h \
@@ -120,6 +120,13 @@ dlformat.o: dlformat.cpp dlformat.h dlutil.h \
  /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
  /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
  /usr/local/decklink/include/DeckLinkAPIDeckControl.h dlsource.h dlts.h
+dlinfo.o: dlinfo.cpp dlutil.h /usr/local/decklink/include/DeckLinkAPI.h \
+ /usr/local/decklink/include/LinuxCOM.h \
+ /usr/local/decklink/include/DeckLinkAPITypes.h \
+ /usr/local/decklink/include/DeckLinkAPIModes.h \
+ /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
+ /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
+ /usr/local/decklink/include/DeckLinkAPIDeckControl.h
 dlplay.o: dlplay.cpp /usr/local/decklink/include/DeckLinkAPI.h \
  /usr/local/decklink/include/LinuxCOM.h \
  /usr/local/decklink/include/DeckLinkAPITypes.h \
@@ -127,7 +134,7 @@ dlplay.o: dlplay.cpp /usr/local/decklink/include/DeckLinkAPI.h \
  /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
  /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
  /usr/local/decklink/include/DeckLinkAPIDeckControl.h dlutil.h dlterm.h \
- dldecode.h dlformat.h dlsource.h dlalloc.h dlts.h
+ dldecode.h dlformat.h dlsource.h dlts.h dlalloc.h
 dlskel.o: dlskel.cpp /usr/local/decklink/include/DeckLinkAPI.h \
  /usr/local/decklink/include/LinuxCOM.h \
  /usr/local/decklink/include/DeckLinkAPITypes.h \
@@ -143,8 +150,8 @@ dlsource.o: dlsource.cpp dlutil.h \
  /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
  /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
  /usr/local/decklink/include/DeckLinkAPIDeckControl.h dlsource.h
-dlterm.o: dlterm.cpp dlterm.h
-dlinfo.o: dlinfo.cpp /usr/local/decklink/include/DeckLinkAPI.h \
+dlterm.o: dlterm.cpp dlterm.h dlutil.h \
+ /usr/local/decklink/include/DeckLinkAPI.h \
  /usr/local/decklink/include/LinuxCOM.h \
  /usr/local/decklink/include/DeckLinkAPITypes.h \
  /usr/local/decklink/include/DeckLinkAPIModes.h \

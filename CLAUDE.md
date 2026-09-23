@@ -80,15 +80,11 @@ switch in `dlplay.cpp` (around the `switch (filetype)`).
 `dlsource::attach()` returns another `dlsource *` — an **independent reader** on the
 same data, with its own read position, EOF and error flags and read buffer. `dlfile`
 implements a reader by reopening the file, one fd each; `dlmmap` shares the mapping
-and gives the reader its own pointer into it. This is how the video and audio decoders
-walk the same transport stream file at different offsets simultaneously: there is one
-`dltstream` format filter per pid, and each holds its own reader.
+and gives the reader its own pointer into it; `dlsock::attach()` returns `this`, since
+a socket has a single read position.
 
 Readers belong to the source that created them and are deleted with it, so a
-`dlformat` never frees the reader it holds. `dlsock::attach()` returns `this`, since a
-socket has a single read position — two format filters on one socket therefore steal
-each other's packets (see `BUGS`), which is why a demux is the right long term answer
-for network input.
+`dlformat` never frees the reader it holds.
 
 `dlplay` probes with the source object itself (`find_pid_for_stream_type`, then
 `source->rewind()`) before any format filter is attached, so the probe never disturbs
@@ -97,13 +93,38 @@ a reader.
 File input is memory mapped (`USE_MMAP` at the top of `dlplay.cpp`, on by default);
 build with it commented out to fall back to `dlfile` and ordinary `read()`.
 
+### Transport stream demux
+
+`dldemux` (in `dlts.cpp`) is the only thing that reads a transport stream. It holds
+one reader and, on demand, pulls 188-byte packets and assembles whole PES packets into
+a queue **per pid**; packets for pids nobody registered are discarded. Each
+`dltstream` format filter is a consumer of one pid: `dltstream::read()` pops the next
+PES packet, and if that pid's queue is empty the demux reads more input, queueing the
+other pids' packets as it goes. Reading is pull-driven, single threaded, no read-ahead
+thread.
+
+This is what lets the video and audio filters be far apart in the file but together in
+time from a single read position, which in turn means a transport stream works from a
+socket, not just a seekable file. One `dldemux` is created in the `TS` case in
+`dlplay.cpp` and shared by both filters; `dltstream::attach(dlsource *)` makes a
+private demux for a single pid, for callers outside `dlplay`.
+
+A queue holds only the skew between the pids, which is well under a second in a sane
+mux. `MAX_QUEUE_BYTES` (4MB) caps it: past that, the oldest packets for that pid are
+dropped with one warning, which means a consumer has stopped reading.
+
 ### Looping
 
-Input looping is not in the playout loop — it is in `dlformat::read()`, which rewinds
-its own reader and re-reads when a read comes up short. The known bug in `BUGS`
-(MPEG-1 audio not looping with video in a TS) lives in this interaction between the
-per-reader rewind and the timestamp handling in `dltstream`: each stream loops
-whenever it happens to hit the end of the file, independently of the other.
+For elementary streams, looping is in `dlformat::read()`, which rewinds its own reader
+and re-reads when a read comes up short.
+
+For transport streams the demux loops the input itself: at end of input it rewinds the
+one reader, discards the partly assembled packets and carries on, so every pid loops
+at the same point. Because the scheduler in `dlplay` needs monotonic timestamps (and
+exits on any that go backwards — see the loop debugging block in the playout loop),
+`dldemux::rebase_timestamp()` adds an offset to every PTS and DTS so that a new pass
+through the input continues from the highest timestamp of the previous pass. The
+offset is common to all pids, so their relative timing is unchanged across the loop.
 
 ### Decoder probing
 

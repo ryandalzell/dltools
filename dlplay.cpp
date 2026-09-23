@@ -578,6 +578,10 @@ int main(int argc, char *argv[])
         switch (filetype) {
             case TS :
             {
+                /* one demux reads the stream once for all the pids in it */
+                dldemux *demux = new dldemux;
+                demux->attach(source);
+
                 /* look for a video pid */
                 int stream_type = 0;
                 if (!audioonly) {
@@ -589,7 +593,7 @@ int main(int argc, char *argv[])
                 if (vid_pid) {
                     /* create a format filter for transport stream */
                     dltstream *ts = new dltstream(vid_pid);
-                    ts->attach(source);
+                    ts->attach(demux);
 
                     /* create a video decoder */
                     switch (stream_type) {
@@ -637,7 +641,7 @@ int main(int argc, char *argv[])
                 if (aud_pid) {
                     /* create a format filter for transport stream */
                     dltstream *ts = new dltstream(aud_pid);
-                    ts->attach(source);
+                    ts->attach(demux);
 
                     /* create an audio decoder */
                     switch (stream_type) {

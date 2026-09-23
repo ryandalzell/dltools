@@ -3,6 +3,7 @@
 
 #include "dlutil.h"
 #include "dlsource.h"
+#include "dlts.h"
 extern "C" {
 #ifdef HAVE_FFMPEG
         #include <libavformat/avformat.h>
@@ -112,7 +113,11 @@ public:
     virtual ~dltstream();
 
     /* format operators */
+    /* attach to a demux shared with the filters for the other pids */
+    virtual int attach(dldemux *demux);
+    /* attach to a source directly, with a demux of our own for this pid alone */
     virtual int attach(dlsource *source);
+    virtual int rewind();
 
     /* copy to buffer read */
     virtual size_t read(unsigned char *buf, size_t bytes);
@@ -128,9 +133,13 @@ public:
 
 protected:
     int pid;
-    long long pts, dts;
-    unsigned char *packet;
-    bool packet_valid;
+
+    /* the demux this pid is read from, and whether it is ours to delete */
+    dldemux *demux;
+    bool own_demux;
+
+    /* the pes packet most recently read, owned by us */
+    pespacket_t packet;
 };
 
 #ifdef HAVE_FFMPEG
