@@ -11,9 +11,6 @@
 
 #include "dlutil.h"
 
-/* type of token returned when attaching format decoders */
-typedef int dltoken_t;
-
 /* virtual base class for data sources */
 class dlsource
 {
@@ -23,28 +20,32 @@ public:
 
     /* source operators */
     virtual int open(const char *filename) = 0;
-    virtual int rewind(dltoken_t token=0) = 0;
+    virtual int rewind() = 0;
     virtual filetype_t autodetect() = 0;
-    virtual dltoken_t attach() = 0;
+    /* create an independent reader on the same data, owned by this source */
+    virtual dlsource *attach() = 0;
 
     /* copy to buffer read */
-    virtual size_t read(unsigned char *buf, size_t bytes, dltoken_t token=0) = 0;
+    virtual size_t read(unsigned char *buf, size_t bytes) = 0;
     /* zero copy read (depending on implementation) */
-    virtual const unsigned char *read(size_t *bytes, dltoken_t token=0) = 0;
+    virtual const unsigned char *read(size_t *bytes) = 0;
 
     /* source metadata */
     virtual const char *description() { return "unknown"; }
     virtual const char *name();
     virtual size_t size();
-    virtual off_t pos(dltoken_t token=0);
-    virtual bool eof(dltoken_t token=0);
-    virtual bool error(dltoken_t token=0);
+    virtual off_t pos();
+    virtual bool eof();
+    virtual bool error();
     virtual bool timeout();
 
     /* source configuration */
     virtual void set_timeout(int timeout_usec);
 
 protected:
+    /* readers attached to this source */
+    std::vector<dlsource *> readers;
+
     /* memory buffer management */
     /*const*/ unsigned char *buffer, *bufptr;
     unsigned bufsize, bytesleft;
@@ -64,27 +65,27 @@ public:
 
     /* source operators */
     virtual int open(const char *filename);
-    virtual int rewind(dltoken_t token=0);
+    virtual int rewind();
     virtual filetype_t autodetect();
-    virtual dltoken_t attach();
-    virtual size_t read(unsigned char *buf, size_t bytes, dltoken_t token=0);
-    virtual const unsigned char *read(size_t* bytes, dltoken_t token=0);
+    virtual dlsource *attach();
+    virtual size_t read(unsigned char *buf, size_t bytes);
+    virtual const unsigned char *read(size_t* bytes);
 
     /* source metadata */
     virtual const char *description() { return "file"; }
     virtual const char *name();
     virtual size_t size();
-    virtual off_t pos(dltoken_t token);
-    virtual bool eof(dltoken_t token);
-    virtual bool error(dltoken_t token);
+    virtual off_t pos();
+    virtual bool eof();
+    virtual bool error();
 
 protected:
     /* file and buffer variables */
     const char *filename;
-    std::vector<int> file;
+    int file;
 
     /* status flags */
-    std::vector<int> eof_flag, error_flag;
+    int eof_flag, error_flag;
 };
 
 /* memory mapped file souce class */
@@ -96,17 +97,21 @@ public:
 
     /* source operators */
     virtual int open(const char *filename);
-    virtual int rewind(dltoken_t token=0);
-    virtual size_t read(unsigned char *buf, size_t bytes, dltoken_t token=0);
-    virtual const unsigned char *read(size_t *bytes, dltoken_t token=0);
+    virtual int rewind();
+    virtual dlsource *attach();
+    virtual size_t read(unsigned char *buf, size_t bytes);
+    virtual const unsigned char *read(size_t *bytes);
 
     /* source metadata */
     virtual size_t size();
-    virtual off_t pos(dltoken_t token);
-    virtual bool eof(dltoken_t token);
-    virtual bool error(dltoken_t token);
+    virtual off_t pos();
+    virtual bool eof();
+    virtual bool error();
 
 protected:
+    /* the source which owns the memory map, NULL in the source itself */
+    dlmmap *master;
+
     /* memory map variables */
     unsigned char *addr, *ptr;
     size_t length;
@@ -123,15 +128,15 @@ public:
 
     /* source operators */
     virtual int open(const char *port);
-    virtual int rewind(dltoken_t token=0);
+    virtual int rewind();
     virtual filetype_t autodetect();
-    virtual dltoken_t attach();
-    virtual size_t read(unsigned char *buf, size_t bytes, dltoken_t token=0);
-    virtual const unsigned char *read(size_t *bytes, dltoken_t token=0);
+    virtual dlsource *attach();
+    virtual size_t read(unsigned char *buf, size_t bytes);
+    virtual const unsigned char *read(size_t *bytes);
 
     /* source metadata */
     virtual const char *description() { return "udp"; }
-    virtual bool eof(dltoken_t token);
+    virtual bool eof();
 
 protected:
     int sock;
@@ -149,8 +154,8 @@ public:
 
     /* source operators */
     virtual int open(const char *port);
-    virtual size_t read(unsigned char *buf, size_t bytes, dltoken_t token=0);
-    virtual const unsigned char *read(size_t *bytes, dltoken_t token=0);
+    virtual size_t read(unsigned char *buf, size_t bytes);
+    virtual const unsigned char *read(size_t *bytes);
 
     /* source metadata */
     virtual const char *description() { return "tcp"; }

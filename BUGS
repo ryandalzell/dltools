@@ -6,3 +6,7 @@ doesn't loop like the video does, becoming corrupt on the second pass
 * dlplay: the -a, --firstframe option is parsed and range checked but its value
 is never used, so the option silently has no effect and playback always starts
 at the first frame in the input
+
+* dlplay: a transport stream from a socket has one read position shared by every
+format filter, so the video and audio filters discard each other's packets and both
+streams lose data; only file sources give each filter an independent reader

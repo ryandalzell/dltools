@@ -32,6 +32,10 @@ dlsource::dlsource()
 
 dlsource::~dlsource()
 {
+    /* delete the readers attached to this source */
+    for (unsigned i=0; i<readers.size(); i++)
+        delete readers[i];
+
     if (buffer)
         free(buffer);
 }
@@ -46,17 +50,17 @@ size_t dlsource::size()
     return 0;
 }
 
-off_t dlsource::pos(dltoken_t t)
+off_t dlsource::pos()
 {
     return 0;
 }
 
-bool dlsource::eof(dltoken_t t)
+bool dlsource::eof()
 {
     return 1;
 }
 
-bool dlsource::error(dltoken_t t)
+bool dlsource::error()
 {
     return 0;
 }
@@ -86,12 +90,15 @@ void dlsource::checksize(size_t size)
 dlfile::dlfile()
 {
     filename = NULL;
+    file = -1;
+    eof_flag = 0;
+    error_flag = 0;
 }
 
 dlfile::~dlfile()
 {
-    for (unsigned i=0; i<file.size(); i++)
-        close(file[i]);
+    if (file>=0)
+        close(file);
 }
 
 int dlfile::open(const char *name)
@@ -99,23 +106,20 @@ int dlfile::open(const char *name)
     /* attach the input file */
     filename = name;
 
-    /* open the input file FIXME just use attach() */
-    int f = ::open(filename, O_RDONLY | O_LARGEFILE);
-    if (f<0)
+    /* open the input file */
+    file = ::open(filename, O_RDONLY | O_LARGEFILE);
+    if (file<0)
         dlerror("error: failed to open input file \"%s\"", filename);
-    file.push_back(f);
-    eof_flag.push_back(0);
-    error_flag.push_back(0);
 
     return 0;
 }
 
-int dlfile::rewind(dltoken_t t)
+int dlfile::rewind()
 {
-    int r = lseek(file[t], 0, SEEK_SET);
+    int r = lseek(file, 0, SEEK_SET);
     if (r<0)
         dlerror("failed to seek in file \"%s\"", filename);
-    eof_flag[t] = 0;
+    eof_flag = 0;
 
     return r;
 }
@@ -147,31 +151,28 @@ filetype_t dlfile::autodetect()
     return YUV;
 }
 
-dltoken_t dlfile::attach()
+/* a reader on a file is another open file descriptor, with its own position */
+dlsource *dlfile::attach()
 {
-    /* open the input file again */
-    int f = ::open(filename, O_RDONLY | O_LARGEFILE);
-    if (f<0)
-        dlerror("error: failed to open input file \"%s\"", filename);
-    file.push_back(f);
-    eof_flag.push_back(0);
-    error_flag.push_back(0);
+    dlfile *reader = new dlfile;
+    reader->open(filename);
+    readers.push_back(reader);
 
-    return (dltoken_t) file.size()-1;
+    return reader;
 }
 
-size_t dlfile::read(unsigned char *buf, size_t bytes, dltoken_t t)
+size_t dlfile::read(unsigned char *buf, size_t bytes)
 {
-    size_t read = ::read(file[t], buf, bytes);
+    size_t read = ::read(file, buf, bytes);
     if (read<0)
         dlerror("error: failed to read from input file \"%s\"", filename);
     else if (read==0)
-        eof_flag[t] = 1;
+        eof_flag = 1;
 
     return read;
 }
 
-const unsigned char* dlfile::read(size_t *bytes, dltoken_t t)
+const unsigned char* dlfile::read(size_t *bytes)
 {
     if (*bytes==0)
         *bytes = bufsize;
@@ -179,11 +180,11 @@ const unsigned char* dlfile::read(size_t *bytes, dltoken_t t)
         /* check internal buffer is large enough */
         checksize(*bytes);
 
-    size_t read = ::read(file[t], buffer, *bytes);
+    size_t read = ::read(file, buffer, *bytes);
     if (read<0)
         dlerror("error: failed to read from input file \"%s\"", filename);
     else if (read==0)
-        eof_flag[t] = 1;
+        eof_flag = 1;
     *bytes = read;
 
     return buffer;
@@ -198,38 +199,43 @@ size_t dlfile::size()
 {
     /* stat the input file */
     struct stat stat;
-    fstat(file[0], &stat);
+    fstat(file, &stat);
 
     return stat.st_size;
 }
 
-off_t dlfile::pos(dltoken_t t)
+off_t dlfile::pos()
 {
-    off_t r = lseek(file[t], 0, SEEK_CUR);
+    off_t r = lseek(file, 0, SEEK_CUR);
     if (r<0)
-        error_flag[t] = 1;
+        error_flag = 1;
     return r;
 }
 
-bool dlfile::eof(dltoken_t t)
+bool dlfile::eof()
 {
-    return eof_flag[t];
+    return eof_flag;
 }
 
-bool dlfile::error(dltoken_t t)
+bool dlfile::error()
 {
-    return error_flag[t];
+    return error_flag;
 }
 
 /* memory mapped file source class */
 dlmmap::dlmmap()
 {
+    master = NULL;
+    addr = NULL;
     ptr = NULL;
+    length = 0;
 }
 
 dlmmap::~dlmmap()
 {
-    munmap(addr, length);
+    /* only the source which made the memory map can unmap it */
+    if (master==NULL && addr)
+        munmap(addr, length);
 }
 
 int dlmmap::open(const char *f)
@@ -241,7 +247,7 @@ int dlmmap::open(const char *f)
     length = dlfile::size();
     if (length==0)
         dlexit("error: input file is empty");
-    addr = (unsigned char *)mmap(NULL, length, PROT_READ, MAP_PRIVATE, file[0], 0);
+    addr = (unsigned char *)mmap(NULL, length, PROT_READ, MAP_PRIVATE, file, 0);
     if (addr==MAP_FAILED)
         dlerror("error: failed to memory map input file \"%s\"", filename);
     ptr = addr;
@@ -249,15 +255,29 @@ int dlmmap::open(const char *f)
     return 0;
 }
 
-int dlmmap::rewind(dltoken_t t)
+int dlmmap::rewind()
 {
     ptr = addr;
 
     return 0;
 }
 
+/* a reader on a memory map shares the mapping and has its own pointer into it */
+dlsource *dlmmap::attach()
+{
+    dlmmap *reader = new dlmmap;
+    reader->master = this;
+    reader->filename = filename;
+    reader->addr = addr;
+    reader->ptr = addr;
+    reader->length = length;
+    readers.push_back(reader);
+
+    return reader;
+}
+
 /* read with copy */
-size_t dlmmap::read(unsigned char *buf, size_t bytes, dltoken_t t)
+size_t dlmmap::read(unsigned char *buf, size_t bytes)
 {
     if (ptr+bytes>addr+length)
         bytes = addr+length-ptr;
@@ -270,7 +290,7 @@ size_t dlmmap::read(unsigned char *buf, size_t bytes, dltoken_t t)
 }
 
 /* zero copy read using memory mapped pointer */
-const unsigned char *dlmmap::read(size_t *bytes, dltoken_t t)
+const unsigned char *dlmmap::read(size_t *bytes)
 {
     const unsigned char *ret = ptr;
     if (ptr+*bytes>addr+length)
@@ -285,17 +305,17 @@ size_t dlmmap::size()
     return length;
 }
 
-off_t dlmmap::pos(dltoken_t t)
+off_t dlmmap::pos()
 {
     return ptr-addr;
 }
 
-bool dlmmap::eof(dltoken_t t)
+bool dlmmap::eof()
 {
     return ptr>=addr+length;
 }
 
-bool dlmmap::error(dltoken_t t)
+bool dlmmap::error()
 {
     return 0;
 }
@@ -398,7 +418,7 @@ int dlsock::open(const char *port)
     return 0;
 }
 
-int dlsock::rewind(dltoken_t t)
+int dlsock::rewind()
 {
     /* can't rewind a network stream */
     return -1;
@@ -434,12 +454,13 @@ filetype_t dlsock::autodetect()
     return OTHER;
 }
 
-dltoken_t dlsock::attach()
+/* a socket has a single read position, so all readers share it */
+dlsource *dlsock::attach()
 {
-    return (dltoken_t) 0;
+    return this;
 }
 
-size_t dlsock::read(unsigned char *buf, size_t bytes, dltoken_t t)
+size_t dlsock::read(unsigned char *buf, size_t bytes)
 {
     /* check internal buffer is large enough */
     checksize(bytes);
@@ -496,7 +517,7 @@ size_t dlsock::read(unsigned char *buf, size_t bytes, dltoken_t t)
     return read;
 }
 
-const unsigned char *dlsock::read(size_t *bytes, dltoken_t t)
+const unsigned char *dlsock::read(size_t *bytes)
 {
     /* check internal buffer is large enough */
     checksize(*bytes);
@@ -508,7 +529,7 @@ const unsigned char *dlsock::read(size_t *bytes, dltoken_t t)
     return buffer;
 }
 
-bool dlsock::eof(dltoken_t token)
+bool dlsock::eof()
 {
     /* never at eof with an open socket */
     return sock>=0? 0 : 1;
@@ -575,7 +596,7 @@ int dltcpsock::open(const char *port)
     return 0;
 }
 
-size_t dltcpsock::read(unsigned char *buf, size_t bytes, dltoken_t t)
+size_t dltcpsock::read(unsigned char *buf, size_t bytes)
 {
     size_t read = recv(send_sock, buf, bytes, 0);
     if (read<0)
@@ -586,7 +607,7 @@ size_t dltcpsock::read(unsigned char *buf, size_t bytes, dltoken_t t)
     return read;
 }
 
-const unsigned char* dltcpsock::read(size_t* bytes, dltoken_t t)
+const unsigned char* dltcpsock::read(size_t* bytes)
 {
     /* check internal buffer is large enough */
     checksize(*bytes);

@@ -75,23 +75,32 @@ Each layer is attached to the one below with `attach()`. Adding a codec or a
 container means subclassing the relevant base and adding a case to the dispatch
 switch in `dlplay.cpp` (around the `switch (filetype)`).
 
-### Source tokens
+### Source readers
 
-`dlsource::attach()` returns a `dltoken_t` — an **independent read position** on the
-same source. `dlfile` implements this by reopening the file, one fd per token.
-Every `dlsource` method takes a token. This is how the video and audio decoders walk
-the same transport stream file at different offsets simultaneously.
+`dlsource::attach()` returns another `dlsource *` — an **independent reader** on the
+same data, with its own read position, EOF and error flags and read buffer. `dlfile`
+implements a reader by reopening the file, one fd each; `dlmmap` shares the mapping
+and gives the reader its own pointer into it. This is how the video and audio decoders
+walk the same transport stream file at different offsets simultaneously: there is one
+`dltstream` format filter per pid, and each holds its own reader.
 
-Consequences worth remembering when touching seek/loop/EOF code: EOF and error are
-per-token flags, and `rewind(token)` rewinds only that token. `dlsock` ignores
-tokens entirely (always returns 0) since a socket has one position.
+Readers belong to the source that created them and are deleted with it, so a
+`dlformat` never frees the reader it holds. `dlsock::attach()` returns `this`, since a
+socket has a single read position — two format filters on one socket therefore steal
+each other's packets (see `BUGS`), which is why a demux is the right long term answer
+for network input.
+
+`dlplay` probes with the source object itself (`find_pid_for_stream_type`, then
+`source->rewind()`) before any format filter is attached, so the probe never disturbs
+a reader.
 
 ### Looping
 
-Input looping is not in the playout loop — it is in `dlformat::read()`, which
-rewinds the token and re-reads when a read comes up short. The known bug in `BUGS`
-(MPEG-1 audio not looping with video in a TS) lives in this interaction between
-per-token rewind and the timestamp handling in `dltstream`.
+Input looping is not in the playout loop — it is in `dlformat::read()`, which rewinds
+its own reader and re-reads when a read comes up short. The known bug in `BUGS`
+(MPEG-1 audio not looping with video in a TS) lives in this interaction between the
+per-reader rewind and the timestamp handling in `dltstream`: each stream loops
+whenever it happens to hit the end of the file, independently of the other.
 
 ### Decoder probing
 

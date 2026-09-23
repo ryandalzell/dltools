@@ -27,9 +27,8 @@ dlformat::~dlformat()
 
 int dlformat::attach(dlsource* s)
 {
-    /* attach the input source */
-    source = s;
-    token = source->attach();
+    /* attach our own reader on the input source */
+    source = s->attach();
 
     /* allocate the buffer */
     size = 64*1024;     /* arbitrary size to start with */
@@ -40,11 +39,11 @@ int dlformat::attach(dlsource* s)
 
 size_t dlformat::read(unsigned char *buf, size_t bytes)
 {
-    size_t size = source->read(buf, bytes, token);
+    size_t size = source->read(buf, bytes);
     if (size!=bytes) {
         /* no timestamp so simply loop input */
-        source->rewind(token);
-        size = source->read(buf, bytes, token);
+        source->rewind();
+        size = source->read(buf, bytes);
     }
     return size;
 }
@@ -52,14 +51,14 @@ size_t dlformat::read(unsigned char *buf, size_t bytes)
 const unsigned char *dlformat::read(size_t *bytes)
 {
     size_t size = *bytes;
-    const unsigned char *data = source->read(bytes, token);
+    const unsigned char *data = source->read(bytes);
     /* a request of zero bytes means read whatever is available, so only a read
        returning nothing is the end of the input, not one of a different size */
     if (data==NULL || (size? *bytes!=size : *bytes==0)) {
         /* no timestamp so simply loop input */
-        source->rewind(token);
+        source->rewind();
         *bytes = size; /* discard previous read */
-        data = source->read(bytes, token);
+        data = source->read(bytes);
     }
     return data;
 }
@@ -92,9 +91,8 @@ dly4m::dly4m()
 
 int dly4m::attach(dlsource *s)
 {
-    /* attach the input source */
-    source = s;
-    token = source->attach();
+    /* attach our own reader on the input source */
+    source = s->attach();
 
     /* allocate the buffer */
     size = 64*1024;     /* arbitrary size to start with */
@@ -114,10 +112,9 @@ int dly4m::attach(dlsource *s)
     return rewind();
 }
 
-int dly4m::rewind(dltoken_t t)
+int dly4m::rewind()
 {
-    /* the frame headers are parsed on our own token, so rewind that one */
-    if (source->rewind(token)<0)
+    if (source->rewind()<0)
         return -1;
     frames_read = 0;
 
@@ -133,7 +130,7 @@ size_t dly4m::read_header(char *header, size_t maxlen)
 
     while (len<maxlen-1) {
         unsigned char c;
-        if (source->read(&c, 1, token)!=1)
+        if (source->read(&c, 1)!=1)
             return 0;
         if (c=='\n') {
             header[len] = '\0';
@@ -261,12 +258,12 @@ size_t dly4m::read(unsigned char *buf, size_t bytes)
             return 0;
     }
 
-    size_t read = source->read(buf, bytes, token);
+    size_t read = source->read(buf, bytes);
     if (read!=bytes) {
         /* a truncated frame at the end of the input, so loop */
         if (rewind()<0 || read_frame_header()<0)
             return 0;
-        read = source->read(buf, bytes, token);
+        read = source->read(buf, bytes);
     }
     frames_read++;
 
@@ -287,7 +284,7 @@ const unsigned char *dly4m::read(size_t *bytes)
     }
 
     *bytes = size;
-    const unsigned char *data = source->read(bytes, token);
+    const unsigned char *data = source->read(bytes);
     if (data==NULL || *bytes!=size) {
         /* a truncated frame at the end of the input, so loop */
         if (rewind()<0 || read_frame_header()<0) {
@@ -295,7 +292,7 @@ const unsigned char *dly4m::read(size_t *bytes)
             return NULL;
         }
         *bytes = size;
-        data = source->read(bytes, token);
+        data = source->read(bytes);
     }
     frames_read++;
 
@@ -330,9 +327,8 @@ dltstream::~dltstream()
 
 int dltstream::attach(dlsource *s)
 {
-    /* attach the input source */
-    source = s;
-    token = source->attach();
+    /* attach our own reader on the input source */
+    source = s->attach();
 
     /* allocate the packet buffer */
     packet = (unsigned char *) malloc(188);
@@ -363,7 +359,7 @@ const unsigned char *dltstream::read(size_t *bytes)
     while (1) {
         /* read next packet */
         if (!packet_valid)
-            if (next_packet(packet, source, token)<0)
+            if (next_packet(packet, source)<0)
                 return 0;
 
         /* check pid is correct */
@@ -476,9 +472,8 @@ int read_packet(void *opaque, uint8_t *buf, int buf_size)
 
 int dlavformat::attach(dlsource *s)
 {
-    /* attach the input source */
-    source = s;
-    token = source->attach();
+    /* attach our own reader on the input source */
+    source = s->attach();
 
     /* allocate the read buffer */
     size = 4096; //188;
@@ -512,11 +507,11 @@ int dlavformat::attach(dlsource *s)
 
 size_t dlavformat::read(unsigned char *buf, size_t bytes)
 {
-    size_t size = source->read(buf, bytes, token);
+    size_t size = source->read(buf, bytes);
     if (size==0) {
         /* no timestamp so simply loop input */
-        source->rewind(token);
-        size = source->read(buf, bytes, token);
+        source->rewind();
+        size = source->read(buf, bytes);
     }
     return size;
 }

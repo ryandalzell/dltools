@@ -17,7 +17,7 @@ public:
     virtual ~dlformat();
 
     /* format operators */
-    virtual int rewind(dltoken_t token=0) { return source->rewind(token); }
+    virtual int rewind() { return source->rewind(); }
     virtual int attach(dlsource *source);
 
     /* copy to buffer read */
@@ -33,9 +33,9 @@ public:
     //virtual const char *description() { return source->description(); }
     virtual const char *name() { return source->name(); }
     virtual size_t filesize() { return source->size(); }
-    virtual off_t pos() { return source->pos(token); }
-    virtual bool eof() { return source->eof(token); }
-    virtual bool error() { return source->error(token); }
+    virtual off_t pos() { return source->pos(); }
+    virtual bool eof() { return source->eof(); }
+    virtual bool error() { return source->error(); }
 
     /* format metadata */
     virtual const char *description() { return "raw"; }
@@ -44,9 +44,8 @@ public:
     virtual int get_video_format(int *width, int *height, bool *interlaced, float *framerate, pixelformat_t *pixelformat) { return -1; }
 
 protected:
-    /* data source */
+    /* this format's own reader on the data source */
     dlsource *source;
-    dltoken_t token;
 
     /* buffer variables */
     size_t size;
@@ -69,7 +68,7 @@ public:
     dly4m();
 
     /* format operators */
-    virtual int rewind(dltoken_t token=0);
+    virtual int rewind();
     virtual int attach(dlsource *source);
 
     /* copy to buffer read */
