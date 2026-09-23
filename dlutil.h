@@ -57,6 +57,7 @@ sts_t get_ststime();
 const char *describe_pts(pts_t t);
 const char *describe_sts(sts_t t);
 const char *describe_filetype(filetype_t f);
+const char *describe_display_mode(IDeckLinkDisplayMode *mode);
 size_t pixelformat_get_size(pixelformat_t pixelformat, int width, int height);
 bool pixelformat_is_8bit(pixelformat_t pixelformat);
 

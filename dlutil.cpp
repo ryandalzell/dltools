@@ -10,6 +10,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <ctype.h>
+#include <math.h>
 #include <sys/time.h>
 
 #include "dlutil.h"
@@ -430,6 +431,42 @@ const char *describe_filetype(filetype_t f)
     };
 
     return filetype_names[f];
+}
+
+/* describe a display mode in the short form used to name sdi formats, e.g. 1080i5994 */
+const char *describe_display_mode(IDeckLinkDisplayMode *mode)
+{
+    /* not thread safe */
+    static char s[32];
+
+    long width = mode->GetWidth();
+    long height = mode->GetHeight();
+    bool interlaced = mode->GetFieldDominance()!=bmdProgressiveFrame;
+
+    /* the short form quotes the field rate of an interlaced format */
+    BMDTimeValue frame_duration;
+    BMDTimeScale time_scale;
+    mode->GetFrameRate(&frame_duration, &time_scale);
+    double rate = (double)time_scale / (double)frame_duration * (interlaced? 2.0 : 1.0);
+
+    /* fractional frame rates are written without the decimal point, e.g. 59.94 is 5994 */
+    char framerate[8];
+    if (fabs(rate-round(rate))<0.01)
+        snprintf(framerate, sizeof(framerate), "%ld", lround(rate));
+    else
+        snprintf(framerate, sizeof(framerate), "%ld", lround(rate*100.0));
+
+    /* ntsc is quoted as 480 lines even though the card captures 486 */
+    long lines = height==486? 480 : height;
+
+    /* the standard formats are named by line count alone */
+    if ((lines==2160 && width==3840) || (lines==1080 && width==1920) || (lines==720 && width==1280) ||
+        (lines==576  && width==720)  || (lines==480  && width==720))
+        snprintf(s, sizeof(s), "%ld%c%s", lines, interlaced? 'i' : 'p', framerate);
+    else
+        snprintf(s, sizeof(s), "%ldx%ld%c%s", width, height, interlaced? 'i' : 'p', framerate);
+
+    return s;
 }
 
 size_t pixelformat_get_size(pixelformat_t pixelformat, int width, int height)

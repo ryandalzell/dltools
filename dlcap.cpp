@@ -41,6 +41,9 @@ class DeckLinkCapture : public IDeckLinkInputCallback
         void Wait();
         void Stop();
 
+        /* input format reporting */
+        void ReportInputFormat(IDeckLinkDisplayMode *mode);
+
         /* configuration interface */
         void SetOutputFile(FILE *f) {fileout = f;}
         void SetMaxframes(int m) {maxframes = m;}
@@ -57,9 +60,11 @@ class DeckLinkCapture : public IDeckLinkInputCallback
         IDeckLinkDisplayMode *mode;
 
         /* input format variables */
+        BMDDisplayMode req_mode;
         BMDDisplayMode inp_mode;
-        const char *inp_mode_name;
+        char inp_mode_name[32];
         float inp_mode_framerate;
+        bool detecting;
 
         /* file output variables */
         FILE *fileout;
@@ -78,9 +83,11 @@ DeckLinkCapture::DeckLinkCapture()
     card = NULL;
     input = NULL;
     mode = NULL;
+    req_mode = 0;
     inp_mode = 0;
-    inp_mode_name = NULL;
+    inp_mode_name[0] = '\0';
     inp_mode_framerate = 30.0;
+    detecting = false;
     fileout = NULL;
     numframes = 0;
     maxframes = 0;
@@ -122,10 +129,26 @@ HRESULT DeckLinkCapture::Init()
     return S_OK;
 }
 
+/* record and report the sdi input format */
+void DeckLinkCapture::ReportInputFormat(IDeckLinkDisplayMode *mode)
+{
+    BMDTimeValue frame_duration;
+    BMDTimeScale time_scale;
+
+    inp_mode = mode->GetDisplayMode();
+    snprintf(inp_mode_name, sizeof(inp_mode_name), "%s", describe_display_mode(mode));
+    mode->GetFrameRate(&frame_duration, &time_scale);
+    inp_mode_framerate = (float)time_scale / (float)frame_duration;
+
+    /* report the input format in short form */
+    dlmessage("info: detected sdi input format %s", inp_mode_name);
+}
+
 /* auto-detect input format */
 BMDDisplayMode DeckLinkCapture::DetectInput()
 {
     /* start the video input with a random choice of mode */
+    detecting = true;
     Start(bmdModeHD1080i6000);
 
     /* wait for input format detection */
@@ -133,15 +156,16 @@ BMDDisplayMode DeckLinkCapture::DetectInput()
 
     /* stop */
     Stop();
-
-    /* display mode name */
-    dlmessage("info: auto-detected input format %s", inp_mode_name);
+    detecting = false;
 
     return inp_mode;
 }
 
 HRESULT DeckLinkCapture::Start(BMDDisplayMode mode)
 {
+    /* remember the requested mode, the input may already match it */
+    req_mode = mode;
+
     /* configure the video input */
     HRESULT result = input->EnableVideoInput(mode, bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection);
     if (result!=S_OK)
@@ -201,9 +225,7 @@ HRESULT DeckLinkCapture::Start(int width, int height, bool interlaced, float fra
             dlexit("error: failed to find mode for %dx%d%c%.2f", width, height, interlaced? 'i' : 'p', framerate);
 
         /* display mode name */
-        const char *name;
-        if (mode->GetName(&name)==S_OK)
-            dlmessage("info: requested capture format %s", name);
+        dlmessage("info: requested capture format %s", describe_display_mode(mode));
     }
 
     return Start(mode->GetDisplayMode());
@@ -219,7 +241,7 @@ HRESULT DeckLinkCapture::VideoInputFrameArrived(IDeckLinkVideoInputFrame* videof
         if (videoframe->GetFlags() & bmdFrameHasNoInputSource)
         {
             if (framecount && framecount%lroundf(inp_mode_framerate)==0) {
-                if (inp_mode_name == NULL)
+                if (inp_mode_name[0]=='\0')
                     dlstatus("frame %d: no input signal detected", framecount);
                 else
                     dlstatus("frame %d: format mismatch: %s detected", framecount, inp_mode_name);
@@ -227,6 +249,19 @@ HRESULT DeckLinkCapture::VideoInputFrameArrived(IDeckLinkVideoInputFrame* videof
         }
         else
         {
+            /* a frame with a valid signal while detecting means the input matches the requested mode */
+            if (detecting) {
+                if (inp_mode_name[0]=='\0') {
+                    IDeckLinkDisplayMode *reqmode = NULL;
+                    if (input->GetDisplayMode(req_mode, &reqmode)==S_OK) {
+                        ReportInputFormat(reqmode);
+                        reqmode->Release();
+                    }
+                }
+                sem_post(&sem_format);
+                return S_OK;
+            }
+
             /* write video frame to file */
             if (fileout) {
                 int framesize = videoframe->GetRowBytes() * videoframe->GetHeight();
@@ -236,12 +271,21 @@ HRESULT DeckLinkCapture::VideoInputFrameArrived(IDeckLinkVideoInputFrame* videof
                 HRESULT result = videoframe->QueryInterface(IID_IDeckLinkVideoBuffer, (void**)&videoBuffer);
                 if (result!=S_OK)
                     dlapierror(result, "failed to query video frame");
+
+                /* the buffer has to be locked for reading before it can be addressed */
+                result = videoBuffer->StartAccess(bmdBufferAccessRead);
+                if (result!=S_OK)
+                    dlapierror(result, "failed to lock frame buffer for reading");
                 result = videoBuffer->GetBytes(&framedata);
                 if (result!=S_OK)
                     dlapierror(result, "failed to access frame buffer address");
                 int write = fwrite(framedata, framesize, 1, fileout);
                 if (write!=1)
-                    dlerror("failed to write %d bytes to output");
+                    dlerror("failed to write %d bytes to output", framesize);
+
+                /* release the buffer back to the driver */
+                videoBuffer->EndAccess(bmdBufferAccessRead);
+                videoBuffer->Release();
             }
 
             /* report frame */
@@ -280,13 +324,8 @@ HRESULT DeckLinkCapture::VideoInputFrameArrived(IDeckLinkVideoInputFrame* videof
 
 HRESULT DeckLinkCapture::VideoInputFormatChanged(BMDVideoInputFormatChangedEvents events, IDeckLinkDisplayMode *mode, BMDDetectedVideoInputFormatFlags flags)
 {
-    BMDTimeValue framerate_duration;
-    BMDTimeScale framerate_scale;
-
-    inp_mode = mode->GetDisplayMode();
-    mode->GetName(&inp_mode_name);
-    mode->GetFrameRate(&framerate_scale, &framerate_duration);
-    inp_mode_framerate = (float)framerate_duration / (float) framerate_scale;
+    /* record and report the new input format */
+    ReportInputFormat(mode);
 
     /* signal that input format has been detected */
     sem_post(&sem_format);
