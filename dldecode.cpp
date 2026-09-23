@@ -354,7 +354,9 @@ decode_t dlpcm::decode(unsigned char *samples, size_t sampsize) // sampsize is i
 
     size_t numsamps = 0;
     size_t read;
+    bool discontinuity;
     do {
+        discontinuity = false;
 
         if (start==end) {
             /* read from input and check for exceptions */
@@ -423,6 +425,25 @@ decode_t dlpcm::decode(unsigned char *samples, size_t sampsize) // sampsize is i
                     }
                 }
 
+                /* the rest of this audio packet is not in the input any more, so
+                   discard it and start another packet with the data just read */
+                if (format->discontinuity()) {
+                    if (verbose>=2)
+                        dlmessage("discarding %zd bytes of a 302m audio packet at a discontinuity in the input", i);
+
+                    /* the new packet carries its own timestamp */
+                    sts_t sts = format->get_pts();
+                    if (sts>=0 && sts>last_sts) {
+                        results.timestamp = last_sts = sts;
+                        frames_since_pts = 0;
+                    }
+
+                    start = data;
+                    end = data + read;
+                    discontinuity = true;
+                    break;
+                }
+
                 /* finally update the read buffer pointers */
                 start = data;
                 end = data + read;
@@ -433,6 +454,10 @@ decode_t dlpcm::decode(unsigned char *samples, size_t sampsize) // sampsize is i
             start += chunksize;
             i += chunksize;
         }
+
+        /* the packet was abandoned, so start the next one */
+        if (discontinuity)
+            continue;
 
         /* sanity check that audio packet is all of pes packet */
         //if (start!=end)
@@ -467,7 +492,7 @@ decode_t dlpcm::decode(unsigned char *samples, size_t sampsize) // sampsize is i
             }
         }
 
-    } while (0); //(numsamps<sampsize);
+    } while (discontinuity); //(numsamps<sampsize);
 
     results.size += numsamps / 2; /* number of samples */
     frames_since_pts += numsamps /4; /* number of sample frames */
@@ -698,55 +723,65 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
     decode_t results = {0, -1ll, 0ll, 0ll};
     size_t read;
 
-    /* sync to next frame */
+    /* sync to the next frame and read the whole of it, starting again if the input
+       jumps part way through, as the rest of that frame is not in the input */
     int length = 0;
     int flags, sample_rate, bit_rate;
     do {
-        if (ac3_length<7) {
-            const unsigned char *buf = format->read(&read);
-            if (read==0) {
-                if (format->error()) {
-                    dlmessage("error reading input stream \"%s\": %s", format->name(), strerror(errno));
-                    results.size = 0;
-                    return results;
+        /* sync to next frame */
+        do {
+            if (ac3_length<7) {
+                const unsigned char *buf = format->read(&read);
+                if (read==0) {
+                    if (format->error()) {
+                        dlmessage("error reading input stream \"%s\": %s", format->name(), strerror(errno));
+                        results.size = 0;
+                        return results;
+                    }
+                    if (format->eof()) {
+                        format->rewind();
+                        continue;
+                    }
                 }
-                if (format->eof()) {
-                    format->rewind();
-                    continue;
+
+                sts_t sts = format->get_pts();
+                if (sts>=0 && sts>last_sts) {
+                    last_sts = sts;
+                    frames_since_pts = 0;
+                    //dlmessage("new audio pts=%s", describe_sts(sts));
                 }
+
+                /* the input has jumped, so throw away the part of a frame in the
+                   buffer rather than joining it to data which does not follow it */
+                if (format->discontinuity()) {
+                    if (verbose>=2 && ac3_length)
+                        dlmessage("discarding %d bytes of ac3 audio at a discontinuity in the input", ac3_length);
+                    ac3_length = 0;
+                }
+
+                memcpy(ac3_frame+ac3_length, buf, read);
+                ac3_length += read;
             }
 
-            sts_t sts = format->get_pts();
-            if (sts>=0 && sts>last_sts) {
-                last_sts = sts;
-                frames_since_pts = 0;
-                //dlmessage("new audio pts=%s", describe_sts(sts));
+            /* look for sync in ac3 stream */
+            int sync;
+            for (sync=0; sync<ac3_length-7; sync++) {
+                length = a52_syncinfo(ac3_frame+sync, &flags, &sample_rate, &bit_rate);
+                if (length)
+                    break;
+                //else
+                //    dlmessage("ac_length=%d ac3_frame=%02x %02x %02x %02x", ac3_length, *(ac3_frame+sync+0), *(ac3_frame+sync+1), *(ac3_frame+sync+2), *(ac3_frame+sync+3));
             }
-            memcpy(ac3_frame+ac3_length, buf, read);
-            ac3_length += read;
-        }
 
-        /* look for sync in ac3 stream */
-        int sync;
-        for (sync=0; sync<ac3_length-7; sync++) {
-            length = a52_syncinfo(ac3_frame+sync, &flags, &sample_rate, &bit_rate);
-            if (length)
-                break;
-            //else
-            //    dlmessage("ac_length=%d ac3_frame=%02x %02x %02x %02x", ac3_length, *(ac3_frame+sync+0), *(ac3_frame+sync+1), *(ac3_frame+sync+2), *(ac3_frame+sync+3));
-        }
+            /* if no luck */
+            if (length==0) {
+                /* reset buffer for next loop */
+                memmove(ac3_frame, ac3_frame+sync, ac3_length-sync);
+                ac3_length = ac3_length-sync;
+            }
 
-        /* if no luck */
-        if (length==0) {
-            /* reset buffer for next loop */
-            memmove(ac3_frame, ac3_frame+sync, ac3_length-sync);
-            ac3_length = ac3_length-sync;
-        }
+        } while (length==0);
 
-    } while (length==0);
-
-    /* prepare the next frame for decoding */
-    do {
         /* read data from transport stream to complete frame */
         while (ac3_length < length) {
             const unsigned char *buf = format->read(&read);
@@ -760,10 +795,21 @@ decode_t dlliba52::decode(unsigned char *frame, size_t framesize)
                     continue;
                 }
             }
+
+            /* the rest of this frame is not in the input, so start another one */
+            if (format->discontinuity()) {
+                if (verbose>=2)
+                    dlmessage("discarding %d bytes of an incomplete ac3 frame at a discontinuity in the input", ac3_length);
+                ac3_length = 0;
+                length = 0;
+                break;
+            }
+
             memcpy(ac3_frame+ac3_length, buf, read);
             ac3_length += read;
         }
-    } while (0);
+
+    } while (length==0);
 
     /* feed the frame to the audio decoder */
     flags = A52_STEREO | A52_ADJUST_LEVEL;

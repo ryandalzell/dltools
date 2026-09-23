@@ -131,7 +131,9 @@ of a frame will otherwise join the two and emit a frame with the wrong timestamp
 the first PES packet of each pid in a new pass is marked, `dlformat::discontinuity()`
 reports it for the packet just read, and a decoder throws away what it has buffered:
 `dlffvideo` re-initialises its parser and flushes the codec, `dlmpg123` re-opens its
-feed. `dlliba52` and `dlpcm` do not do this yet.
+feed, `dlliba52` drops the part of an AC-3 frame it holds and syncs again, and `dlpcm`
+drops a partly filled AES3 packet and starts the next one. `dlmpeg2` and `dlhevc`, which are only used when
+the ffmpeg decoders are compiled out, do not do this yet.
 
 ### Decoder probing
 
