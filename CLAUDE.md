@@ -183,6 +183,14 @@ Playback prerolls `PREROLL_FRAMES` (60) frames before `StartScheduledPlayback`. 
 history buffer of `PREROLL_FRAMES*3/2` completed frames is retained so pause mode can
 step backwards — it must stay larger than the preroll depth or stepping breaks.
 
+Playback starts at the timestamp of the first video frame. The audio of a transport
+stream normally starts a little before the video, and a gap at the start of the video
+output makes the card report every frame of the playout as displayed late, so the
+audio ahead of the first frame is given up instead: the card discards samples
+scheduled before the start time, which keeps everything after it in sync, and `dlplay`
+reports how much audio that was at verbosity 1. A video with no timestamps of its own,
+where the audio has them, starts with the audio instead.
+
 Frame memory comes from `dlalloc`, a custom `IDeckLinkVideoBufferAllocator` (the SDK
 14.3+ interface, replacing the old memory allocator) handing out a fixed pool of 256
 `dlvideobuf` objects.

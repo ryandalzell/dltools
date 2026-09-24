@@ -1136,17 +1136,18 @@ int main(int argc, char *argv[])
                     return 2;
                 }
 
-                /* find best start time from video and audio */
-                sts_t start_time = 0;
-                /* audio only handled below */
-                if (videoonly)
-                    start_time = video_start_time;
-                //else if (llabs(video_start_time-audio_start_time)>180000)
-                //    start_time = mmax(video_start_time, audio_start_time);
-                else if (video_start_time==0 && audio_start_time>180000)
+                /* start the playback at the first video frame. the audio of a
+                   transport stream normally starts before the video, and the card
+                   reports every frame which follows a gap in the video as displayed
+                   late, so the audio before the first frame is not played rather
+                   than leaving a gap at the start of the video */
+                sts_t start_time = video_start_time;
+                /* audio only is handled below, and a video with no timestamps of its
+                   own starts with the audio */
+                if (!videoonly && video_start_time==0 && audio_start_time>180000)
                     start_time = audio_start_time;
-                else
-                    start_time = mmin(video_start_time, audio_start_time);
+                if (verbose>=1 && audio && audio_start_time<start_time)
+                    dlmessage("info: %.3fs of audio before the first frame is not played", (start_time-audio_start_time)/180000.0);
 
                 /* start the playback */
                 if (output->StartScheduledPlayback(start_time, 180000, 1.0) != S_OK)

@@ -16,3 +16,9 @@ progressive. Reproduced with gladiator.1080i60.ts
 same variables which find_pid_for_stream_type() then overwrites, so for a
 transport stream the pids given on the command line are ignored and the first
 program is always played
+
+* dlplay: sportscene.ts plays cleanly for about seven seconds and then reports
+every frame late for the rest of the playout. The frame timestamps are exactly
+one frame period apart throughout, nothing is dropped and the video queue stays
+full at the preroll depth, so the card is behind its own schedule rather than
+short of frames to display. Only seen with a 625i50 display mode so far
