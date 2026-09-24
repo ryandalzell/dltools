@@ -259,7 +259,11 @@ static int stream_type_of_private_data(const unsigned char *descriptors, size_t 
     return 0;
 }
 
-int find_pid_for_stream_type(int stream_types[], int num_stream_types, int *found_type, dlsource *source)
+/* return the first pid which carries one of the given stream types, or if wanted_pid
+   is not zero, return wanted_pid if it carries one of them. found_type is set to the
+   stream type of the pid, and for a wanted pid it is set even when the stream type is
+   not one of those given, so the caller can say why the pid was not used */
+int find_pid_for_stream_type(int stream_types[], int num_stream_types, int *found_type, int wanted_pid, dlsource *source)
 {
     unsigned char packet[188];
 
@@ -277,7 +281,7 @@ int find_pid_for_stream_type(int stream_types[], int num_stream_types, int *foun
         /* find the next pat */
         int read = next_data_packet(packet, 0, source);
         if (read<=0) {
-            dlmessage("failed to find a pat in input file \"%s\" (need to specify the pids)", source->name());
+            dlmessage("failed to find a pat in input file \"%s\"", source->name());
             return 0;
         }
 
@@ -302,7 +306,7 @@ int find_pid_for_stream_type(int stream_types[], int num_stream_types, int *foun
         /* find the next pmt */
         size_t read = next_data_packet(packet, pmt_pid[pmt_index], source);
         if (read<=0) {
-            dlmessage("failed to find a pmt in input file \"%s\" (need to specify the pids)", source->name());
+            dlmessage("failed to find a pmt in input file \"%s\"", source->name());
             return 0;
         }
 
@@ -328,12 +332,22 @@ int find_pid_for_stream_type(int stream_types[], int num_stream_types, int *foun
                 if (private_type)
                     stream_type = private_type;
             }
+            /* skip every pid but the one asked for */
+            if (wanted_pid && pid!=wanted_pid) {
+                index += 5 + es_info_length;
+                continue;
+            }
             /* try to match stream type */
             for (int i=0; i<num_stream_types; i++)
                 if (stream_types[i]==stream_type) {
                     *found_type = stream_type;
                     return pid;
                 }
+            /* the pid asked for is not one of the stream types */
+            if (wanted_pid) {
+                *found_type = stream_type;
+                return 0;
+            }
             /* stream_type==0x02 - mpeg2 video
              * stream_type==0x80 - user private, assume mpeg2 video
              * stream_type==0x03 - mpeg1 audio

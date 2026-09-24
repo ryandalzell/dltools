@@ -585,11 +585,20 @@ int main(int argc, char *argv[])
                 int stream_type = 0;
                 if (!audioonly) {
                     int video_stream_types[] = { 0x02, 0x80, 0x1B, 0x24 };
-                    vid_pid = find_pid_for_stream_type(video_stream_types, sizeof(video_stream_types)/sizeof(int), &stream_type, source);
+                    /* a pid given on the command line is looked up for its stream type */
+                    int wanted_pid = vid_pid;
+                    stream_type = 0;
+                    vid_pid = find_pid_for_stream_type(video_stream_types, sizeof(video_stream_types)/sizeof(int), &stream_type, wanted_pid, source);
                     source->rewind();
+                    if (wanted_pid && !vid_pid) {
+                        if (stream_type)
+                            dlexit("error: video pid %d carries stream type 0x%02x, which is not a supported video type", wanted_pid, stream_type);
+                        else
+                            dlexit("error: video pid %d is not in the program map of input \"%s\"", wanted_pid, source->name());
+                    }
                 }
 
-                if (vid_pid) {
+                if (!audioonly && vid_pid) {
                     /* create a format filter for transport stream */
                     dltstream *ts = new dltstream(vid_pid);
                     ts->attach(demux);
@@ -633,11 +642,20 @@ int main(int argc, char *argv[])
                 if (!videoonly) {
                     int audio_stream_types[] = { 0x03, 0x04, 0x81, 0x1C, 0x06 };
                     //int audio_stream_types[] = { 0x03, 0x04 };
-                    aud_pid = find_pid_for_stream_type(audio_stream_types, sizeof(audio_stream_types)/sizeof(int), &stream_type, source);
+                    /* a pid given on the command line is looked up for its stream type */
+                    int wanted_pid = aud_pid;
+                    stream_type = 0;
+                    aud_pid = find_pid_for_stream_type(audio_stream_types, sizeof(audio_stream_types)/sizeof(int), &stream_type, wanted_pid, source);
                     source->rewind();
+                    if (wanted_pid && !aud_pid) {
+                        if (stream_type)
+                            dlexit("error: audio pid %d carries stream type 0x%02x, which is not a supported audio type", wanted_pid, stream_type);
+                        else
+                            dlexit("error: audio pid %d is not in the program map of input \"%s\"", wanted_pid, source->name());
+                    }
                 }
 
-                if (aud_pid) {
+                if (!videoonly && aud_pid) {
                     /* create a format filter for transport stream */
                     dltstream *ts = new dltstream(aud_pid);
                     ts->attach(demux);
