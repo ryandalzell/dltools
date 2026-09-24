@@ -450,9 +450,12 @@ filetype_t dlsock::autodetect()
     /* try to determine data type from contents */
     int bytes = read(buffer, bufsize);
     for (int i=0; i<bytes; i++) {
-        if (buffer[i]==0x47 && (i+bytes<188 || buffer[i+188]==0x47)) {
+        /* the demux of a transport stream is the one which finds the audio as
+           well as the video, so prefer it over handing the whole stream to
+           ffmpeg, which only plays out the video */
+        if (buffer[i]==0x47 && i+188<bytes && buffer[i+188]==0x47) {
             //dlmessage("found transport packet in network stream");
-            return FFMPEG;
+            return TS;
         }
 
         if (buffer[i]==0x00 && buffer[i+1]==0x00 && buffer[i+2]==0x01 && buffer[i+3]==0xb3) {
