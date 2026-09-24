@@ -12,6 +12,8 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/select.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
 #include <fcntl.h>
 
 #include "dlutil.h"
@@ -404,8 +406,20 @@ int dlsock::open(const char *port)
     if (multicast) {
         /* construct an IGMP join request structure */
         mc_req.imr_multiaddr.s_addr = inet_addr(multicast);
-        mc_req.imr_address.s_addr = interface? inet_addr(interface) : htonl(INADDR_ANY);
-
+        if (interface) {
+            mc_req.imr_address.s_addr = inet_addr(interface);
+            if (mc_req.imr_address.s_addr==INADDR_NONE) {
+                /* try looking up as interface name instead */
+                struct ifreq ifr;
+                ifr.ifr_addr.sa_family = AF_INET;
+                strncpy(ifr.ifr_name, interface, IFNAMSIZ-1);
+                if (ioctl(sock, SIOCGIFADDR, &ifr)<0)
+                    dlerror("failed to get interface address: %s", interface);
+                struct sockaddr_in *so = (struct sockaddr_in *)&ifr.ifr_addr;
+                mc_req.imr_address.s_addr = so->sin_addr.s_addr;
+            }
+        } else
+            mc_req.imr_address.s_addr = htonl(INADDR_ANY);
         /* send an ADD MEMBERSHIP message via setsockopt */
         if ((setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (void*) &mc_req, sizeof(mc_req))) < 0)
             dlerror("failed to send add membership message");

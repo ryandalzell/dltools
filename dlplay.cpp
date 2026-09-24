@@ -228,7 +228,7 @@ void usage(int exitcode)
     fprintf(stderr, "  -s, --sizeformat    : specify display size format: 480i,480p,576i,720p,1080i,1080p [optional +framerate] (default: autodetect)\n");
     fprintf(stderr, "  -f, --fourcc        : specify pixel fourcc format: i420,i422,uyvy,yu15,yu20 (default: i420)\n");
     fprintf(stderr, "  -F, --framerate     : override the frame rate of the input, e.g. 25, 59.94, 30000:1001 (default: from the input)\n");
-    fprintf(stderr, "  -I, --interface     : address of interface to listen for multicast data (default: first network interface)\n");
+    fprintf(stderr, "  -I, --interface     : interface name or ip address of interface to listen on for multicast data (default: first network interface)\n");
     fprintf(stderr, "  -r, --resettime     : reset timecode to zero when input yuv file wraps around (default: off)\n");
     fprintf(stderr, "  -a, --firstframe    : index of first frame in input to display (default: 0)\n");
     fprintf(stderr, "  -n, --numframes     : total number of frames to display (default: no limit)\n");
@@ -387,7 +387,6 @@ int main(int argc, char *argv[])
 
             case 'I':
                 interface = optarg;
-                dlmessage("interface=%s", interface);
                 break;
 
             case 'r':
