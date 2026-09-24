@@ -34,11 +34,14 @@ int ffind(int f, FILE *file)
 /* read next data packet from transport stream */
 int next_packet(unsigned char *packet, dlsource *source)
 {
+    /* the bytes of the packet which are already in the buffer, either from a
+       short read or from a resync */
+    int read = 0;
+
     while (1) {
-        /* read a packet sized chunk */
-        int read = 0;
+        /* fill the buffer to a packet sized chunk */
         while (read!=188) {
-            int ret = source->read(packet, 188-read);
+            int ret = source->read(packet+read, 188-read);
             if (ret<=0) {
                 /* the end of the input is not an error, a partial packet is */
                 if (read)
@@ -52,11 +55,15 @@ int next_packet(unsigned char *packet, dlsource *source)
             /* success */
             return 0;
 
-        /* resync or try again */
+        /* resync to the first sync byte in the chunk and keep what follows it,
+           the rest of that packet is read by the loop above, or start again
+           with a whole new chunk if there is no sync byte in this one */
+        read = 0;
         for (int i=1; i<188; i++) {
             if (packet[i]==0x47) {
                 memmove(packet, packet+i, 188-i);
-                source->read(packet+188-i, i);
+                read = 188-i;
+                break;
             }
         }
     }
