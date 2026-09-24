@@ -110,8 +110,10 @@ socket, not just a seekable file. One `dldemux` is created in the `TS` case in
 private demux for a single pid, for callers outside `dlplay`.
 
 A queue holds only the skew between the pids, which is well under a second in a sane
-mux. `MAX_QUEUE_BYTES` (4MB) caps it: past that, the oldest packets for that pid are
-dropped with one warning, which means a consumer has stopped reading.
+mux, but at high bitrates that is still a lot of bytes: half a second of 97Mbps video
+queued 6.4MB while waiting for an audio pid in bostonvchicago. `MAX_QUEUE_BYTES` (32MB)
+caps it: past that, the oldest packets for that pid are dropped with one warning, which
+means a consumer has stopped reading or the mux is badly skewed.
 
 `find_pid_for_stream_type`, also in `dlts.cpp`, is what chooses the pids: it reads the
 PAT and PMT and returns the first pid carrying one of a list of stream types, along

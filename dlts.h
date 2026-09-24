@@ -9,8 +9,9 @@
 /* maximum number of pids which can be demultiplexed at once */
 #define MAX_STREAMS 8
 
-/* bytes queued for one pid before the oldest data is dropped */
-#define MAX_QUEUE_BYTES (4*1024*1024)
+/* bytes queued for one pid before the oldest data is dropped, half a second of skew
+   at 100Mbps needs over 6MB, so this allows for a second or so at a few hundred Mbps */
+#define MAX_QUEUE_BYTES (32*1024*1024)
 
 /* a complete pes packet, the data belongs to whoever reads it */
 typedef struct {
