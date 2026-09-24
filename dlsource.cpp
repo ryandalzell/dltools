@@ -512,14 +512,15 @@ size_t dlsock::read(unsigned char *buf, size_t bytes)
         /* calculate number of bytes to refill buffer */
         size_t fill = bufsize-bytesleft;
 
-        /* refill buffer */
-        size_t read = recvfrom(sock, buffer, fill, MSG_TRUNC, NULL, 0);
+        /* refill buffer after the data already in it */
+        ssize_t read = recvfrom(sock, buffer+bytesleft, fill, MSG_TRUNC, NULL, 0);
         if (read<0)
             dlerror("error: failed to read from socket");
         else if (read==0)
             dlmessage("zero sized packet received");
-        else if (read>fill) {
-            dlmessage("warning: %d bytes discarded", read-fill);
+        else if ((size_t)read>fill) {
+            /* msg_trunc reports the size of the whole datagram, not the part of it which fitted */
+            dlmessage("warning: %zd bytes discarded", read-(ssize_t)fill);
             read = fill;
         }
 
