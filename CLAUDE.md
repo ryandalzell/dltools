@@ -202,6 +202,23 @@ Frame memory comes from `dlalloc`, a custom `IDeckLinkVideoBufferAllocator` (the
 14.3+ interface, replacing the old memory allocator) handing out a fixed pool of 256
 `dlvideobuf` objects.
 
+3:2 pulldown (soft telecine) is not handled, see BUGS. Nothing reads `repeat_pict`
+(or libmpeg2's repeat_first_field), so each coded frame is scheduled for one frame
+period. ffmpeg reports such a stream as progressive 29.97, and it plays as 1080p29.97
+with its frames reported late. The card cannot repeat a field, because
+`ScheduleVideoFrame` works in whole frames of the display mode and an interlaced frame
+always carries both of its fields. A fix therefore has to weave the frames in software
+in `dlffvideo::decode()`:
+
+- queue the decoded fields, two or three per coded frame, taken from `repeat_pict` and
+  `AV_FRAME_FLAG_TOP_FIELD_FIRST`;
+- time each field at the frame's PTS plus 3003 (180kHz) per field;
+- build each output frame from the next top and bottom field;
+- report the stream as interlaced 29.97.
+
+The simpler alternative is to ignore the flag and play the coded frames in a
+1080p23.98 mode.
+
 ### Interactive keys in dlplay
 
 Handled inline in the playout loop under `USE_TERMIOS` via the `dlterm` class:
