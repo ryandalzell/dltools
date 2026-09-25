@@ -21,6 +21,8 @@ public:
     /* source operators */
     virtual int open(const char *filename) = 0;
     virtual int rewind() = 0;
+    /* move the read position to an offset from the start, if the source can */
+    virtual int seek(off_t offset) { return -1; }
     virtual filetype_t autodetect() = 0;
     /* create an independent reader on the same data, owned by this source */
     virtual dlsource *attach() = 0;
@@ -66,6 +68,7 @@ public:
     /* source operators */
     virtual int open(const char *filename);
     virtual int rewind();
+    virtual int seek(off_t offset);
     virtual filetype_t autodetect();
     virtual dlsource *attach();
     virtual size_t read(unsigned char *buf, size_t bytes);
@@ -98,6 +101,7 @@ public:
     /* source operators */
     virtual int open(const char *filename);
     virtual int rewind();
+    virtual int seek(off_t offset);
     virtual dlsource *attach();
     virtual size_t read(unsigned char *buf, size_t bytes);
     virtual const unsigned char *read(size_t *bytes);

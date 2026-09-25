@@ -130,6 +130,11 @@ assumed to be SMPTE 302M.
 For elementary streams, looping is in `dlformat::read()`, which rewinds its own reader
 and re-reads when a read comes up short.
 
+Raw YUV can instead loop over a range of frames, given with `-a` and `-n`: `dlyuv` counts
+the frames it has read and seeks its format back to the first one (`dlformat::seek()`,
+which only `dlfile` and `dlmmap` implement), so for raw YUV `-n` is the length of the
+loop rather than a limit on the playout.
+
 For transport streams the demux loops the input itself: at end of input it rewinds the
 one reader, discards the partly assembled packets and carries on, so every pid loops
 at the same point. Because the scheduler in `dlplay` needs monotonic timestamps (and

@@ -89,6 +89,7 @@ public:
     void set_lumaonly(int l) { lumaonly = l; }
     void set_imagesize(const char *s) { imagesize = s; }
     void set_fourcc(const char *f) { fourcc = f; }
+    void set_frame_range(unsigned first, unsigned num) { firstframe = first; loopframes = num; }
 
     virtual int attach(dlformat *format);
     virtual bool atend();
@@ -99,6 +100,11 @@ public:
 
 private:
     unsigned maxframes;
+
+    /* the loop of frames to play, loopframes is zero to play the whole input */
+    unsigned firstframe;
+    unsigned loopframes;
+    unsigned loopframe;     /* frames played in this pass through the loop */
 
     /* buffer variables */
     size_t size;

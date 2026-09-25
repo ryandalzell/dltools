@@ -62,6 +62,10 @@ dlyuv::dlyuv()
     lumaonly = 0;
     imagesize = NULL;
     fourcc = NULL;
+    /* frame range */
+    firstframe = 0;
+    loopframes = 0;
+    loopframe = 0;
 }
 
 dlyuv::~dlyuv()
@@ -105,18 +109,40 @@ int dlyuv::attach(dlformat *f)
     /* calculate the number of frames in the input */
     maxframes = format->filesize() / size;
 
+    /* play a range of frames, looping from the last back to the first */
+    if (firstframe || loopframes) {
+        if (firstframe>=maxframes)
+            dlexit("first frame %u is past the end of \"%s\", which has %u frames", firstframe, format->name(), maxframes);
+        if (loopframes==0 || loopframes>maxframes-firstframe)
+            loopframes = maxframes-firstframe;
+        if (format->seek((off_t)firstframe*size)<0)
+            dlexit("failed to seek to frame %u in \"%s\"", firstframe, format->name());
+    }
+
     return 0;
 }
 
 bool dlyuv::atend()
 {
     /* this only works for yuv data */
+    if (loopframes)
+        return loopframe==loopframes;
     return format->pos()/size==maxframes;
 }
 
 decode_t dlyuv::decode(unsigned char *uyvy, size_t uyvysize)
 {
     decode_t results = {0, 0};
+
+    /* go back to the first frame at the end of the loop */
+    if (loopframes) {
+        if (loopframe==loopframes) {
+            if (format->seek((off_t)firstframe*size)<0)
+                dlerror("failed to seek to frame %u in \"%s\"", firstframe, format->name());
+            loopframe = 0;
+        }
+        loopframe++;
+    }
 
     if (pixelformat==UYVY) {
         /* read directly into frame */

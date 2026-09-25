@@ -19,6 +19,7 @@ public:
 
     /* format operators */
     virtual int rewind() { return source->rewind(); }
+    virtual int seek(off_t offset) { return source->seek(offset); }
     virtual int attach(dlsource *source);
 
     /* copy to buffer read */

@@ -126,6 +126,18 @@ int dlfile::rewind()
     return r;
 }
 
+int dlfile::seek(off_t offset)
+{
+    off_t r = lseek(file, offset, SEEK_SET);
+    if (r<0) {
+        dlerror("failed to seek in file \"%s\"", filename);
+        return -1;
+    }
+    eof_flag = 0;
+
+    return 0;
+}
+
 filetype_t dlfile::autodetect()
 {
     /* determine the file type from the filename suffix */
@@ -260,6 +272,15 @@ int dlmmap::open(const char *f)
 int dlmmap::rewind()
 {
     ptr = addr;
+
+    return 0;
+}
+
+int dlmmap::seek(off_t offset)
+{
+    if (offset<0 || (size_t)offset>length)
+        return -1;
+    ptr = addr + offset;
 
     return 0;
 }

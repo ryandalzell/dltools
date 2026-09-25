@@ -1,9 +1,5 @@
 This file contains a list of the known bugs in the dltools package.
 
-* dlplay: the -a, --firstframe option is parsed and range checked but its value
-is never used, so the option silently has no effect and playback always starts
-at the first frame in the input
-
 * dlplay: 3:2 pulldown is not handled, so film content in a 59.94 field per
 second transport stream plays with every other frame reported late. The coded
 frames arrive at 23.976fps and each is displayed for either two or three fields,

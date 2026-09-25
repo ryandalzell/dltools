@@ -230,8 +230,8 @@ void usage(int exitcode)
     fprintf(stderr, "  -F, --framerate     : override the frame rate of the input, e.g. 25, 59.94, 30000:1001 (default: from the input)\n");
     fprintf(stderr, "  -I, --interface     : interface name or ip address of interface to listen on for multicast data (default: first network interface)\n");
     fprintf(stderr, "  -r, --resettime     : reset timecode to zero when input yuv file wraps around (default: off)\n");
-    fprintf(stderr, "  -a, --firstframe    : index of first frame in input to display (default: 0)\n");
-    fprintf(stderr, "  -n, --numframes     : total number of frames to display (default: no limit)\n");
+    fprintf(stderr, "  -a, --firstframe    : index of first frame in raw yuv input to display (default: 0)\n");
+    fprintf(stderr, "  -n, --numframes     : total number of frames to display, or for raw yuv the number of frames to loop over (default: no limit)\n");
     fprintf(stderr, "  -2, --halfrate      : allow using half frame rate, e.g. 30fps when 60fps is not supported (default: off)\n");
     fprintf(stderr, "  -l, --luma          : display luma plane only (default: luma and chroma)\n");
     fprintf(stderr, "  -=, --videoonly     : play video only (default: video and audio if possible)\n");
@@ -574,6 +574,8 @@ int main(int argc, char *argv[])
 
         /* create the video and audio format filters and decoders */
         dlformat *vid_fmt = NULL, *aud_fmt = NULL;
+        if (firstframe && filetype!=YUV)
+            dlexit("error: the first frame can only be given for a raw yuv file, not %s", describe_filetype(filetype));
         switch (filetype) {
             case TS :
             {
@@ -715,6 +717,12 @@ int main(int argc, char *argv[])
                     yuv->set_imagesize(sizeformat);
                 if (fourcc)
                     yuv->set_fourcc(fourcc);
+
+                /* raw yuv loops over numframes from firstframe, instead of stopping */
+                if (filetype==YUV) {
+                    yuv->set_frame_range(firstframe, numframes);
+                    numframes = 0;
+                }
 
                 /* cast down to decoder pointer */
                 video = (dldecode *)yuv;
