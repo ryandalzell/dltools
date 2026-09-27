@@ -23,6 +23,15 @@ change what the next frame gets, so a toggle appears after the preroll depth.
 Timecode is drop frame at 29.97 and 59.94 (flag on every frame, `;` on screen); 23.98
 has no drop frame form and counts non-drop.
 
+`-a` adds a stereo middle C tone at -20 dBFS. Like the timecode it is computed from its
+sample number, so a partial `ScheduleAudioSamples` write needs no leftover buffer: the next
+block starts from the first sample not written. It is scheduled with a timescale of 48000
+and the sample number as the stream time, the one exception to the 180kHz convention,
+because a sample is 3.75 ticks of 180kHz. It is kept 250ms ahead of playback, which also
+bounds the latency of muting with `a`, and once `-n` has requested the stop it is only
+topped up to the end of the last frame, since the buffer level cannot be read after
+playback has stopped.
+
 ## Build
 
 Plain Makefile, no configure step and no test suite.

@@ -15,7 +15,7 @@ dlplay: video player, supports file and network input and
 dlcap:  video recorder, captures raw yuv data in supported formats
 
 dlcard: displays a test card, currently colour bars with optional
-        caption, video mode text and timecode
+        caption, video mode text, timecode and tone
 
 dlinfo: looks for compatible cards and reports supported formats
 

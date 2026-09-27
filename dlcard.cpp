@@ -1,5 +1,5 @@
 /*
- * Description: display a test card with optional text and timecode.
+ * Description: display a test card with optional text, timecode and tone.
  * Author     : Ryan Dalzell
  * Copyright  : (c) 2026 4i2i Communications Ltd.
  */
@@ -38,6 +38,22 @@ const int RING_FRAMES = PREROLL_FRAMES+2;
 const int OVERLAY_TEXT = 1;
 const int OVERLAY_MODE = 2;
 const int OVERLAY_TIMECODE = 4;
+
+/* test tone of middle c at the smpte rp 155 alignment level, kept at least 250ms ahead in 50ms blocks */
+const int AUDIO_RATE = 48000;
+const double TONE_FREQUENCY = 261.6255653;  /* 440*2^(-9/12) */
+const double TONE_LEVEL = -20.0;            /* dBFS */
+const unsigned AUDIO_BLOCK = 2400;
+const unsigned AUDIO_TARGET = 12000;
+const int TONE_RAMP = 240;                  /* samples to mute or unmute, 5ms */
+
+/* state of the tone, which is computed from the sample number so a partial write needs no buffer */
+typedef struct {
+    long long next;         /* sample number of the next sample to schedule */
+    double gain;            /* gain of the next sample, ramped towards target */
+    double target;          /* 1 when playing, 0 when muted */
+    bool underrun;          /* an underrun has been reported */
+} tone_t;
 
 /* timecode of a frame */
 typedef struct {
@@ -140,6 +156,58 @@ void frame_to_timecode(long long frame, int fps, bool dropframe, timecode_t *tc)
     tc->ss = frame / fps % 60;
     tc->mm = frame / (fps*60) % 60;
     tc->hh = frame / (fps*3600) % 24;
+}
+
+/* move a gain towards its target by the given number of samples of ramp */
+double ramp_gain(double gain, double target, unsigned samples)
+{
+    double step = (double)samples/TONE_RAMP;
+    if (gain<target)
+        return mmin(gain+step, target);
+    return mmax(gain-step, target);
+}
+
+/* fill a buffer with stereo 16-bit samples of the tone, starting at sample number first */
+void generate_tone(int16_t *buf, long long first, unsigned count, double gain, double target)
+{
+    const double amplitude = 32767.0 * pow(10.0, TONE_LEVEL/20.0);
+    for (unsigned i=0; i<count; i++) {
+        /* whole seconds and the remaining samples keep the phase precise over long runs */
+        long long n = first + i;
+        double cycles = fmod((n/AUDIO_RATE) * TONE_FREQUENCY, 1.0) + (n%AUDIO_RATE) * TONE_FREQUENCY / AUDIO_RATE;
+        int16_t sample = lround(gain * amplitude * sin(2.0*M_PI*cycles));
+        buf[2*i] = buf[2*i+1] = sample;
+        gain = ramp_gain(gain, target, 1);
+    }
+}
+
+/* schedule tone until the card has at least the target amount of audio buffered */
+void top_up_audio(IDeckLinkOutput *output, tone_t *tone, bool started)
+{
+    uint32_t buffered;
+    HRESULT result = output->GetBufferedAudioSampleFrameCount(&buffered);
+    if (result!=S_OK)
+        dlapierror(result, "error: failed to get audio buffer level");
+    if (started && buffered==0 && !tone->underrun) {
+        dlmessage("warning: audio buffer ran empty");
+        tone->underrun = true;
+    }
+
+    while (buffered<AUDIO_TARGET) {
+        int16_t buf[AUDIO_BLOCK*2];
+        generate_tone(buf, tone->next, AUDIO_BLOCK, tone->gain, tone->target);
+        uint32_t written;
+        result = output->ScheduleAudioSamples(buf, AUDIO_BLOCK, tone->next, AUDIO_RATE, &written);
+        if (result!=S_OK)
+            dlapierror(result, "error: failed to schedule audio samples");
+
+        /* carry on from the first sample not written */
+        tone->next += written;
+        tone->gain = ramp_gain(tone->gain, tone->target, written);
+        buffered += written;
+        if (written<AUDIO_BLOCK)
+            break;
+    }
 }
 
 /* set the timecode in the ancillary data of a frame, following smpte st 12-2 for the choice of vitc1 and vitc2 */
@@ -438,6 +506,7 @@ void usage(int exitcode)
     fprintf(stderr, "  -o, --text          : display a string in the centre of the image, toggle with o (default: off, card name when toggled on)\n");
     fprintf(stderr, "  -m, --showmode      : display the video mode in the bottom right of the image, toggle with m (default: off)\n");
     fprintf(stderr, "  -t, --timecode      : add timecode to the sdi output and display it at the bottom of the image, toggle display with t (default: off)\n");
+    fprintf(stderr, "  -a, --audio         : add a stereo middle c tone at -20 dBFS, mute with a (default: off)\n");
     fprintf(stderr, "  -i, --index         : index of decklink card to use (default: 0)\n");
     fprintf(stderr, "  -q, --quiet         : decrease verbosity, can be used multiple times\n");
     fprintf(stderr, "  -v, --verbose       : increase verbosity, can be used multiple times\n");
@@ -455,6 +524,7 @@ int main(int argc, char *argv[])
     const char *text = NULL;
     bool showmode = false;
     bool timecode = false;
+    bool audio = false;
     int index = 0;
     int verbose = 0;
 
@@ -467,6 +537,7 @@ int main(int argc, char *argv[])
             {"text",      1, NULL, 'o'},
             {"showmode",  0, NULL, 'm'},
             {"timecode",  0, NULL, 't'},
+            {"audio",     0, NULL, 'a'},
             {"index",     1, NULL, 'i'},
             {"quiet",     0, NULL, 'q'},
             {"verbose",   0, NULL, 'v'},
@@ -475,7 +546,7 @@ int main(int argc, char *argv[])
             {NULL,        0, NULL,  0 }
         };
 
-        int optchar = getopt_long(argc, argv, "s:n:lo:mti:qvh", long_options, NULL);
+        int optchar = getopt_long(argc, argv, "s:n:lo:mtai:qvh", long_options, NULL);
         if (optchar==-1)
             break;
 
@@ -502,6 +573,10 @@ int main(int argc, char *argv[])
 
             case 't':
                 timecode = true;
+                break;
+
+            case 'a':
+                audio = true;
                 break;
 
             case 'i':
@@ -635,6 +710,17 @@ int main(int argc, char *argv[])
     if (result!=S_OK)
         dlapierror(result, "failed to enable video output");
 
+    /* set the audio output mode and fill the audio buffer during preroll */
+    tone_t tone = {0, 1.0, 1.0, false};
+    if (audio) {
+        result = output->EnableAudioOutput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, 2, bmdAudioOutputStreamTimestamped);
+        if (result!=S_OK)
+            dlapierror(result, "error: failed to enable audio output");
+        result = output->BeginAudioPreroll();
+        if (result!=S_OK)
+            dlapierror(result, "error: failed to begin audio preroll");
+    }
+
     /* one background for each combination of text and video mode overlays */
     int32_t rowbytes;
     result = output->RowBytesForPixelFormat(bmdFormat8BitYUV, width, &rowbytes);
@@ -721,6 +807,10 @@ int main(int argc, char *argv[])
                     overlays ^= OVERLAY_MODE;
                 if (c=='t' && NUM_CARDS>1 && timecode)
                     overlays ^= OVERLAY_TIMECODE;
+
+                /* mute or unmute the tone, which is heard once the audio already scheduled has played */
+                if (c=='a' && audio)
+                    tone.target = 1.0 - tone.target;
             }
 
             /* the last frame is held on output and never completes, so stop playback at its end */
@@ -758,8 +848,19 @@ int main(int argc, char *argv[])
                 scheduled++;
             }
 
+            /* keep the audio buffer filled, audio is timed in samples rather than 180kHz so every sample time is exact,
+               and after the stop is requested it is only needed up to the end of the last frame, the buffer
+               level being unavailable once playback has stopped */
+            if (audio && (!stopping || tone.next < scheduled*duration*AUDIO_RATE/180000))
+                top_up_audio(output, &tone, started);
+
             /* start playback once prerolled */
             if (!started && (scheduled==PREROLL_FRAMES || scheduled==numframes)) {
+                if (audio) {
+                    result = output->EndAudioPreroll();
+                    if (result!=S_OK)
+                        dlapierror(result, "error: failed to end audio preroll");
+                }
                 result = output->StartScheduledPlayback(0, 180000, 1.0);
                 if (result!=S_OK)
                     dlapierror(result, "error: failed to start video playback");
@@ -767,9 +868,9 @@ int main(int argc, char *argv[])
 
                 if (verbose>=0) {
                     if (NUM_CARDS==1)
-                        dlmessage("press q to exit");
+                        dlmessage("press q to exit%s", audio? ", a to mute tone" : "");
                     else
-                        dlmessage("press q to exit, o to toggle text, m to toggle video mode%s", timecode? ", t to toggle timecode" : "");
+                        dlmessage("press q to exit, o to toggle text, m to toggle video mode%s%s", timecode? ", t to toggle timecode" : "", audio? ", a to mute tone" : "");
                 }
             }
         }
@@ -778,10 +879,14 @@ int main(int argc, char *argv[])
     /* stop the video output */
     output->StopScheduledPlayback(0, NULL, 0);
     output->DisableVideoOutput();
+    if (audio)
+        output->DisableAudioOutput();
 
     /* report statistics, after disabling the output completes the last frame */
     if (verbose>=1)
         dlmessage("info: displayed %d frames, %d late, %d dropped", completed, late, dropped);
+    if (verbose>=1 && audio)
+        dlmessage("info: audio: %lld samples scheduled", tone.next);
 
     /* tidy up */
     for (int i=0; i<RING_FRAMES; i++)
