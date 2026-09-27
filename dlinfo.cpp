@@ -48,6 +48,34 @@ int main(int argc, char *argv[])
             free(name);
         }
 
+        /* report whether the card can capture and play out at the same time */
+        const char *duplex = "unknown";
+        IDeckLinkProfileAttributes *attributes = NULL;
+        if (card->QueryInterface(IID_IDeckLinkProfileAttributes, (void**)&attributes) == S_OK) {
+            int64_t mode;
+            if (attributes->GetInt(BMDDeckLinkDuplex, &mode) == S_OK) {
+                switch (mode) {
+                    case bmdDuplexFull    : duplex = "full"; break;
+                    case bmdDuplexHalf    : duplex = "half"; break;
+                    case bmdDuplexSimplex : duplex = "simplex"; break;
+                    case bmdDuplexInactive: duplex = "inactive"; break;
+                }
+            }
+            attributes->Release();
+        }
+        printf("  duplex mode: %s\n", duplex);
+
+        /* the interfaces for input and output, both needed to capture and play out together */
+        IDeckLinkInput *input = NULL;
+        IDeckLinkOutput *output = NULL;
+        bool has_input = card->QueryInterface(IID_IDeckLinkInput, (void**)&input) == S_OK;
+        bool has_output = card->QueryInterface(IID_IDeckLinkOutput, (void**)&output) == S_OK;
+        printf("  interfaces: input %s, output %s\n", has_input? "yes" : "no", has_output? "yes" : "no");
+        if (input)
+            input->Release();
+        if (output)
+            output->Release();
+
         //print_attributes(deckLink);
 
         /* list the video output display modes supported by the card */
