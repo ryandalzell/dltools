@@ -150,10 +150,11 @@ static void set_timecode(IDeckLinkMutableVideoFrame *frame, BMDTimeScale framera
     const int framerate = (int)((framerate_scale + (framerate_duration - 1)) / framerate_duration);
     const bool fractional = framerate_duration % 10 ? true : false;
 
-    BMDTimecodeFlags timeCodeFlag = 0;
+    /* drop frame timecode is flagged on every frame, not only those after a drop */
+    const bool dropframe = !(framerate % 30) && fractional;
+    BMDTimecodeFlags timeCodeFlag = dropframe? bmdTimecodeIsDropFrame : bmdTimecodeFlagDefault;
     if (reset) {
         timecode->ff = timecode->ss = timecode->mm = timecode->hh = 0;
-        timeCodeFlag = bmdTimecodeFlagDefault;
     } else {
         if (timecode->ff >= framerate - 1) {
             timecode->ff = 0;
@@ -175,11 +176,9 @@ static void set_timecode(IDeckLinkMutableVideoFrame *frame, BMDTimeScale framera
         if (timecode->hh >= 24)
             timecode->hh = 0;
 
-        timeCodeFlag = bmdTimecodeFlagDefault;
-        if (!(framerate % 30) && fractional && !timecode->ff && !timecode->ss && timecode->mm % 10) {
-            timeCodeFlag = bmdTimecodeIsDropFrame;
+        /* skip the first frame numbers of each minute, except every tenth minute */
+        if (dropframe && !timecode->ff && !timecode->ss && timecode->mm % 10)
             timecode->ff = framerate > 30 ? 4 : 2;
-        }
     }
     int ff = framerate > 30 ? timecode->ff >> 1 : timecode->ff;
     bool oddflag = timecode->ff & 1;
@@ -859,6 +858,9 @@ int main(int argc, char *argv[])
             /* lookup specified format, but don't undo an explicit frame rate */
             if (divine_video_format(sizeformat, &dis_width, &dis_height, &interlaced, framerate_override>0.0? NULL : &framerate)<0)
                 dlexit("failed to determine output video format from filename: %s", sizeformat);
+            /* the 525 line display modes are 486 lines high */
+            if (dis_height==480)
+                dis_height = 486;
         } else {
             /* determine from picture parameters */
             dis_width = pic_width;
