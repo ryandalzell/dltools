@@ -1,5 +1,5 @@
 /*
- * Description: display a static test card.
+ * Description: display a test card with optional text and timecode.
  * Author     : Ryan Dalzell
  * Copyright  : (c) 2026 4i2i Communications Ltd.
  */
@@ -30,6 +30,19 @@ const char *appname = "dlcard";
 
 /* number of frames scheduled ahead of playback */
 const int PREROLL_FRAMES = 8;
+
+/* output frames are reused in turn, an even number so each frame is always odd or always even */
+const int RING_FRAMES = PREROLL_FRAMES+2;
+
+/* bits of the overlays shown */
+const int OVERLAY_TEXT = 1;
+const int OVERLAY_MODE = 2;
+const int OVERLAY_TIMECODE = 4;
+
+/* timecode of a frame */
+typedef struct {
+    int hh, mm, ss, ff;
+} timecode_t;
 
 /* synchronisation with the frame completion callback */
 sem_t sem;
@@ -107,6 +120,55 @@ void draw_bars(unsigned char *uyvy, int width, int height, int rowbytes, bool lu
     /* copy it to the rest of the frame */
     for (int y=1; y<height; y++)
         memcpy(uyvy + y*rowbytes, uyvy, width*2);
+}
+
+/* convert a frame number to a timecode counting at the nominal rate, with drop frame numbering if required */
+void frame_to_timecode(long long frame, int fps, bool dropframe, timecode_t *tc)
+{
+    if (dropframe) {
+        /* frame numbers dropped at the start of each minute, except every tenth minute */
+        const int drop = fps/15;
+        const long long frames_per_10min = fps*600 - drop*9;
+        const long long frames_per_min = fps*60 - drop;
+        long long tens = frame / frames_per_10min;
+        long long rem = frame % frames_per_10min;
+        frame += drop*9*tens;
+        if (rem > drop)
+            frame += drop*((rem - drop) / frames_per_min);
+    }
+    tc->ff = frame % fps;
+    tc->ss = frame / fps % 60;
+    tc->mm = frame / (fps*60) % 60;
+    tc->hh = frame / (fps*3600) % 24;
+}
+
+/* set the timecode in the ancillary data of a frame, following smpte st 12-2 for the choice of vitc1 and vitc2 */
+void set_timecode(IDeckLinkMutableVideoFrame *frame, const timecode_t *tc, bool dropframe, bool progressive, bool highrate, bool sd)
+{
+    /* the frames field cannot exceed 30, so high frame rates count frame pairs */
+    int ff = highrate? tc->ff/2 : tc->ff;
+    bool odd = tc->ff & 1;
+    BMDTimecodeFlags flags = dropframe? bmdTimecodeIsDropFrame : bmdTimecodeFlagDefault;
+
+    /* standard definition has vitc in the vertical interval rather than rp188 */
+    BMDTimecodeFormat vitc1 = sd? bmdTimecodeVITC : bmdTimecodeRP188VITC1;
+    BMDTimecodeFormat vitc2 = sd? bmdTimecodeVITCField2 : bmdTimecodeRP188VITC2;
+
+    /* an interlaced or psf frame has both, a high frame rate uses vitc1 for even frames and vitc2 for odd */
+    bool set1 = !progressive || !highrate || !odd;
+    bool set2 = !progressive || (highrate && odd);
+
+    HRESULT result;
+    if (set1) {
+        result = frame->SetTimecodeFromComponents(vitc1, tc->hh, tc->mm, tc->ss, ff, flags);
+        if (result!=S_OK)
+            dlapierror(result, "error: failed to set timecode");
+    }
+    if (set2) {
+        result = frame->SetTimecodeFromComponents(vitc2, tc->hh, tc->mm, tc->ss, ff, flags | bmdTimecodeFieldMark);
+        if (result!=S_OK)
+            dlapierror(result, "error: failed to set timecode");
+    }
 }
 
 #ifdef HAVE_FREETYPE
@@ -239,8 +301,8 @@ void render_text(FT_Face face, FT_Stroker stroker, const char *text, int x, int 
     }
 }
 
-/* draw white outlined text of the given pixel size, shrunk if needed to fit the frame */
-void draw_text(unsigned char *uyvy, int width, int height, int rowbytes, FT_Face face, const char *text, int size, placement_t where)
+/* draw white outlined text of the given pixel size, shrunk if needed to fit the frame, and above the avoid box if given */
+void draw_text(unsigned char *uyvy, int width, int height, int rowbytes, FT_Face face, const char *text, int size, placement_t where, const int *avoid)
 {
     FT_Stroker stroker;
     if (FT_Stroker_New(face->glyph->library, &stroker))
@@ -268,6 +330,8 @@ void draw_text(unsigned char *uyvy, int width, int height, int rowbytes, FT_Face
         case BOTTOM_RIGHT:
             x = width - width/20 - box[2];
             y = height - height/20 - box[3];
+            if (avoid && x+box[0]<avoid[2] && x+box[2]>avoid[0] && y+box[3]>avoid[1])
+                y = avoid[1] - height/40 - box[3];
             break;
         default:
             x = (width - (box[2]-box[0]))/2 - box[0];
@@ -281,17 +345,99 @@ void draw_text(unsigned char *uyvy, int width, int height, int rowbytes, FT_Face
 
     FT_Stroker_Done(stroker);
 }
+
+/* prerendered glyphs of the characters of a timecode */
+const char TIMECODE_CHARS[] = "0123456789:;";
+typedef struct {
+    FT_BitmapGlyph outline[sizeof(TIMECODE_CHARS)-1];
+    FT_BitmapGlyph fill[sizeof(TIMECODE_CHARS)-1];
+    int advance[sizeof(TIMECODE_CHARS)-1];
+    int digit_cell, separator_cell;
+    int x, y;           /* pen position of the first character */
+    int box[4];         /* ink box of the timecode in the frame */
+} tcfont_t;
+
+/* render the timecode characters once and lay out a timecode at the bottom centre of the frame */
+void tcfont_init(tcfont_t *tc, FT_Face face, int size, int width, int height)
+{
+    FT_Stroker stroker;
+    if (FT_Stroker_New(face->glyph->library, &stroker))
+        dlexit("error: failed to create font stroker");
+    FT_Set_Pixel_Sizes(face, 0, size);
+    FT_Stroker_Set(stroker, mmax(64, size*64/24), FT_STROKER_LINECAP_ROUND, FT_STROKER_LINEJOIN_ROUND, 0);
+
+    int top = 0, bottom = 0;
+    tc->digit_cell = tc->separator_cell = 0;
+    for (int i=0; TIMECODE_CHARS[i]; i++) {
+        if (FT_Load_Char(face, TIMECODE_CHARS[i], FT_LOAD_DEFAULT))
+            dlexit("error: failed to load glyph for '%c'", TIMECODE_CHARS[i]);
+        FT_Glyph fill, outline;
+        if (FT_Get_Glyph(face->glyph, &fill) || FT_Glyph_Copy(fill, &outline))
+            dlexit("error: failed to get glyph for '%c'", TIMECODE_CHARS[i]);
+        FT_Glyph_StrokeBorder(&outline, stroker, 0, 1);
+        if (FT_Glyph_To_Bitmap(&fill, FT_RENDER_MODE_NORMAL, NULL, 1) || FT_Glyph_To_Bitmap(&outline, FT_RENDER_MODE_NORMAL, NULL, 1))
+            dlexit("error: failed to render glyph for '%c'", TIMECODE_CHARS[i]);
+        tc->fill[i] = (FT_BitmapGlyph)fill;
+        tc->outline[i] = (FT_BitmapGlyph)outline;
+        tc->advance[i] = face->glyph->advance.x >> 6;
+
+        /* every digit gets the same cell so the timecode does not jitter */
+        if (i<10)
+            tc->digit_cell = mmax(tc->digit_cell, tc->advance[i]);
+        else
+            tc->separator_cell = mmax(tc->separator_cell, tc->advance[i]);
+        top = mmin(top, -tc->outline[i]->top);
+        bottom = mmax(bottom, (int)tc->outline[i]->bitmap.rows - tc->outline[i]->top);
+    }
+    FT_Stroker_Done(stroker);
+
+    /* centre the width of hh:mm:ss:ff, with its bottom on the title safe margin */
+    int w = 8*tc->digit_cell + 3*tc->separator_cell;
+    tc->x = (width - w)/2;
+    tc->y = height - height/20 - bottom;
+    tc->box[0] = tc->x;
+    tc->box[1] = tc->y + top;
+    tc->box[2] = tc->x + w;
+    tc->box[3] = tc->y + bottom;
+}
+
+void tcfont_done(tcfont_t *tc)
+{
+    for (int i=0; TIMECODE_CHARS[i]; i++) {
+        FT_Done_Glyph((FT_Glyph)tc->fill[i]);
+        FT_Done_Glyph((FT_Glyph)tc->outline[i]);
+    }
+}
+
+/* draw a timecode string from the prerendered glyphs, outlines first then the fill */
+void draw_timecode(unsigned char *uyvy, int width, int height, int rowbytes, const tcfont_t *tc, const char *string)
+{
+    for (int pass=0; pass<2; pass++) {
+        int x = tc->x;
+        for (const char *p=string; *p; p++) {
+            const char *c = strchr(TIMECODE_CHARS, *p);
+            if (c==NULL || *c==0)
+                continue;
+            int i = c - TIMECODE_CHARS;
+            int cell = i<10? tc->digit_cell : tc->separator_cell;
+            FT_BitmapGlyph glyph = pass? tc->fill[i] : tc->outline[i];
+            blend_bitmap(uyvy, width, height, rowbytes, &glyph->bitmap, x + (cell-tc->advance[i])/2 + glyph->left, tc->y - glyph->top, pass? 235 : 16);
+            x += cell;
+        }
+    }
+}
 #endif
 
 void usage(int exitcode)
 {
-    fprintf(stderr, "%s: display a static test card\n", appname);
+    fprintf(stderr, "%s: display a test card\n", appname);
     fprintf(stderr, "usage: %s [options]\n", appname);
     fprintf(stderr, "  -s, --sizeformat    : specify display size format: 480i,480p,576i,720p,1080i,1080p [optional +framerate] (default: 720p5994)\n");
     fprintf(stderr, "  -n, --numframes     : total number of frames to display (default: no limit)\n");
     fprintf(stderr, "  -l, --luma          : display luma only (default: luma and chroma)\n");
     fprintf(stderr, "  -o, --text          : display a string in the centre of the image, toggle with o (default: off, card name when toggled on)\n");
     fprintf(stderr, "  -m, --showmode      : display the video mode in the bottom right of the image, toggle with m (default: off)\n");
+    fprintf(stderr, "  -t, --timecode      : add timecode to the sdi output and display it at the bottom of the image, toggle display with t (default: off)\n");
     fprintf(stderr, "  -i, --index         : index of decklink card to use (default: 0)\n");
     fprintf(stderr, "  -q, --quiet         : decrease verbosity, can be used multiple times\n");
     fprintf(stderr, "  -v, --verbose       : increase verbosity, can be used multiple times\n");
@@ -308,6 +454,7 @@ int main(int argc, char *argv[])
     bool lumaonly = false;
     const char *text = NULL;
     bool showmode = false;
+    bool timecode = false;
     int index = 0;
     int verbose = 0;
 
@@ -319,6 +466,7 @@ int main(int argc, char *argv[])
             {"luma",      0, NULL, 'l'},
             {"text",      1, NULL, 'o'},
             {"showmode",  0, NULL, 'm'},
+            {"timecode",  0, NULL, 't'},
             {"index",     1, NULL, 'i'},
             {"quiet",     0, NULL, 'q'},
             {"verbose",   0, NULL, 'v'},
@@ -327,7 +475,7 @@ int main(int argc, char *argv[])
             {NULL,        0, NULL,  0 }
         };
 
-        int optchar = getopt_long(argc, argv, "s:n:lo:mi:qvh", long_options, NULL);
+        int optchar = getopt_long(argc, argv, "s:n:lo:mti:qvh", long_options, NULL);
         if (optchar==-1)
             break;
 
@@ -350,6 +498,10 @@ int main(int argc, char *argv[])
 
             case 'm':
                 showmode = true;
+                break;
+
+            case 't':
+                timecode = true;
                 break;
 
             case 'i':
@@ -389,6 +541,10 @@ int main(int argc, char *argv[])
     float framerate;
     if (divine_video_format(sizeformat, &width, &height, &interlaced, &framerate)<0)
         dlexit("failed to determine output video format: %s", sizeformat);
+
+    /* the 525 line display modes are 486 lines high */
+    if (height==480)
+        height = 486;
 
     /* initialise the DeckLink API */
     IDeckLinkIterator *iterator = CreateDeckLinkIteratorInstance();
@@ -458,89 +614,98 @@ int main(int argc, char *argv[])
     /* frame duration in 180kHz */
     sts_t duration = llround(180000.0 * framerate_duration / framerate_scale);
 
+    /* timecode counts at the nominal frame rate, with drop frame numbering at 29.97 and 59.94 */
+    const int fps = (framerate_scale + framerate_duration - 1) / framerate_duration;
+    const bool fractional = framerate_scale % framerate_duration != 0;
+    const bool dropframe = fractional && (fps==30 || fps==60);
+    const bool progressive = mode->GetFieldDominance()==bmdProgressiveFrame;
+    const bool highrate = fps>30;
+    const bool sd = width<1280;
+
     /* create callback object */
     class callback the_callback;
     if (output->SetScheduledFrameCompletionCallback(&the_callback)!=S_OK)
         dlexit("error: could not set video callback object");
 
-    /* set the video output mode */
-    result = output->EnableVideoOutput(mode->GetDisplayMode(), bmdVideoOutputFlagDefault);
+    /* set the video output mode, with timecode in the ancillary data if required */
+    BMDVideoOutputFlags flags = bmdVideoOutputFlagDefault;
+    if (timecode)
+        flags = sd? bmdVideoOutputVITC : bmdVideoOutputRP188;
+    result = output->EnableVideoOutput(mode->GetDisplayMode(), flags);
     if (result!=S_OK)
         dlapierror(result, "failed to enable video output");
 
-    /* one frame for each combination of overlays, bit 0 is the centre text and bit 1 the video mode */
+    /* one background for each combination of text and video mode overlays */
+    int32_t rowbytes;
+    result = output->RowBytesForPixelFormat(bmdFormat8BitYUV, width, &rowbytes);
+    if (result!=S_OK)
+        dlapierror(result, "error: failed to get row bytes for pixel format");
+    const size_t size = rowbytes*height;
 #ifdef HAVE_FREETYPE
     const int NUM_CARDS = 4;
     FT_Library library;
     if (FT_Init_FreeType(&library))
         dlexit("error: failed to initialise freetype");
     FT_Face face = open_font(library);
+
+    /* the timecode is laid out first so the video mode can avoid it */
+    tcfont_t tcfont;
+    if (timecode)
+        tcfont_init(&tcfont, face, height*10/100, width, height);
 #else
     const int NUM_CARDS = 1;
 #endif
     if (!text)
         text = cardname;
 
-    /* allocate and draw the frames of the test card */
-    class dlalloc alloc;
-    int32_t rowbytes;
-    result = output->RowBytesForPixelFormat(bmdFormat8BitYUV, width, &rowbytes);
-    if (result!=S_OK)
-        dlapierror(result, "error: failed to get row bytes for pixel format");
-    alloc.init(rowbytes*height);
-    IDeckLinkMutableVideoFrame *frames[NUM_CARDS];
+    /* draw the backgrounds */
+    unsigned char *cards[NUM_CARDS];
     for (int i=0; i<NUM_CARDS; i++) {
+        cards[i] = (unsigned char *)malloc(size);
+        if (cards[i]==NULL)
+            dlexit("error: failed to allocate test card");
+        draw_bars(cards[i], width, height, rowbytes, lumaonly);
+#ifdef HAVE_FREETYPE
+        if ((i&OVERLAY_TEXT) && text)
+            draw_text(cards[i], width, height, rowbytes, face, text, height*20/100, CENTRE, NULL);
+        if ((i&OVERLAY_MODE) && modename)
+            draw_text(cards[i], width, height, rowbytes, face, modename, height*5/100, BOTTOM_RIGHT, timecode? tcfont.box : NULL);
+#endif
+    }
+#ifdef HAVE_FREETYPE
+    FT_Done_Face(face);
+#endif
+    free((char *)modename);
+
+    /* allocate the ring of output frames */
+    class dlalloc alloc;
+    alloc.init(size);
+    IDeckLinkMutableVideoFrame *ring[RING_FRAMES];
+    unsigned char *ringbuf[RING_FRAMES];
+    for (int i=0; i<RING_FRAMES; i++) {
         IDeckLinkVideoBuffer *buffer;
         result = alloc.AllocateVideoBuffer(&buffer);
         if (result!=S_OK)
             dlapierror(result, "error: failed to allocate video buffer");
-        result = output->CreateVideoFrameWithBuffer(width, height, rowbytes, bmdFormat8BitYUV, bmdFrameFlagDefault, buffer, &frames[i]);
+        result = output->CreateVideoFrameWithBuffer(width, height, rowbytes, bmdFormat8BitYUV, bmdFrameFlagDefault, buffer, &ring[i]);
         if (result!=S_OK)
             dlapierror(result, "error: failed to create video frame");
         result = buffer->GetBytes(&voidptr);
         if (result!=S_OK)
             dlapierror(result, "error: failed to get pointer to data in video frame");
-        unsigned char *uyvy = (unsigned char *)voidptr;
-
-        draw_bars(uyvy, width, height, rowbytes, lumaonly);
-#ifdef HAVE_FREETYPE
-        if ((i&1) && text)
-            draw_text(uyvy, width, height, rowbytes, face, text, height*20/100, CENTRE);
-        if ((i&2) && modename)
-            draw_text(uyvy, width, height, rowbytes, face, modename, height*5/100, BOTTOM_RIGHT);
-#endif
+        ringbuf[i] = (unsigned char *)voidptr;
     }
-#ifdef HAVE_FREETYPE
-    FT_Done_Face(face);
-    FT_Done_FreeType(library);
-#endif
-    free((char *)modename);
 
     /* the overlays shown at the start */
-    int overlays = (text!=cardname? 1 : 0) | (showmode? 2 : 0);
+    int overlays = (text!=cardname? OVERLAY_TEXT : 0) | (showmode? OVERLAY_MODE : 0) | (timecode? OVERLAY_TIMECODE : 0);
 
-    /* preroll the same frame several times */
+    /* main loop, which prerolls frames without waiting until playback starts */
     sem_init(&sem, 0, 0);
     unsigned scheduled = 0;
-    while (scheduled<PREROLL_FRAMES && (!numframes || scheduled<numframes)) {
-        result = output->ScheduleVideoFrame(frames[overlays], scheduled*duration, duration, 180000);
-        if (result!=S_OK)
-            dlapierror(result, "error: failed to schedule video frame");
-        scheduled++;
-    }
-
-    /* start playback */
-    result = output->StartScheduledPlayback(0, 180000, 1.0);
-    if (result!=S_OK)
-        dlapierror(result, "error: failed to start video playback");
-
-    if (verbose>=0)
-        dlmessage(NUM_CARDS>1? "press q to exit, o to toggle text, m to toggle video mode" : "press q to exit");
-
-    /* main loop */
+    bool started = false;
+    bool stopping = false;
     {
         class dlterm term;
-        bool stopping = false;
         while (!stopped) {
 
             /* check for user input */
@@ -551,28 +716,61 @@ int main(int argc, char *argv[])
 
                 /* toggle an overlay, which shows once the frames already scheduled have played */
                 if (c=='o' && NUM_CARDS>1)
-                    overlays ^= 1;
+                    overlays ^= OVERLAY_TEXT;
                 if (c=='m' && NUM_CARDS>1)
-                    overlays ^= 2;
+                    overlays ^= OVERLAY_MODE;
+                if (c=='t' && NUM_CARDS>1 && timecode)
+                    overlays ^= OVERLAY_TIMECODE;
             }
 
             /* the last frame is held on output and never completes, so stop playback at its end */
-            if (numframes && scheduled==numframes && !stopping) {
+            if (started && numframes && scheduled==numframes && !stopping) {
                 result = output->StopScheduledPlayback(scheduled*duration, NULL, 180000);
                 if (result!=S_OK)
                     dlapierror(result, "error: failed to stop video playback");
                 stopping = true;
             }
 
-            /* wait for a frame to complete */
-            sem_wait(&sem);
+            /* wait for a frame to complete, which frees the oldest frame in the ring */
+            if (started)
+                sem_wait(&sem);
 
-            /* schedule the next frame */
+            /* build and schedule the next frame */
             if (!numframes || scheduled<numframes) {
-                result = output->ScheduleVideoFrame(frames[overlays], scheduled*duration, duration, 180000);
+                IDeckLinkMutableVideoFrame *frame = ring[scheduled % RING_FRAMES];
+                unsigned char *uyvy = ringbuf[scheduled % RING_FRAMES];
+                memcpy(uyvy, cards[overlays & (NUM_CARDS-1)], size);
+                if (timecode) {
+                    timecode_t tc;
+                    frame_to_timecode(scheduled, fps, dropframe, &tc);
+                    set_timecode(frame, &tc, dropframe, progressive, highrate, sd);
+#ifdef HAVE_FREETYPE
+                    if (overlays & OVERLAY_TIMECODE) {
+                        char string[16];
+                        snprintf(string, sizeof(string), "%02d:%02d:%02d%c%02d", tc.hh, tc.mm, tc.ss, dropframe? ';' : ':', highrate? tc.ff/2 : tc.ff);
+                        draw_timecode(uyvy, width, height, rowbytes, &tcfont, string);
+                    }
+#endif
+                }
+                result = output->ScheduleVideoFrame(frame, scheduled*duration, duration, 180000);
                 if (result!=S_OK)
                     dlapierror(result, "error: failed to schedule video frame");
                 scheduled++;
+            }
+
+            /* start playback once prerolled */
+            if (!started && (scheduled==PREROLL_FRAMES || scheduled==numframes)) {
+                result = output->StartScheduledPlayback(0, 180000, 1.0);
+                if (result!=S_OK)
+                    dlapierror(result, "error: failed to start video playback");
+                started = true;
+
+                if (verbose>=0) {
+                    if (NUM_CARDS==1)
+                        dlmessage("press q to exit");
+                    else
+                        dlmessage("press q to exit, o to toggle text, m to toggle video mode%s", timecode? ", t to toggle timecode" : "");
+                }
             }
         }
     }
@@ -586,8 +784,15 @@ int main(int argc, char *argv[])
         dlmessage("info: displayed %d frames, %d late, %d dropped", completed, late, dropped);
 
     /* tidy up */
+    for (int i=0; i<RING_FRAMES; i++)
+        ring[i]->Release();
     for (int i=0; i<NUM_CARDS; i++)
-        frames[i]->Release();
+        free(cards[i]);
+#ifdef HAVE_FREETYPE
+    if (timecode)
+        tcfont_done(&tcfont);
+    FT_Done_FreeType(library);
+#endif
     free(cardname);
     mode->Release();
     config->Release();

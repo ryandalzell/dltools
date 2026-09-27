@@ -11,10 +11,17 @@ file or network stream and plays it out of the card as an SDI source. Also inclu
 75% colour bars in 8-bit UYVY, default 720p59.94), `dlinfo` (enumerate cards and
 supported modes) and `dlskel` (template for new tools).
 
-`dlcard` draws every combination of its two text overlays (`-o` centre text, which
-defaults to the card's model name, and `-m` video mode) into its own frame up front,
-and the `o`/`m` keys switch which frame is scheduled next, so a toggle appears after
-the preroll depth rather than redrawing a frame the card may be reading.
+`dlcard` draws every combination of its two static overlays (`-o` centre text, which
+defaults to the card's model name, and `-m` video mode) into its own background buffer
+up front. Each output frame is a copy of the current background into the next frame of
+a fixed ring of `PREROLL_FRAMES+2`, plus, with `-t`, the timecode for that frame number
+blitted from prerendered glyphs and set in the SDI metadata (RP188, or VITC for SD). The
+ring is safe to reuse because a frame is only scheduled after a completion, and it is
+even so each frame is always odd or always even, which keeps the VITC1/VITC2 choice at
+high frame rates from leaving a stale timecode on a reused frame. The `o`/`m`/`t` keys
+change what the next frame gets, so a toggle appears after the preroll depth.
+Timecode is drop frame at 29.97 and 59.94 (flag on every frame, `;` on screen); 23.98
+has no drop frame form and counts non-drop.
 
 ## Build
 
