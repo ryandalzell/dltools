@@ -42,6 +42,12 @@ const unsigned AUDIO_BLOCK = 2400;
 const unsigned AUDIO_TARGET = 12000;
 const int TONE_RAMP = 240;                  /* samples over which the tone turns on or off, 5ms */
 
+/* channels of audio received */
+const int CHANNELS = 2;
+
+/* a chain which has to change mode restarts, so it has settled once its latency has stayed within half a frame for this long */
+const int SETTLE_SECONDS = 10;
+
 /* the picture and tone are on for a run of this many seconds of frames then off for the same, the edges being what lipsync is measured from */
 const int CYCLE_SECONDS = 30;
 
@@ -179,8 +185,17 @@ public:
     sts_t sum, min, max;    /* statistics of the latency */
     sts_t reported;         /* latency last reported with a message */
     char newmodename[64];   /* the mode the input changed to */
+    char modename[32];      /* the mode sent, set by main */
+    bool settled;           /* the chain sends the mode sent to it and its latency is steady, set by main if it already did */
+    bool discard_first;     /* the chain changed mode, so the first lipsync is left out, set by main */
     unsigned mismatched;    /* frames whose picture disagrees with their timecode */
-    stats_t lipsync[2][2];  /* lipsync of the on and off edges in each channel */
+    stats_t lipsync[CHANNELS];  /* lipsync in each channel */
+    unsigned dropouts;      /* frames without timecode after it was first received */
+    unsigned repeated;      /* frames whose timecode did not advance */
+    unsigned ahead;         /* frames whose timecode was ahead of the output */
+
+    double tone_dbfs(int ch, bool *edges);
+    bool edge_measured() {return video_edge[0] || video_edge[1];}
 
 private:
     void process_audio(IDeckLinkAudioInputPacket *packet, sts_t in_offset);
@@ -192,10 +207,29 @@ private:
     sts_t raw_latency;      /* the last latency before calibration */
     long long audio_next;   /* sample number expected at the start of the next packet */
     long long audio_filled; /* samples since the audio started or had a gap */
-    channel_t channel[2];
+    channel_t channel[CHANNELS];
     long long video_edge[2];    /* number of the last on and off edges received in the picture */
     double video_time[2];       /* and their arrival times on the input's clock */
     bool disagree;          /* the picture disagrees with the timecode */
+
+    /* the status line */
+    void show_status(const char *note);
+    char tcstring[16];      /* the last timecode received */
+    long long last_frame;   /* its frame number */
+    unsigned repeat_run;    /* frames in a row whose timecode did not advance */
+    void show_waiting(const char *state, bool latency);
+    void unsettle();
+    unsigned waited;        /* frames received before the chain settled */
+    bool arrived;           /* a frame has been received in the mode sent */
+    long long discard_edge; /* the edge whose lipsync is left out */
+    unsigned steady;        /* frames in a row within half a frame of the latency at their start */
+    sts_t steady_latency;
+    sts_t last_latency;
+    double last_lipsync[CHANNELS];
+    bool has_lipsync[CHANNELS];
+    long long result_edge[CHANNELS];    /* the edge of the last lipsync in each channel */
+    long long reported_edge;    /* the last edge reported with a message */
+    void report_measurement(long long e, bool incomplete);
 };
 
 /* the frame number of a timecode, the inverse of frame_to_timecode */
@@ -222,8 +256,12 @@ HRESULT capture::VideoInputFormatChanged(BMDVideoInputFormatChangedEvents events
     if (!(events & (bmdVideoInputDisplayModeChanged | bmdVideoInputFieldDominanceChanged)) || newmode->GetDisplayMode()==displaymode)
         return S_OK;
 
-    /* a mode change in the chain is fatal, so wake the main loop to stop and exit */
+    /* the chain may take a while to follow the mode sent, so until it has, wait for it */
     snprintf(newmodename, sizeof(newmodename), "%s", describe_display_mode(newmode));
+    if (!settled)
+        return S_OK;
+
+    /* after that a mode change in the chain is fatal, so wake the main loop to stop and exit */
     modechanged = true;
     sem_post(&sem);
 
@@ -253,13 +291,26 @@ HRESULT capture::VideoInputFrameArrived(IDeckLinkVideoInputFrame *videoframe, ID
 {
     if (videoframe==NULL)
         return S_OK;
+    if (!settled)
+        waited++;
 
-    /* report a missing signal once a second */
+    /* until the chain sends the mode sent to it, wait for it, and after that report a missing signal */
     if (videoframe->GetFlags() & bmdFrameHasNoInputSource) {
-        if (nosignal++ % fps==0)
-            dlstatus("no input signal for %u frames", nosignal);
+        if (!settled) {
+            unsettle();
+            show_waiting(NULL, false);
+        } else if (nosignal++ % fps==0) {
+            char line[64];
+            snprintf(line, sizeof(line), "no input signal for %u s", nosignal/fps);
+            dlstatus("%-72s", line);
+        }
         return S_OK;
     }
+    if (!settled && !arrived)
+        dlmessage("info: the enc->dec chain is now sending %s, waiting for it to settle", modename);
+    arrived = true;
+    newmodename[0] = '\0';
+    nosignal = 0;
     received++;
 
     /* the arrival time on the input's clock, which needs the output stream time related to that clock */
@@ -290,17 +341,21 @@ HRESULT capture::VideoInputFrameArrived(IDeckLinkVideoInputFrame *videoframe, ID
         else if (videoframe->GetTimecode(bmdTimecodeRP188Any, &tc)==S_OK)
             odd = (tc->GetFlags() & bmdTimecodeFieldMark)!=0;
     }
-    if (tc==NULL) {
-        untimed++;
-        dlstatus("frame %u: no timecode", received);
-        return S_OK;
-    }
     uint8_t hh, mm, ss, ff;
-    result = tc->GetComponents(&hh, &mm, &ss, &ff);
-    tc->Release();
-    if (result!=S_OK) {
+    if (tc) {
+        result = tc->GetComponents(&hh, &mm, &ss, &ff);
+        tc->Release();
+    }
+    if (tc==NULL || result!=S_OK) {
         untimed++;
-        dlstatus("frame %u: unreadable timecode", received);
+        if (!settled) {
+            unsettle();
+            show_waiting("to send timecode", false);
+            return S_OK;
+        }
+        if (measured)
+            dropouts++;
+        show_status("no timecode");
         return S_OK;
     }
     timecode_t t = {hh, mm, ss, highrate? ff*2 + odd : ff};
@@ -311,9 +366,50 @@ HRESULT capture::VideoInputFrameArrived(IDeckLinkVideoInputFrame *videoframe, ID
     long long frame = timecode_to_frame(&t, fps, dropframe);
     frame += day * llround((double)(now - frame) / day);
 
-    /* the latency from the time the frame was sent, less the card's own delay */
-    raw_latency = arrival - (frame*duration + offset);
-    sts_t latency = raw_latency - calibration;
+    snprintf(tcstring, sizeof(tcstring), "%02d:%02d:%02d%c%02d", t.hh, t.mm, t.ss, dropframe? ';' : ':', highrate? t.ff/2 : t.ff);
+
+    /* the latency is from the first arrival of a frame, so a frame whose timecode does not advance is left out */
+    if (measured && frame<=last_frame) {
+        repeated++;
+        repeat_run++;
+        show_status(repeat_run>=(unsigned)fps? "timecode not advancing" : NULL);
+        return S_OK;
+    }
+    repeat_run = 0;
+
+    /* the latency from the time the frame was sent, less the card's own delay, which cannot be negative unless the
+       timecode is not the one sent */
+    sts_t raw = arrival - (frame*duration + offset);
+    sts_t latency = raw - calibration;
+    if (raw<0) {
+        if (!settled) {
+            unsettle();
+            show_waiting("to send the timecode it is sent", false);
+            return S_OK;
+        }
+        if (measured)
+            ahead++;
+        show_status("timecode ahead of the output");
+        return S_OK;
+    }
+
+    /* measure once the latency has been steady for long enough, from which point a mode change is fatal */
+    if (!settled) {
+        if (steady==0 || llabs(raw-steady_latency)>duration/2) {
+            steady_latency = raw;
+            steady = 0;
+        }
+        last_latency = latency;
+        if (++steady < (unsigned)(SETTLE_SECONDS*fps)) {
+            show_waiting("to settle", true);
+            return S_OK;
+        }
+        settled = true;
+        dlmessage("info: the enc->dec chain has settled in %s after %u s, measuring from %s", modename, waited/fps, tcstring);
+    }
+    raw_latency = raw;
+    last_latency = latency;
+    last_frame = frame;
     if (!measured || latency<min)
         min = latency;
     if (!measured || latency>max)
@@ -321,22 +417,28 @@ HRESULT capture::VideoInputFrameArrived(IDeckLinkVideoInputFrame *videoframe, ID
     sum += latency;
 
     /* report a jump of more than half a frame with a message, and every frame on the status line */
-    char string[16];
-    snprintf(string, sizeof(string), "%02d:%02d:%02d%c%02d", t.hh, t.mm, t.ss, dropframe? ';' : ':', highrate? t.ff/2 : t.ff);
     if (!measured || llabs(latency-reported)>duration/2) {
-        dlmessage("info: received %s%s as frame %lld, latency %.2f ms (%.2f frames)", string, highrate? (odd? ".1" : ".0") : "", frame, latency/180.0, (double)latency/duration);
+        dlmessage("info: end-to-end latency %s%.2f ms (%.2f frames)", measured? "changed to " : "", latency/180.0, (double)latency/duration);
         reported = latency;
-    } else if (verbose>=0)
-        dlstatus("received %s%s as frame %lld, latency %.2f ms (%.2f frames)", string, highrate? (odd? ".1" : ".0") : "", frame, latency/180.0, (double)latency/duration);
+    }
     measured++;
+    show_status(NULL);
 
     /* the first frame of a run is an edge, except the first of all which is the start of playback */
     if (frame>0 && frame%cycle==0) {
         long long e = frame/cycle;
+        report_measurement(e-1, true);
+
+        /* after a change of mode the first lipsync is left out, as a precaution against the audio settling late */
+        if (discard_first) {
+            discard_first = false;
+            discard_edge = e;
+            dlmessage("info: the enc->dec chain changed mode, so its first lipsync is left out");
+        }
         video_edge[e%2] = e;
         video_time[e%2] = arrival;
-        match_edge(0);
-        match_edge(1);
+        for (int ch=0; ch<CHANNELS; ch++)
+            match_edge(ch);
     }
 
     check_picture(videoframe, frame);
@@ -344,7 +446,83 @@ HRESULT capture::VideoInputFrameArrived(IDeckLinkVideoInputFrame *videoframe, ID
     return S_OK;
 }
 
-/* check the picture is on or off as its timecode says, reporting where they start and stop disagreeing */
+/* format a value for each channel as [1: v, 2: v], with - for a channel without one */
+int format_channels(char *s, size_t size, const double *value, const bool *has)
+{
+    size_t len = snprintf(s, size, "[");
+    for (int ch=0; ch<CHANNELS && len<size; ch++) {
+        if (has[ch])
+            len += snprintf(s+len, size-len, "%s%d: %+.2f", ch? ", " : "", ch+1, value[ch]);
+        else
+            len += snprintf(s+len, size-len, "%s%d: -", ch? ", " : "", ch+1);
+    }
+    if (len<size)
+        len += snprintf(s+len, size-len, "]");
+    return len;
+}
+
+/* the status line: the last latency and lipsync, then a note or the time until the next lipsync measurement */
+void capture::show_status(const char *note)
+{
+    if (verbose<0)
+        return;
+    char line[256];
+    size_t len = 0;
+    if (measured) {
+        len += snprintf(line+len, sizeof(line)-len, "end-to-end latency %.2f ms", last_latency/180.0);
+        bool any = false;
+        for (int ch=0; ch<CHANNELS; ch++)
+            any |= has_lipsync[ch];
+        if (any) {
+            len += snprintf(line+len, sizeof(line)-len, ", lipsync ");
+            if (len<sizeof(line))
+                len += format_channels(line+len, sizeof(line)-len, last_lipsync, has_lipsync);
+            if (len<sizeof(line))
+                len += snprintf(line+len, sizeof(line)-len, " ms");
+        }
+    }
+    if (len<sizeof(line)) {
+        if (note)
+            snprintf(line+len, sizeof(line)-len, "%s%s", len? ", " : "", note);
+        else if (measured) {
+            long long next = (last_frame/cycle + 1) * cycle;
+            snprintf(line+len, sizeof(line)-len, ", next measurement in %lld s", (next - last_frame + fps - 1) / fps);
+        }
+    }
+    dlstatus("%-72s", line);
+}
+
+/* restart the wait for the chain to settle */
+void capture::unsettle()
+{
+    steady = 0;
+}
+
+/* the status line while waiting for the chain to send the mode, or to do what is given, once a second */
+void capture::show_waiting(const char *what, bool latency)
+{
+    if (verbose<0 || waited<(unsigned)fps || waited % fps!=1)
+        return;
+    char line[192];
+    if (what==NULL)
+        snprintf(line, sizeof(line), "waiting for the enc->dec chain to send %s%s%s%s, %u s", modename, newmodename[0]? " (sending " : "", newmodename, newmodename[0]? ")" : "", waited/fps);
+    else if (latency)
+        snprintf(line, sizeof(line), "waiting for the enc->dec chain %s, end-to-end latency %.2f ms, %u s", what, last_latency/180.0, waited/fps);
+    else
+        snprintf(line, sizeof(line), "waiting for the enc->dec chain %s, %u s", what, waited/fps);
+    dlstatus("%-72s", line);
+}
+
+/* the received level of the tone when on in dBFS, and whether any edges were found */
+double capture::tone_dbfs(int ch, bool *edges)
+{
+    const channel_t *c = &channel[ch];
+    double level = c->plateau>0.0? c->plateau : c->run_count? c->run_sum/c->run_count : c->peak;
+    *edges = c->found;
+    return 20.0 * log10(level * M_PI/2.0 / 32767.0);
+}
+
+/* check the picture is bars or black as its timecode says, reporting where they start and stop disagreeing */
 void capture::check_picture(IDeckLinkVideoInputFrame *videoframe, long long frame)
 {
     IDeckLinkVideoBuffer *buffer;
@@ -366,9 +544,9 @@ void capture::check_picture(IDeckLinkVideoInputFrame *videoframe, long long fram
     if (on!=expected) {
         mismatched++;
         if (!disagree)
-            dlmessage("warning: picture is %s at frame %lld where the timecode says %s", on? "on" : "off", frame, expected? "on" : "off");
+            dlmessage("warning: the picture does not match its timecode from frame %lld", frame);
     } else if (disagree)
-        dlmessage("info: picture agrees with the timecode again at frame %lld", frame);
+        dlmessage("info: the picture matches its timecode again from frame %lld", frame);
     disagree = on!=expected;
 }
 
@@ -389,8 +567,8 @@ void capture::process_audio(IDeckLinkAudioInputPacket *packet, sts_t in_offset)
 
     const int16_t *samples = (const int16_t *)bytes;
     for (long i=0; i<count; i++) {
-        detect_edge(0, samples[2*i], first+i, in_offset);
-        detect_edge(1, samples[2*i+1], first+i, in_offset);
+        for (int ch=0; ch<CHANNELS; ch++)
+            detect_edge(ch, samples[CHANNELS*i+ch], first+i, in_offset);
         audio_filled++;
     }
 }
@@ -475,7 +653,7 @@ void capture::audio_edge(int ch, bool rising, double time)
     long long e = llround((time - clock_offset - raw_latency) / ((double)cycle*duration));
     if (e<=0 || (e%2==0)!=rising) {
         if (verbose>=1)
-            dlmessage("warning: tone turned %s in channel %d away from an edge of the cycle", rising? "on" : "off", ch+1);
+            dlmessage("warning: tone in channel %d changed between lipsync measurements", ch+1);
         return;
     }
     channel[ch].edge = e;
@@ -490,12 +668,36 @@ void capture::match_edge(int ch)
     if (e==0 || video_edge[e%2]!=e)
         return;
     double ms = (channel[ch].time - video_time[e%2]) / 180.0 - lipsync_calibration;
-    add_stats(&lipsync[e%2][ch], ms);
+    if (e==discard_edge) {
+        channel[ch].edge = 0;
+        if (verbose>=1)
+            dlmessage("info: left out lipsync of %+.2f ms in channel %d", ms, ch+1);
+        return;
+    }
+    add_stats(&lipsync[ch], ms);
+    last_lipsync[ch] = ms;
+    has_lipsync[ch] = true;
+    result_edge[ch] = e;
     channel[ch].edge = 0;
+    report_measurement(e, false);
+}
 
-    timecode_t t;
-    frame_to_timecode(e*cycle, fps, dropframe, &t);
-    dlmessage("info: tone and picture %s at %02d:%02d:%02d%c%02d, channel %d lipsync %+.2f ms", e%2? "off" : "on", t.hh, t.mm, t.ss, dropframe? ';' : ':', highrate? t.ff/2 : t.ff, ch+1, ms);
+/* report the latency and the lipsync of an edge once every channel has it, or with what there is when the next edge comes */
+void capture::report_measurement(long long e, bool incomplete)
+{
+    bool has[CHANNELS];
+    bool any = false, all = true;
+    for (int ch=0; ch<CHANNELS; ch++) {
+        has[ch] = result_edge[ch]==e;
+        any |= has[ch];
+        all &= has[ch];
+    }
+    if (e<=0 || e==reported_edge || !any || (!all && !incomplete))
+        return;
+    char values[160];
+    format_channels(values, sizeof(values), last_lipsync, has);
+    dlmessage("info: end-to-end latency %.2f ms, lipsync %s ms", last_latency/180.0, values);
+    reported_edge = e;
 }
 
 /* draw 75% colour bars into a uyvy buffer */
@@ -841,10 +1043,10 @@ void write_calibration(const char *filename, const char *modename, double video_
 
 void usage(int exitcode)
 {
-    fprintf(stderr, "%s: measure the latency and lipsync of a chain from the sdi output back to the sdi input\n", appname);
+    fprintf(stderr, "%s: measure the latency and lipsync of an enc->dec chain from the sdi output back to the sdi input\n", appname);
     fprintf(stderr, "usage: %s [options]\n", appname);
     fprintf(stderr, "  -s, --sizeformat    : specify display size format: 480i,480p,576i,720p,1080i,1080p [optional +framerate] (default: 720p5994)\n");
-    fprintf(stderr, "  -c, --calibrate     : measure the card's own delay and lipsync with a loopback cable and save them, lipsync needs over a minute (default: subtract the saved ones)\n");
+    fprintf(stderr, "  -c, --calibrate     : measure the card's own delay and lipsync with a loopback cable and save them, lipsync is measured every 30 seconds (default: subtract the saved ones)\n");
     fprintf(stderr, "  -f, --calfile       : calibration file (default: ~/.dlsync)\n");
     fprintf(stderr, "  -i, --index         : index of decklink card to use (default: 0)\n");
     fprintf(stderr, "  -q, --quiet         : decrease verbosity, can be used multiple times\n");
@@ -1013,7 +1215,7 @@ int main(int argc, char *argv[])
     bool has_lipsync = false;
     bool has_calibration = read_calibration(calfile, calmode, &calibration_ms, &lipsync_ms, &has_lipsync);
     if (calibrate)
-        dlmessage("info: calibrating %s, the output must be looped straight back to the input, lipsync needs an off and an on edge, over %d seconds", calmode, 2*CYCLE_SECONDS);
+        dlmessage("info: calibrating %s, the output must be looped straight back to the input, lipsync is measured every %d seconds", calmode, CYCLE_SECONDS);
     else if (!has_calibration)
         dlmessage("warning: no calibration for %s in %s, the latency and lipsync include the card's own", calmode, calfile);
     else {
@@ -1040,6 +1242,24 @@ int main(int argc, char *argv[])
     if (output->SetScheduledFrameCompletionCallback(&the_callback)!=S_OK)
         dlexit("error: could not set video callback object");
 
+    /* the chain has to change mode, and so restart, unless the card is already sending this mode and receiving it back */
+    BMDDisplayMode sending = 0, receiving = 0;
+    bool receiving_locked = false;
+    if (card->QueryInterface(IID_IDeckLinkStatus, &voidptr)==S_OK) {
+        IDeckLinkStatus *status = (IDeckLinkStatus *)voidptr;
+        int64_t value;
+        if (status->GetInt(bmdDeckLinkStatusCurrentVideoOutputMode, &value)==S_OK)
+            sending = value;
+        if (status->GetInt(bmdDeckLinkStatusDetectedVideoInputMode, &value)==S_OK)
+            receiving = value;
+        if (status->GetFlag(bmdDeckLinkStatusVideoInputSignalLocked, &receiving_locked)!=S_OK)
+            receiving_locked = false;
+        status->Release();
+    }
+    const bool unchanged = sending==mode->GetDisplayMode() && receiving_locked && receiving==mode->GetDisplayMode();
+    if (unchanged)
+        dlmessage("info: the enc->dec chain is already in %s", calmode);
+
     /* set the video output mode, with timecode in the ancillary data */
     result = output->EnableVideoOutput(mode->GetDisplayMode(), sd? bmdVideoOutputVITC : bmdVideoOutputRP188);
     if (result!=S_OK)
@@ -1058,6 +1278,8 @@ int main(int argc, char *argv[])
 
     /* set the video input to the same mode, detecting a change so it can be reported */
     class capture the_capture = {};
+    the_capture.settled = unchanged;
+    the_capture.discard_first = !unchanged;
     the_capture.output = output;
     the_capture.displaymode = mode->GetDisplayMode();
     the_capture.duration = duration;
@@ -1069,6 +1291,7 @@ int main(int argc, char *argv[])
     the_capture.calibration = calibrate? 0 : llround(calibration_ms*180.0);
     the_capture.lipsync_calibration = calibrate || !has_lipsync? 0.0 : lipsync_ms;
     the_capture.cycle = CYCLE_SECONDS*fps;
+    snprintf(the_capture.modename, sizeof(the_capture.modename), "%s", calmode);
     if (input->SetCallback(&the_capture)!=S_OK)
         dlexit("error: could not set input callback object");
     result = input->EnableVideoInput(mode->GetDisplayMode(), bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection);
@@ -1076,7 +1299,7 @@ int main(int argc, char *argv[])
         dlapierror(result, "error: failed to enable video input");
     if (config->SetInt(bmdDeckLinkConfigAudioInputConnection, bmdAudioConnectionEmbedded)!=S_OK)
         dlmessage("warning: failed to set card configuration to input embedded audio");
-    result = input->EnableAudioInput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, 2);
+    result = input->EnableAudioInput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, CHANNELS);
     if (result!=S_OK)
         dlapierror(result, "error: failed to enable audio input");
 
@@ -1227,7 +1450,7 @@ int main(int argc, char *argv[])
     output->DisableAudioOutput();
 
     if (modechanged)
-        dlexit("error: input changed to %s, the chain must keep the video mode", the_capture.newmodename);
+        dlexit("error: input changed to %s, the enc->dec chain must keep the video mode", the_capture.newmodename);
 
     /* report statistics, after disabling the output completes the last frame */
     if (verbose>=1)
@@ -1236,37 +1459,75 @@ int main(int argc, char *argv[])
         dlmessage("info: received %u frames, %u without timecode", the_capture.received, the_capture.untimed);
     if (verbose>=1 && clock_samples)
         dlmessage("info: over %u seconds the stream time moved %.3f ms against the input clock, each second read within %.3f ms", clock_samples, (offset_max-offset_min)/180.0, spread_max/180.0);
-    if (verbose>=1 && the_capture.mismatched)
-        dlmessage("info: %u frames had a picture which disagreed with their timecode", the_capture.mismatched);
-    double lipsync_sum = 0.0;
-    unsigned lipsync_count = 0;
-    for (int edge=0; edge<2; edge++)
-        for (int ch=0; ch<2; ch++) {
-            stats_t *l = &the_capture.lipsync[edge][ch];
-            if (l->count)
-                dlmessage("lipsync as tone and picture turn %s, channel %d: %+.2f ms, min %+.2f ms, max %+.2f ms, over %u edges", edge? "off" : "on", ch+1, l->sum/l->count, l->min, l->max, l->count);
-            lipsync_sum += l->sum;
-            lipsync_count += l->count;
+
+    /* anything in the chain which undermines the measurement */
+    if (the_capture.dropouts)
+        dlmessage("warning: %u frames lost their timecode after it was first received", the_capture.dropouts);
+    if (the_capture.repeated)
+        dlmessage("warning: %u frames repeated the timecode of an earlier frame, and were left out of the latency", the_capture.repeated);
+    if (the_capture.ahead)
+        dlmessage("warning: %u frames had a timecode ahead of the output, which the enc->dec chain may have replaced, and were left out", the_capture.ahead);
+    if (the_capture.mismatched)
+        dlmessage("warning: %u frames had a picture which disagreed with their timecode", the_capture.mismatched);
+
+    /* the level of the tone, which shows any gain in the chain, and any channel without edges while the picture had one */
+    if (the_capture.measured)
+        for (int ch=0; ch<CHANNELS; ch++) {
+            bool edges;
+            double dbfs = the_capture.tone_dbfs(ch, &edges);
+            if (!edges && the_capture.edge_measured())
+                dlmessage("warning: no lipsync measured in channel %d, where the tone reached %.1f dBFS", ch+1, dbfs);
+            else if (fabs(dbfs-TONE_LEVEL)>1.0)
+                dlmessage("warning: tone received at %.1f dBFS in channel %d, sent at %.1f dBFS", dbfs, ch+1, TONE_LEVEL);
+            else if (verbose>=1)
+                dlmessage("info: tone received at %.1f dBFS in channel %d", dbfs, ch+1);
         }
-    if (lipsync_count==0)
-        dlmessage("no lipsync measured, which needs a whole run of %d seconds", CYCLE_SECONDS);
+
+    /* the result */
+    dlmessage("result for %s over %u seconds%s:", calmode, clock_samples, calibrate? ", as the card's own" : !has_calibration? ", including the card's own delay and lipsync" : !has_lipsync? ", including the card's own lipsync" : "");
     if (the_capture.measured) {
         double mean = the_capture.sum / 180.0 / the_capture.measured;
-        dlmessage("latency %.2f ms (%.2f frames), min %.2f ms, max %.2f ms, over %u frames", mean, mean*180.0/duration, the_capture.min/180.0, the_capture.max/180.0, the_capture.measured);
-
-        /* save the card's own delay, and its lipsync or else the lipsync saved before */
-        if (calibrate) {
-            if (mean*180.0 > 3*duration)
-                dlmessage("warning: %.2f ms is long for a loopback cable, is a chain still connected?", mean);
-            double lipsync = lipsync_count? lipsync_sum/lipsync_count : lipsync_ms;
-            if (lipsync_count==0 && has_lipsync)
-                dlmessage("warning: keeping the lipsync saved before, %+.3f ms", lipsync_ms);
-            write_calibration(calfile, calmode, mean, lipsync_count || has_lipsync? &lipsync : NULL);
-            dlmessage("saved the card's own delay%s in %s to %s", lipsync_count? " and lipsync" : "", calmode, calfile);
-        }
+        dlmessage("  end-to-end latency %.2f ms (%.2f frames), from %.2f to %.2f ms over %u frames", mean, mean*180.0/duration, the_capture.min/180.0, the_capture.max/180.0, the_capture.measured);
     } else
-        dlmessage("no latency measured, %s", the_capture.received? "no timecode was received" : "no input signal was received");
-    if (calibrate && !the_capture.measured)
+        dlmessage("  no end-to-end latency measured, %s", the_capture.received? "no timecode was received" : "no input signal was received");
+    double lipsync_sum = 0.0;
+    unsigned lipsync_count = 0, measurements = 0;
+    double mean[CHANNELS], min[CHANNELS], max[CHANNELS];
+    bool has[CHANNELS];
+    for (int ch=0; ch<CHANNELS; ch++) {
+        stats_t *l = &the_capture.lipsync[ch];
+        has[ch] = l->count>0;
+        mean[ch] = has[ch]? l->sum/l->count : 0.0;
+        min[ch] = l->min;
+        max[ch] = l->max;
+        measurements = mmax(measurements, l->count);
+        lipsync_sum += l->sum;
+        lipsync_count += l->count;
+    }
+    if (lipsync_count) {
+        char values[160], low[160], high[160];
+        format_channels(values, sizeof(values), mean, has);
+        format_channels(low, sizeof(low), min, has);
+        format_channels(high, sizeof(high), max, has);
+        dlmessage("  lipsync %s ms over %u measurement%s", values, measurements, measurements==1? "" : "s");
+        dlmessage("  lipsync from %s to %s ms", low, high);
+    }
+    if (lipsync_count==0)
+        dlmessage("  no lipsync measured, it is measured every %d seconds", CYCLE_SECONDS);
+    else if (verbose>=0)
+        dlmessage("  positive lipsync is audio later than video");
+
+    /* save the card's own delay, and its lipsync or else the lipsync saved before */
+    if (calibrate && the_capture.measured) {
+        double mean = the_capture.sum / 180.0 / the_capture.measured;
+        if (mean*180.0 > 3*duration)
+            dlmessage("warning: %.2f ms is long for a loopback cable, is an enc->dec chain still connected?", mean);
+        double lipsync = lipsync_count? lipsync_sum/lipsync_count : lipsync_ms;
+        if (lipsync_count==0 && has_lipsync)
+            dlmessage("warning: keeping the lipsync saved before, %+.3f ms", lipsync_ms);
+        write_calibration(calfile, calmode, mean, lipsync_count || has_lipsync? &lipsync : NULL);
+        dlmessage("saved the card's own delay%s in %s to %s", lipsync_count? " and lipsync" : "", calmode, calfile);
+    } else if (calibrate)
         dlmessage("warning: nothing saved to %s", calfile);
 
     /* tidy up */

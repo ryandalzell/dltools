@@ -9,7 +9,7 @@ C++ against the Decklink SDK. The primary tool is `dlplay`, which decodes a vide
 file or network stream and plays it out of the card as an SDI source. Also included:
 `dlcap` (capture raw YUV from SDI), `dlcard` (play a static test card, currently
 75% colour bars in 8-bit UYVY, default 720p59.94), `dlsync` (end-to-end latency and
-lipsync through an external chain, work in progress), `dlinfo` (enumerate cards and
+lipsync through an external chain), `dlinfo` (enumerate cards and
 supported modes) and `dlskel` (template for new tools).
 
 `dlcard` draws every combination of its two static overlays (`-o` centre text, which
@@ -66,7 +66,33 @@ mean luma of each frame is only a check against its timecode.
 to `~/.dlsync` (or `-f`), one line per mode keyed by `describe_display_mode`, e.g.
 `720p5994 video 16.661 lipsync 0.123`, and normal runs subtract them. Lipsync needs the off
 edge at 30 s and the on edge at 60 s; a calibration stopped before any edge keeps the
-lipsync saved before. Still to come (step 5): the status line and the final report.
+lipsync saved before.
+
+At startup `IDeckLinkStatus` gives the mode the card is still sending from its last use
+and the mode detected on its input. If both are the mode about to be sent, the chain is
+already in it and measurement starts at once. Otherwise the chain has to change mode,
+which restarts it: it can take tens of seconds, drop its signal several times and hold a
+false steady latency for several seconds on the way. So until it has settled, a change of
+mode is waited for rather than fatal, nothing is measured, and the status line says what
+is being waited for. It has settled once the latency has stayed within half a frame for
+`SETTLE_SECONDS` (10). After that a mode change is fatal. The lipsync of the encoder and
+decoder tested is different after each restart (+58, +75, +77, +96 ms at 720p59.94) but
+steady within a run to 0.15 ms, while its latency returns to within 1 ms. After a mode
+change the first lipsync measurement is left out (`discard_first`) as a precaution, which
+delays the first result by 30 s; so far the one left out has matched the next.
+
+Messages to the user speak of the "enc->dec chain", the "end-to-end latency" and the
+"lipsync" per channel, never of edges or the picture and tone turning on or off: each
+lipsync measurement is reported as one line with the latency and both channels, and the
+report gives each channel's lipsync over the run. The status line shows the last latency
+and lipsync, then either a note (`no timecode`, `timecode not advancing`, `timecode ahead
+of the output`) or `next measurement in N s`, the countdown to the next edge. Latency is
+from the first arrival of a frame, so a frame whose timecode does not advance (a decoder repeating a frame) is left out and counted, as is one whose latency would
+be negative, which means the chain replaced the timecode. Frames without timecode before the
+first one with it are the decoder's output from before the first frame came back, and are
+not reported as dropouts. The final report warns about any of these, about a picture which
+disagreed with its timecode, and about a channel with no edges or a tone level more than
+1 dB from -20 dBFS.
 
 ## Build
 
