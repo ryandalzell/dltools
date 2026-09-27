@@ -3,6 +3,7 @@ dlinfo
 dlplay
 dlcap
 dlcard
+dlsync
 *.o
 *~
 .gdb_history

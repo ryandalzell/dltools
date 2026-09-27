@@ -8,7 +8,8 @@ dltools is a set of command line utilities for Blackmagic Decklink cards, writte
 C++ against the Decklink SDK. The primary tool is `dlplay`, which decodes a video
 file or network stream and plays it out of the card as an SDI source. Also included:
 `dlcap` (capture raw YUV from SDI), `dlcard` (play a static test card, currently
-75% colour bars in 8-bit UYVY, default 720p59.94), `dlinfo` (enumerate cards and
+75% colour bars in 8-bit UYVY, default 720p59.94), `dlsync` (end-to-end latency and
+lipsync through an external chain, work in progress), `dlinfo` (enumerate cards and
 supported modes) and `dlskel` (template for new tools).
 
 `dlcard` draws every combination of its two static overlays (`-o` centre text, which
@@ -31,6 +32,17 @@ because a sample is 3.75 ticks of 180kHz. It is kept 250ms ahead of playback, wh
 bounds the latency of muting with `a`, and once `-n` has requested the stop it is only
 topped up to the end of the last frame, since the buffer level cannot be read after
 playback has stopped.
+
+`dlsync` is a copy of `dlcard`'s output (bars, burnt-in and RP188/VITC timecode, tone)
+with an `IDeckLinkInput` on the same card, so it needs a full duplex card (`dlinfo` reports
+the duplex mode). Each received frame's timecode is turned back into the frame number it
+was sent as (`timecode_to_frame`, the inverse of `frame_to_timecode`, unwrapped to the
+nearest day), and compared with the frame on the output from `GetScheduledStreamTime`. At
+high frame rates a frame carrying VITC2 rather than VITC1 is the odd one of its pair. A
+change of display mode in the chain wakes the main loop, which stops and exits with an
+error. Capture passthrough is disabled so the output never follows the input. Still to
+come: hardware reference clock timing, `--calibrate`, the 30s on/off cycle, audio edges
+and lipsync.
 
 ## Build
 

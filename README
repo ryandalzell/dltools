@@ -17,6 +17,9 @@ dlcap:  video recorder, captures raw yuv data in supported formats
 dlcard: displays a test card, currently colour bars with optional
         caption, video mode text, timecode and tone
 
+dlsync: plays a test card with timecode out of the card and receives it
+        back through an external chain, reporting the delay in frames
+
 dlinfo: looks for compatible cards and reports supported formats
 
 dlskel: skeleton application to use as template for further utilities

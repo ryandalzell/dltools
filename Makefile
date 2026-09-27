@@ -13,7 +13,7 @@ SDKDIR = /usr/local/decklink/include
 PLATFORM = $(shell uname -p)
 
 # Targets
-APPS = dlskel dlinfo dlcap dlcard
+APPS = dlskel dlinfo dlcap dlcard dlsync
 
 # Common files
 OBJS = dlutil.o dlterm.o dlconv.o dlts.o dlalloc.o dlsource.o dlformat.o DeckLinkAPIDispatch.o
@@ -44,7 +44,7 @@ LFLAGS += -lavcodec -lavformat -lavutil
 endif
 ifeq ($(FREETYPE),1)
 CXXFLAGS += -DHAVE_FREETYPE $(shell pkg-config --cflags freetype2 fontconfig)
-dlcard: LFLAGS += $(shell pkg-config --libs freetype2 fontconfig)
+dlcard dlsync: LFLAGS += $(shell pkg-config --libs freetype2 fontconfig)
 endif
 
 # Targets
@@ -163,6 +163,14 @@ dlsource.o: dlsource.cpp dlutil.h \
  /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
  /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
  /usr/local/decklink/include/DeckLinkAPIDeckControl.h dlsource.h
+dlsync.o: dlsync.cpp /usr/local/decklink/include/DeckLinkAPI.h \
+ /usr/local/decklink/include/LinuxCOM.h \
+ /usr/local/decklink/include/DeckLinkAPITypes.h \
+ /usr/local/decklink/include/DeckLinkAPIModes.h \
+ /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
+ /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
+ /usr/local/decklink/include/DeckLinkAPIDeckControl.h dlutil.h dlterm.h \
+ dlalloc.h
 dlterm.o: dlterm.cpp dlterm.h dlutil.h \
  /usr/local/decklink/include/DeckLinkAPI.h \
  /usr/local/decklink/include/LinuxCOM.h \
