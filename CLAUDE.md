@@ -7,8 +7,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 dltools is a set of command line utilities for Blackmagic Decklink cards, written in
 C++ against the Decklink SDK. The primary tool is `dlplay`, which decodes a video
 file or network stream and plays it out of the card as an SDI source. Also included:
-`dlcap` (capture raw YUV from SDI), `dlinfo` (enumerate cards and supported modes)
-and `dlskel` (template for new tools).
+`dlcap` (capture raw YUV from SDI), `dlcard` (play a static test card, currently
+75% colour bars in 8-bit UYVY, default 720p59.94), `dlinfo` (enumerate cards and
+supported modes) and `dlskel` (template for new tools).
+
+`dlcard` draws every combination of its two text overlays (`-o` centre text, which
+defaults to the card's model name, and `-m` video mode) into its own frame up front,
+and the `o`/`m` keys switch which frame is scheduled next, so a toggle appears after
+the preroll depth rather than redrawing a frame the card may be reading.
 
 ## Build
 
@@ -42,6 +48,7 @@ Set at the top of the Makefile, not via configure:
 | `LIBYUV` | 1 | `-DHAVE_LIBYUV`, links `-lyuv -ljpeg` |
 | `HEVC` | 1 | `-DHAVE_LIBDE265`, links `-lde265` |
 | `FFMPEG` | 1 | `-DHAVE_FFMPEG`, links avcodec/avformat/avutil |
+| `FREETYPE` | 1 | `-DHAVE_FREETYPE`, links freetype and fontconfig into `dlcard` only, for its `-d`/`-m` text |
 
 **`FFMPEG=0` means H.264 and AV1 do not decode.** Those paths become `dlexit("no
 support for ... in this build")`, in both the elementary-stream and transport-stream

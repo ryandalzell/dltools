@@ -5,6 +5,7 @@
 LIBYUV = 1
 HEVC = 1
 FFMPEG = 1
+FREETYPE = 1
 
 # Build configuration
 PREFIX ?= /usr/local
@@ -12,7 +13,7 @@ SDKDIR = /usr/local/decklink/include
 PLATFORM = $(shell uname -p)
 
 # Targets
-APPS = dlskel dlinfo dlcap
+APPS = dlskel dlinfo dlcap dlcard
 
 # Common files
 OBJS = dlutil.o dlterm.o dlconv.o dlts.o dlalloc.o dlsource.o dlformat.o DeckLinkAPIDispatch.o
@@ -40,6 +41,10 @@ endif
 ifeq ($(FFMPEG),1)
 CXXFLAGS += -DHAVE_FFMPEG
 LFLAGS += -lavcodec -lavformat -lavutil
+endif
+ifeq ($(FREETYPE),1)
+CXXFLAGS += -DHAVE_FREETYPE $(shell pkg-config --cflags freetype2 fontconfig)
+dlcard: LFLAGS += $(shell pkg-config --libs freetype2 fontconfig)
 endif
 
 # Targets
@@ -96,6 +101,14 @@ dlcap.o: dlcap.cpp /usr/local/decklink/include/DeckLinkAPI.h \
  /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
  /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
  /usr/local/decklink/include/DeckLinkAPIDeckControl.h dlutil.h
+dlcard.o: dlcard.cpp /usr/local/decklink/include/DeckLinkAPI.h \
+ /usr/local/decklink/include/LinuxCOM.h \
+ /usr/local/decklink/include/DeckLinkAPITypes.h \
+ /usr/local/decklink/include/DeckLinkAPIModes.h \
+ /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
+ /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
+ /usr/local/decklink/include/DeckLinkAPIDeckControl.h dlutil.h dlterm.h \
+ dlalloc.h
 dlconv.o: dlconv.cpp dlutil.h /usr/local/decklink/include/DeckLinkAPI.h \
  /usr/local/decklink/include/LinuxCOM.h \
  /usr/local/decklink/include/DeckLinkAPITypes.h \

@@ -2,6 +2,7 @@ dlskel
 dlinfo
 dlplay
 dlcap
+dlcard
 *.o
 *~
 .gdb_history
