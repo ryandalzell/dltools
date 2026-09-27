@@ -40,13 +40,20 @@ const double TONE_FREQUENCY = 261.6255653;  /* 440*2^(-9/12) */
 const double TONE_LEVEL = -20.0;            /* dBFS */
 const unsigned AUDIO_BLOCK = 2400;
 const unsigned AUDIO_TARGET = 12000;
-const int TONE_RAMP = 240;                  /* samples to mute or unmute, 5ms */
+const int TONE_RAMP = 240;                  /* samples over which the tone turns on or off, 5ms */
+
+/* the picture and tone are on for a run of this many seconds of frames then off for the same, the edges being what lipsync is measured from */
+const int CYCLE_SECONDS = 30;
+
+/* the received level of the tone is its rectified mean over one period, which a linear ramp does not bias, with the
+   level when on measured from a quarter of a second after the edge */
+const int TONE_WINDOW = 183;
+const double TONE_MEAN = 32767.0 * pow(10.0, TONE_LEVEL/20.0) * 2.0/M_PI;
+const int PLATEAU_SKIP = AUDIO_RATE/4;
 
 /* state of the tone, which is computed from the sample number so a partial write needs no buffer */
 typedef struct {
     long long next;         /* sample number of the next sample to schedule */
-    double gain;            /* gain of the next sample, ramped towards target */
-    double target;          /* 1 when playing, 0 when muted */
     bool underrun;          /* an underrun has been reported */
 } tone_t;
 
@@ -54,6 +61,41 @@ typedef struct {
 typedef struct {
     int hh, mm, ss, ff;
 } timecode_t;
+
+void frame_to_timecode(long long frame, int fps, bool dropframe, timecode_t *tc);
+
+/* detection of the edges of the received tone in one channel */
+typedef struct {
+    int window[TONE_WINDOW];    /* rectified samples over one period of the tone */
+    long sum;                   /* sum of the window */
+    double last;                /* level at the previous sample */
+    bool on;                    /* the tone is on */
+    bool armed;                 /* the level has gone far enough from the last edge to find the next */
+    double plateau;             /* level when on, from the last on run, 0 until there is one */
+    double peak;                /* highest level since the audio started */
+    bool found;                 /* an edge has been found since the audio started */
+    double run_sum;             /* level when on, accumulated over the current on run */
+    long run_count;
+    long long edge_sample;      /* sample number of the last edge */
+    long long edge;             /* number of the edge found and not yet matched to the picture, 0 if none */
+    double time;                /* its time on the input's clock */
+} channel_t;
+
+/* statistics of a measurement in ms */
+typedef struct {
+    unsigned count;
+    double sum, min, max;
+} stats_t;
+
+void add_stats(stats_t *s, double value)
+{
+    if (s->count==0 || value<s->min)
+        s->min = value;
+    if (s->count==0 || value>s->max)
+        s->max = value;
+    s->sum += value;
+    s->count++;
+}
 
 /* synchronisation with the frame completion and input callbacks */
 sem_t sem;
@@ -125,6 +167,9 @@ public:
     bool dropframe, highrate, sd;
     int verbose;
     sts_t calibration;      /* the card's own delay, subtracted from the latency */
+    double lipsync_calibration; /* the card's own lipsync in ms, subtracted from the lipsync */
+    int cycle;              /* frames in each on or off run */
+    double luma_threshold;  /* between the mean luma of the bars and of black */
 
     /* results, read by main after the input is stopped */
     unsigned nosignal;      /* frames without a signal */
@@ -134,6 +179,23 @@ public:
     sts_t sum, min, max;    /* statistics of the latency */
     sts_t reported;         /* latency last reported with a message */
     char newmodename[64];   /* the mode the input changed to */
+    unsigned mismatched;    /* frames whose picture disagrees with their timecode */
+    stats_t lipsync[2][2];  /* lipsync of the on and off edges in each channel */
+
+private:
+    void process_audio(IDeckLinkAudioInputPacket *packet, sts_t in_offset);
+    void detect_edge(int ch, int sample, long long n, sts_t in_offset);
+    void audio_edge(int ch, bool rising, double time);
+    void match_edge(int ch);
+    void check_picture(IDeckLinkVideoInputFrame *videoframe, long long frame);
+
+    sts_t raw_latency;      /* the last latency before calibration */
+    long long audio_next;   /* sample number expected at the start of the next packet */
+    long long audio_filled; /* samples since the audio started or had a gap */
+    channel_t channel[2];
+    long long video_edge[2];    /* number of the last on and off edges received in the picture */
+    double video_time[2];       /* and their arrival times on the input's clock */
+    bool disagree;          /* the picture disagrees with the timecode */
 };
 
 /* the frame number of a timecode, the inverse of frame_to_timecode */
@@ -168,9 +230,27 @@ HRESULT capture::VideoInputFormatChanged(BMDVideoInputFormatChangedEvents events
     return S_OK;
 }
 
+/* mean luma of a uyvy frame from every 8th line and 4th pixel of its top three quarters, which is above the timecode */
+double mean_luma(const unsigned char *uyvy, int width, int height, int rowbytes)
+{
+    long long sum = 0;
+    long count = 0;
+    for (int y=0; y<height*3/4; y+=8)
+        for (int x=0; x<width; x+=4) {
+            sum += uyvy[y*rowbytes + x*2 + 1];
+            count++;
+        }
+    return (double)sum/count;
+}
+
+/* the picture and tone are on in the first run of each cycle */
+bool frame_is_on(long long frame, int cycle)
+{
+    return (frame/cycle) % 2 == 0;
+}
+
 HRESULT capture::VideoInputFrameArrived(IDeckLinkVideoInputFrame *videoframe, IDeckLinkAudioInputPacket *audiopacket)
 {
-    (void) audiopacket;
     if (videoframe==NULL)
         return S_OK;
 
@@ -181,6 +261,23 @@ HRESULT capture::VideoInputFrameArrived(IDeckLinkVideoInputFrame *videoframe, ID
         return S_OK;
     }
     received++;
+
+    /* the arrival time on the input's clock, which needs the output stream time related to that clock */
+    if (!clock_valid)
+        return S_OK;
+    BMDTimeValue arrival, frameduration, streamtime;
+    HRESULT result = videoframe->GetHardwareReferenceTimestamp(180000, &arrival, &frameduration);
+    if (result==S_OK)
+        result = videoframe->GetStreamTime(&streamtime, &frameduration, 180000);
+    if (result!=S_OK) {
+        dlstatus("frame %u: no hardware timestamp", received);
+        return S_OK;
+    }
+    const sts_t offset = clock_offset;
+
+    /* the audio which came with the frame, timed on the input's clock through the stream time of the frame */
+    if (audiopacket)
+        process_audio(audiopacket, arrival - streamtime);
 
     /* the timecode as sent, a high frame rate frame is odd if it carries vitc2 rather than vitc1 */
     IDeckLinkTimecode *tc = NULL;
@@ -199,7 +296,7 @@ HRESULT capture::VideoInputFrameArrived(IDeckLinkVideoInputFrame *videoframe, ID
         return S_OK;
     }
     uint8_t hh, mm, ss, ff;
-    HRESULT result = tc->GetComponents(&hh, &mm, &ss, &ff);
+    result = tc->GetComponents(&hh, &mm, &ss, &ff);
     tc->Release();
     if (result!=S_OK) {
         untimed++;
@@ -208,17 +305,6 @@ HRESULT capture::VideoInputFrameArrived(IDeckLinkVideoInputFrame *videoframe, ID
     }
     timecode_t t = {hh, mm, ss, highrate? ff*2 + odd : ff};
 
-    /* the arrival time on the input's clock, which needs the output stream time related to that clock */
-    if (!clock_valid)
-        return S_OK;
-    BMDTimeValue arrival, frameduration;
-    result = videoframe->GetHardwareReferenceTimestamp(180000, &arrival, &frameduration);
-    if (result!=S_OK) {
-        dlstatus("frame %u: no hardware timestamp", received);
-        return S_OK;
-    }
-    const sts_t offset = clock_offset;
-
     /* the received frame number, unwrapped to the day of timecode nearest the output frame at arrival */
     const long long day = frames_per_day(fps, dropframe);
     long long now = (arrival - offset) / duration;
@@ -226,7 +312,8 @@ HRESULT capture::VideoInputFrameArrived(IDeckLinkVideoInputFrame *videoframe, ID
     frame += day * llround((double)(now - frame) / day);
 
     /* the latency from the time the frame was sent, less the card's own delay */
-    sts_t latency = arrival - (frame*duration + offset) - calibration;
+    raw_latency = arrival - (frame*duration + offset);
+    sts_t latency = raw_latency - calibration;
     if (!measured || latency<min)
         min = latency;
     if (!measured || latency>max)
@@ -243,7 +330,172 @@ HRESULT capture::VideoInputFrameArrived(IDeckLinkVideoInputFrame *videoframe, ID
         dlstatus("received %s%s as frame %lld, latency %.2f ms (%.2f frames)", string, highrate? (odd? ".1" : ".0") : "", frame, latency/180.0, (double)latency/duration);
     measured++;
 
+    /* the first frame of a run is an edge, except the first of all which is the start of playback */
+    if (frame>0 && frame%cycle==0) {
+        long long e = frame/cycle;
+        video_edge[e%2] = e;
+        video_time[e%2] = arrival;
+        match_edge(0);
+        match_edge(1);
+    }
+
+    check_picture(videoframe, frame);
+
     return S_OK;
+}
+
+/* check the picture is on or off as its timecode says, reporting where they start and stop disagreeing */
+void capture::check_picture(IDeckLinkVideoInputFrame *videoframe, long long frame)
+{
+    IDeckLinkVideoBuffer *buffer;
+    if (videoframe->QueryInterface(IID_IDeckLinkVideoBuffer, (void **)&buffer)!=S_OK)
+        return;
+    double luma = -1.0;
+    if (buffer->StartAccess(bmdBufferAccessRead)==S_OK) {
+        void *bytes;
+        if (buffer->GetBytes(&bytes)==S_OK)
+            luma = mean_luma((const unsigned char *)bytes, videoframe->GetWidth(), videoframe->GetHeight(), videoframe->GetRowBytes());
+        buffer->EndAccess(bmdBufferAccessRead);
+    }
+    buffer->Release();
+    if (luma<0.0)
+        return;
+
+    bool on = luma>luma_threshold;
+    bool expected = frame_is_on(frame, cycle);
+    if (on!=expected) {
+        mismatched++;
+        if (!disagree)
+            dlmessage("warning: picture is %s at frame %lld where the timecode says %s", on? "on" : "off", frame, expected? "on" : "off");
+    } else if (disagree)
+        dlmessage("info: picture agrees with the timecode again at frame %lld", frame);
+    disagree = on!=expected;
+}
+
+/* find the edges of the tone in the samples of a packet, restarting after a gap */
+void capture::process_audio(IDeckLinkAudioInputPacket *packet, sts_t in_offset)
+{
+    BMDTimeValue first;
+    void *bytes;
+    if (packet->GetPacketTime(&first, AUDIO_RATE)!=S_OK || packet->GetBytes(&bytes)!=S_OK)
+        return;
+    long count = packet->GetSampleFrameCount();
+    if (first!=audio_next) {
+        if (audio_filled && verbose>=1)
+            dlmessage("warning: gap of %lld samples in the audio input", first-audio_next);
+        audio_filled = 0;
+    }
+    audio_next = first + count;
+
+    const int16_t *samples = (const int16_t *)bytes;
+    for (long i=0; i<count; i++) {
+        detect_edge(0, samples[2*i], first+i, in_offset);
+        detect_edge(1, samples[2*i+1], first+i, in_offset);
+        audio_filled++;
+    }
+}
+
+/* follow the level of the tone in one channel and find where it crosses half its level when on */
+void capture::detect_edge(int ch, int sample, long long n, sts_t in_offset)
+{
+    channel_t *c = &channel[ch];
+    int a = abs(sample);
+    int pos = n % TONE_WINDOW;
+    /* audio_filled samples came before this one, so the window is full once it reaches one less than its length */
+    if (audio_filled==0)
+        c->sum = 0;
+    c->sum += a - (audio_filled<TONE_WINDOW? 0 : c->window[pos]);
+    c->window[pos] = a;
+    if (audio_filled<TONE_WINDOW-1)
+        return;
+    double level = (double)c->sum / TONE_WINDOW;
+
+    /* the level when on, from this run once it is long enough, else the last run, else the peak once there has
+       been a second of audio, else nominal, so a chain which changes the level is followed from the start */
+    if (audio_filled==TONE_WINDOW-1)
+        c->peak = 0.0;
+    c->peak = mmax(c->peak, level);
+    double plateau = c->run_count>=AUDIO_RATE/10? c->run_sum/c->run_count : c->plateau>0.0? c->plateau : audio_filled>=AUDIO_RATE? c->peak : TONE_MEAN;
+    double threshold = plateau/2.0;
+
+    /* start in the state of the first full window, which follows the level until the first edge is found */
+    if (audio_filled==TONE_WINDOW-1 || (!c->found && !c->armed && c->on!=(level>=threshold))) {
+        c->on = level>=threshold;
+        c->armed = false;
+        c->found = false;
+        c->run_sum = 0.0;
+        c->run_count = 0;
+        c->edge_sample = n;
+        c->last = level;
+        return;
+    }
+
+    if (!c->on) {
+        if (level<plateau/4.0)
+            c->armed = true;
+        if (c->armed && c->last<threshold && level>=threshold) {
+            /* the crossing between this sample and the last, at the centre of the window */
+            double position = n - 1 + (threshold-c->last)/(level-c->last) - (TONE_WINDOW-1)/2.0;
+            c->on = true;
+            c->armed = false;
+            c->found = true;
+            c->run_sum = 0.0;
+            c->run_count = 0;
+            c->edge_sample = n;
+            audio_edge(ch, true, position*180000.0/AUDIO_RATE + in_offset);
+        }
+    } else {
+        if (level>plateau*3.0/4.0)
+            c->armed = true;
+        if (n-c->edge_sample>=PLATEAU_SKIP) {
+            c->run_sum += level;
+            c->run_count++;
+        }
+        if (c->armed && c->last>=threshold && level<threshold) {
+            double position = n - 1 + (threshold-c->last)/(level-c->last) - (TONE_WINDOW-1)/2.0;
+            if (c->run_count>=AUDIO_RATE/10)
+                c->plateau = c->run_sum/c->run_count;
+            c->on = false;
+            c->armed = false;
+            c->found = true;
+            c->run_sum = 0.0;
+            c->run_count = 0;
+            c->edge_sample = n;
+            audio_edge(ch, false, position*180000.0/AUDIO_RATE + in_offset);
+        }
+    }
+    c->last = level;
+}
+
+/* number an edge of the tone by the video latency, and match it to the edge in the picture */
+void capture::audio_edge(int ch, bool rising, double time)
+{
+    if (!measured)
+        return;
+    long long e = llround((time - clock_offset - raw_latency) / ((double)cycle*duration));
+    if (e<=0 || (e%2==0)!=rising) {
+        if (verbose>=1)
+            dlmessage("warning: tone turned %s in channel %d away from an edge of the cycle", rising? "on" : "off", ch+1);
+        return;
+    }
+    channel[ch].edge = e;
+    channel[ch].time = time;
+    match_edge(ch);
+}
+
+/* the lipsync of an edge once it has been found in both the tone and the picture, positive when the audio is late */
+void capture::match_edge(int ch)
+{
+    long long e = channel[ch].edge;
+    if (e==0 || video_edge[e%2]!=e)
+        return;
+    double ms = (channel[ch].time - video_time[e%2]) / 180.0 - lipsync_calibration;
+    add_stats(&lipsync[e%2][ch], ms);
+    channel[ch].edge = 0;
+
+    timecode_t t;
+    frame_to_timecode(e*cycle, fps, dropframe, &t);
+    dlmessage("info: tone and picture %s at %02d:%02d:%02d%c%02d, channel %d lipsync %+.2f ms", e%2? "off" : "on", t.hh, t.mm, t.ss, dropframe? ';' : ':', highrate? t.ff/2 : t.ff, ch+1, ms);
 }
 
 /* draw 75% colour bars into a uyvy buffer */
@@ -299,31 +551,35 @@ void frame_to_timecode(long long frame, int fps, bool dropframe, timecode_t *tc)
     tc->hh = frame / (fps*3600) % 24;
 }
 
-/* move a gain towards its target by the given number of samples of ramp */
-double ramp_gain(double gain, double target, unsigned samples)
+/* a linear ramp through half at the edge, clipped to 0..1 */
+double ramp(double samples)
 {
-    double step = (double)samples/TONE_RAMP;
-    if (gain<target)
-        return mmin(gain+step, target);
-    return mmax(gain-step, target);
+    return mmax(0.0, mmin(1.0, samples/TONE_RAMP + 0.5));
+}
+
+/* gain of the tone at sample n, on when the picture is, with each ramp centred on the time of the first frame of its run */
+double tone_gain(long long n, double samples_per_frame, int cycle)
+{
+    double run = cycle * samples_per_frame;
+    double x = fmod(n/samples_per_frame, 2.0*cycle) * samples_per_frame;
+    return ramp(x) - ramp(x-run) + ramp(x-2.0*run);
 }
 
 /* fill a buffer with stereo 16-bit samples of the tone, starting at sample number first */
-void generate_tone(int16_t *buf, long long first, unsigned count, double gain, double target)
+void generate_tone(int16_t *buf, long long first, unsigned count, double samples_per_frame, int cycle)
 {
     const double amplitude = 32767.0 * pow(10.0, TONE_LEVEL/20.0);
     for (unsigned i=0; i<count; i++) {
         /* whole seconds and the remaining samples keep the phase precise over long runs */
         long long n = first + i;
         double cycles = fmod((n/AUDIO_RATE) * TONE_FREQUENCY, 1.0) + (n%AUDIO_RATE) * TONE_FREQUENCY / AUDIO_RATE;
-        int16_t sample = lround(gain * amplitude * sin(2.0*M_PI*cycles));
+        int16_t sample = lround(tone_gain(n, samples_per_frame, cycle) * amplitude * sin(2.0*M_PI*cycles));
         buf[2*i] = buf[2*i+1] = sample;
-        gain = ramp_gain(gain, target, 1);
     }
 }
 
 /* schedule tone until the card has at least the target amount of audio buffered */
-void top_up_audio(IDeckLinkOutput *output, tone_t *tone, bool started)
+void top_up_audio(IDeckLinkOutput *output, tone_t *tone, bool started, double samples_per_frame, int cycle)
 {
     uint32_t buffered;
     HRESULT result = output->GetBufferedAudioSampleFrameCount(&buffered);
@@ -336,7 +592,7 @@ void top_up_audio(IDeckLinkOutput *output, tone_t *tone, bool started)
 
     while (buffered<AUDIO_TARGET) {
         int16_t buf[AUDIO_BLOCK*2];
-        generate_tone(buf, tone->next, AUDIO_BLOCK, tone->gain, tone->target);
+        generate_tone(buf, tone->next, AUDIO_BLOCK, samples_per_frame, cycle);
         uint32_t written;
         result = output->ScheduleAudioSamples(buf, AUDIO_BLOCK, tone->next, AUDIO_RATE, &written);
         if (result!=S_OK)
@@ -344,7 +600,6 @@ void top_up_audio(IDeckLinkOutput *output, tone_t *tone, bool started)
 
         /* carry on from the first sample not written */
         tone->next += written;
-        tone->gain = ramp_gain(tone->gain, tone->target, written);
         buffered += written;
         if (written<AUDIO_BLOCK)
             break;
@@ -520,8 +775,8 @@ const char *default_calibration_file()
     return filename;
 }
 
-/* read the card's own delay in a mode from the calibration file, returning false if there is none */
-bool read_calibration(const char *filename, const char *modename, double *video_ms)
+/* read the card's own delay and lipsync in a mode from the calibration file, returning false if there is no delay */
+bool read_calibration(const char *filename, const char *modename, double *video_ms, double *lipsync_ms, bool *has_lipsync)
 {
     FILE *file = fopen(filename, "r");
     if (file==NULL)
@@ -532,9 +787,13 @@ bool read_calibration(const char *filename, const char *modename, double *video_
     bool found = false;
     while (fgets(line, sizeof(line), file)) {
         char mode[32];
-        double ms;
-        if (line[0]!='#' && sscanf(line, "%31s video %lf", mode, &ms)==2 && strcmp(mode, modename)==0) {
-            *video_ms = ms;
+        double video, lipsync;
+        int n = sscanf(line, "%31s video %lf lipsync %lf", mode, &video, &lipsync);
+        if (line[0]!='#' && n>=2 && strcmp(mode, modename)==0) {
+            *video_ms = video;
+            *has_lipsync = n==3;
+            if (n==3)
+                *lipsync_ms = lipsync;
             found = true;
         }
     }
@@ -542,8 +801,8 @@ bool read_calibration(const char *filename, const char *modename, double *video_
     return found;
 }
 
-/* write the card's own delay in a mode to the calibration file, keeping the lines for other modes */
-void write_calibration(const char *filename, const char *modename, double video_ms)
+/* write the card's own delay and lipsync, if known, in a mode to the calibration file, keeping the lines for other modes */
+void write_calibration(const char *filename, const char *modename, double video_ms, const double *lipsync_ms)
 {
     /* keep the existing lines except the one for this mode */
     char *kept = NULL;
@@ -568,10 +827,13 @@ void write_calibration(const char *filename, const char *modename, double video_
     file = fopen(filename, "w");
     if (file==NULL)
         dlerror("error: failed to open calibration file \"%s\"", filename);
-    fprintf(file, "# dlsync calibration: video mode, then the card's own delay from output to input in ms\n");
+    fprintf(file, "# dlsync calibration: video mode, then the card's own delay from output to input and its lipsync, in ms\n");
     if (kept)
         fputs(kept, file);
-    fprintf(file, "%s video %.3f\n", modename, video_ms);
+    if (lipsync_ms)
+        fprintf(file, "%s video %.3f lipsync %.3f\n", modename, video_ms, *lipsync_ms);
+    else
+        fprintf(file, "%s video %.3f\n", modename, video_ms);
     if (fclose(file)!=0)
         dlerror("error: failed to write calibration file \"%s\"", filename);
     free(kept);
@@ -579,10 +841,10 @@ void write_calibration(const char *filename, const char *modename, double video_
 
 void usage(int exitcode)
 {
-    fprintf(stderr, "%s: measure the latency of a chain from the sdi output back to the sdi input\n", appname);
+    fprintf(stderr, "%s: measure the latency and lipsync of a chain from the sdi output back to the sdi input\n", appname);
     fprintf(stderr, "usage: %s [options]\n", appname);
     fprintf(stderr, "  -s, --sizeformat    : specify display size format: 480i,480p,576i,720p,1080i,1080p [optional +framerate] (default: 720p5994)\n");
-    fprintf(stderr, "  -c, --calibrate     : measure the card's own delay with a loopback cable and save it (default: subtract the saved delay)\n");
+    fprintf(stderr, "  -c, --calibrate     : measure the card's own delay and lipsync with a loopback cable and save them, lipsync needs over a minute (default: subtract the saved ones)\n");
     fprintf(stderr, "  -f, --calfile       : calibration file (default: ~/.dlsync)\n");
     fprintf(stderr, "  -i, --index         : index of decklink card to use (default: 0)\n");
     fprintf(stderr, "  -q, --quiet         : decrease verbosity, can be used multiple times\n");
@@ -747,13 +1009,20 @@ int main(int argc, char *argv[])
     /* the card's own delay in this mode, which calibration measures rather than subtracts */
     char calmode[32];
     snprintf(calmode, sizeof(calmode), "%s", describe_display_mode(mode));
-    double calibration_ms = 0.0;
+    double calibration_ms = 0.0, lipsync_ms = 0.0;
+    bool has_lipsync = false;
+    bool has_calibration = read_calibration(calfile, calmode, &calibration_ms, &lipsync_ms, &has_lipsync);
     if (calibrate)
-        dlmessage("info: calibrating %s, the output must be looped straight back to the input", calmode);
-    else if (read_calibration(calfile, calmode, &calibration_ms))
+        dlmessage("info: calibrating %s, the output must be looped straight back to the input, lipsync needs an off and an on edge, over %d seconds", calmode, 2*CYCLE_SECONDS);
+    else if (!has_calibration)
+        dlmessage("warning: no calibration for %s in %s, the latency and lipsync include the card's own", calmode, calfile);
+    else {
         dlmessage("info: subtracting the card's own delay of %.3f ms from %s", calibration_ms, calfile);
-    else
-        dlmessage("warning: no calibration for %s in %s, the latency includes the card's own delay", calmode, calfile);
+        if (has_lipsync)
+            dlmessage("info: subtracting the card's own lipsync of %+.3f ms", lipsync_ms);
+        else
+            dlmessage("warning: no lipsync calibration for %s in %s, the lipsync includes the card's own", calmode, calfile);
+    }
 
     /* frame duration in 180kHz */
     sts_t duration = llround(180000.0 * framerate_duration / framerate_scale);
@@ -777,7 +1046,9 @@ int main(int argc, char *argv[])
         dlapierror(result, "failed to enable video output");
 
     /* set the audio output mode and fill the audio buffer during preroll */
-    tone_t tone = {0, 1.0, 1.0, false};
+    tone_t tone = {0, false};
+    const int cycle = CYCLE_SECONDS*fps;
+    const double samples_per_frame = (double)duration*AUDIO_RATE/180000;
     result = output->EnableAudioOutput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, 2, bmdAudioOutputStreamTimestamped);
     if (result!=S_OK)
         dlapierror(result, "error: failed to enable audio output");
@@ -795,12 +1066,19 @@ int main(int argc, char *argv[])
     the_capture.highrate = highrate;
     the_capture.sd = sd;
     the_capture.verbose = verbose;
-    the_capture.calibration = llround(calibration_ms*180.0);
+    the_capture.calibration = calibrate? 0 : llround(calibration_ms*180.0);
+    the_capture.lipsync_calibration = calibrate || !has_lipsync? 0.0 : lipsync_ms;
+    the_capture.cycle = CYCLE_SECONDS*fps;
     if (input->SetCallback(&the_capture)!=S_OK)
         dlexit("error: could not set input callback object");
     result = input->EnableVideoInput(mode->GetDisplayMode(), bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection);
     if (result!=S_OK)
         dlapierror(result, "error: failed to enable video input");
+    if (config->SetInt(bmdDeckLinkConfigAudioInputConnection, bmdAudioConnectionEmbedded)!=S_OK)
+        dlmessage("warning: failed to set card configuration to input embedded audio");
+    result = input->EnableAudioInput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, 2);
+    if (result!=S_OK)
+        dlapierror(result, "error: failed to enable audio input");
 
     /* the background */
     int32_t rowbytes;
@@ -808,10 +1086,16 @@ int main(int argc, char *argv[])
     if (result!=S_OK)
         dlapierror(result, "error: failed to get row bytes for pixel format");
     const size_t size = rowbytes*height;
-    unsigned char *background = (unsigned char *)malloc(size);
-    if (background==NULL)
-        dlexit("error: failed to allocate test card");
-    draw_bars(background, width, height, rowbytes, false);
+    unsigned char *background[2];
+    for (int i=0; i<2; i++) {
+        background[i] = (unsigned char *)malloc(size);
+        if (background[i]==NULL)
+            dlexit("error: failed to allocate test card");
+    }
+    draw_bars(background[0], width, height, rowbytes, false);
+    for (size_t i=0; i<size; i+=4)
+        memcpy(background[1]+i, "\x80\x10\x80\x10", 4);
+    the_capture.luma_threshold = (mean_luma(background[0], width, height, rowbytes) + mean_luma(background[1], width, height, rowbytes)) / 2.0;
 #ifdef HAVE_FREETYPE
     FT_Library library;
     if (FT_Init_FreeType(&library))
@@ -870,7 +1154,7 @@ int main(int argc, char *argv[])
             /* build and schedule the next frame */
             IDeckLinkMutableVideoFrame *frame = ring[scheduled % RING_FRAMES];
             unsigned char *uyvy = ringbuf[scheduled % RING_FRAMES];
-            memcpy(uyvy, background, size);
+            memcpy(uyvy, background[frame_is_on(scheduled, cycle)? 0 : 1], size);
             timecode_t tc;
             frame_to_timecode(scheduled, fps, dropframe, &tc);
             set_timecode(frame, &tc, dropframe, progressive, highrate, sd);
@@ -885,7 +1169,7 @@ int main(int argc, char *argv[])
             scheduled++;
 
             /* keep the audio buffer filled, audio is timed in samples rather than 180kHz so every sample time is exact */
-            top_up_audio(output, &tone, started);
+            top_up_audio(output, &tone, started, samples_per_frame, cycle);
 
             /* relate the stream time to the input's clock, which times the received frames, publishing the sample of
                each second whose clock reads were closest together so the offset follows any drift between the two */
@@ -937,6 +1221,7 @@ int main(int argc, char *argv[])
     /* stop the input, then the output */
     input->StopStreams();
     input->DisableVideoInput();
+    input->DisableAudioInput();
     output->StopScheduledPlayback(0, NULL, 0);
     output->DisableVideoOutput();
     output->DisableAudioOutput();
@@ -951,16 +1236,33 @@ int main(int argc, char *argv[])
         dlmessage("info: received %u frames, %u without timecode", the_capture.received, the_capture.untimed);
     if (verbose>=1 && clock_samples)
         dlmessage("info: over %u seconds the stream time moved %.3f ms against the input clock, each second read within %.3f ms", clock_samples, (offset_max-offset_min)/180.0, spread_max/180.0);
+    if (verbose>=1 && the_capture.mismatched)
+        dlmessage("info: %u frames had a picture which disagreed with their timecode", the_capture.mismatched);
+    double lipsync_sum = 0.0;
+    unsigned lipsync_count = 0;
+    for (int edge=0; edge<2; edge++)
+        for (int ch=0; ch<2; ch++) {
+            stats_t *l = &the_capture.lipsync[edge][ch];
+            if (l->count)
+                dlmessage("lipsync as tone and picture turn %s, channel %d: %+.2f ms, min %+.2f ms, max %+.2f ms, over %u edges", edge? "off" : "on", ch+1, l->sum/l->count, l->min, l->max, l->count);
+            lipsync_sum += l->sum;
+            lipsync_count += l->count;
+        }
+    if (lipsync_count==0)
+        dlmessage("no lipsync measured, which needs a whole run of %d seconds", CYCLE_SECONDS);
     if (the_capture.measured) {
         double mean = the_capture.sum / 180.0 / the_capture.measured;
         dlmessage("latency %.2f ms (%.2f frames), min %.2f ms, max %.2f ms, over %u frames", mean, mean*180.0/duration, the_capture.min/180.0, the_capture.max/180.0, the_capture.measured);
 
-        /* save the card's own delay */
+        /* save the card's own delay, and its lipsync or else the lipsync saved before */
         if (calibrate) {
             if (mean*180.0 > 3*duration)
                 dlmessage("warning: %.2f ms is long for a loopback cable, is a chain still connected?", mean);
-            write_calibration(calfile, calmode, mean);
-            dlmessage("saved the card's own delay in %s to %s", calmode, calfile);
+            double lipsync = lipsync_count? lipsync_sum/lipsync_count : lipsync_ms;
+            if (lipsync_count==0 && has_lipsync)
+                dlmessage("warning: keeping the lipsync saved before, %+.3f ms", lipsync_ms);
+            write_calibration(calfile, calmode, mean, lipsync_count || has_lipsync? &lipsync : NULL);
+            dlmessage("saved the card's own delay%s in %s to %s", lipsync_count? " and lipsync" : "", calmode, calfile);
         }
     } else
         dlmessage("no latency measured, %s", the_capture.received? "no timecode was received" : "no input signal was received");
@@ -970,7 +1272,8 @@ int main(int argc, char *argv[])
     /* tidy up */
     for (int i=0; i<RING_FRAMES; i++)
         ring[i]->Release();
-    free(background);
+    free(background[0]);
+    free(background[1]);
 #ifdef HAVE_FREETYPE
     tcfont_done(&tcfont);
     FT_Done_FreeType(library);

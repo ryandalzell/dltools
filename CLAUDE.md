@@ -49,10 +49,24 @@ clock, not the output clock, by reading input clock, stream time, input clock an
 the midpoint. The stream time drifts about 46 ppm against that clock, so the main loop
 publishes the tightest sample of each second to the callback rather than measuring once.
 
-`--calibrate`, run on a loopback cable, saves the mean latency as the card's own delay to
-`~/.dlsync` (or `-f`), one line per mode keyed by `describe_display_mode`, e.g.
-`720p5994 video 1005.551`, and normal runs subtract it. Still to come: the 30s on/off
-cycle, audio edges and lipsync.
+The picture (bars or black) and the tone are on for 30 s of frames (`30*fps`, so 30.03 s at
+59.94) and off for the same, `frame_is_on()`. The tone's gain is a pure function of the
+sample number, `tone_gain()`: a 5 ms linear ramp centred on the exact time of the first frame
+of each run, which falls between samples at 59.94. Received audio samples are timed on the
+input's clock through the stream time of the video frame they came with. The level is the
+rectified mean over one tone period, not RMS, because RMS over a linear ramp crosses 50%
+about 0.23 ms early on the rise and late on the fall; the residual error is ±0.2 ms,
+depending on the tone's phase at the edge. The threshold is half the measured on level, not
+the nominal -20 dBFS, so a chain which changes the level still measures correctly. An audio
+edge is numbered by the video latency and matched to the arrival of the frame whose
+timecode is that edge. Lipsync is audio minus video, positive when the audio is late. The
+mean luma of each frame is only a check against its timecode.
+
+`--calibrate`, run on a loopback cable, saves the mean latency and lipsync as the card's own
+to `~/.dlsync` (or `-f`), one line per mode keyed by `describe_display_mode`, e.g.
+`720p5994 video 16.661 lipsync 0.123`, and normal runs subtract them. Lipsync needs the off
+edge at 30 s and the on edge at 60 s; a calibration stopped before any edge keeps the
+lipsync saved before. Still to come (step 5): the status line and the final report.
 
 ## Build
 
