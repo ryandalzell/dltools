@@ -37,12 +37,22 @@ playback has stopped.
 with an `IDeckLinkInput` on the same card, so it needs a full duplex card (`dlinfo` reports
 the duplex mode). Each received frame's timecode is turned back into the frame number it
 was sent as (`timecode_to_frame`, the inverse of `frame_to_timecode`, unwrapped to the
-nearest day), and compared with the frame on the output from `GetScheduledStreamTime`. At
-high frame rates a frame carrying VITC2 rather than VITC1 is the odd one of its pair. A
-change of display mode in the chain wakes the main loop, which stops and exits with an
-error. Capture passthrough is disabled so the output never follows the input. Still to
-come: hardware reference clock timing, `--calibrate`, the 30s on/off cycle, audio edges
-and lipsync.
+nearest day), whose send time is its number times the frame duration in output stream
+time. At high frame rates a frame carrying VITC2 rather than VITC1 is the odd one of its
+pair. A change of display mode in the chain wakes the main loop, which stops and exits
+with an error. Capture passthrough is disabled so the output never follows the input.
+
+The latency is the frame's `GetHardwareReferenceTimestamp` less its send time. On the 4K
+Extreme 12G the frame timestamps are on the **input's** hardware reference clock, whose
+base differs from the output's by days, so the output stream time is related to the input
+clock, not the output clock, by reading input clock, stream time, input clock and taking
+the midpoint. The stream time drifts about 46 ppm against that clock, so the main loop
+publishes the tightest sample of each second to the callback rather than measuring once.
+
+`--calibrate`, run on a loopback cable, saves the mean latency as the card's own delay to
+`~/.dlsync` (or `-f`), one line per mode keyed by `describe_display_mode`, e.g.
+`720p5994 video 1005.551`, and normal runs subtract it. Still to come: the 30s on/off
+cycle, audio edges and lipsync.
 
 ## Build
 

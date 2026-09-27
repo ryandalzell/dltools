@@ -62,6 +62,10 @@ unsigned int late, dropped;
 bool stopped;
 bool modechanged;
 
+/* the input's hardware reference clock minus the output stream time, measured by main and used by the input callback */
+volatile sts_t clock_offset;
+volatile bool clock_valid;
+
 class callback : public IDeckLinkVideoOutputCallback
 {
 public:
@@ -120,13 +124,15 @@ public:
     int fps;
     bool dropframe, highrate, sd;
     int verbose;
+    sts_t calibration;      /* the card's own delay, subtracted from the latency */
 
     /* results, read by main after the input is stopped */
     unsigned nosignal;      /* frames without a signal */
     unsigned received;      /* frames with a signal */
     unsigned untimed;       /* frames with a signal and no timecode */
-    long long delay;        /* last delay in frames */
-    bool measured;          /* delay has a value */
+    unsigned measured;      /* frames with a latency */
+    sts_t sum, min, max;    /* statistics of the latency */
+    sts_t reported;         /* latency last reported with a message */
     char newmodename[64];   /* the mode the input changed to */
 };
 
@@ -202,29 +208,40 @@ HRESULT capture::VideoInputFrameArrived(IDeckLinkVideoInputFrame *videoframe, ID
     }
     timecode_t t = {hh, mm, ss, highrate? ff*2 + odd : ff};
 
-    /* the frame now on the output */
-    BMDTimeValue streamtime;
-    double speed;
-    result = output->GetScheduledStreamTime(180000, &streamtime, &speed);
-    if (result!=S_OK)
+    /* the arrival time on the input's clock, which needs the output stream time related to that clock */
+    if (!clock_valid)
         return S_OK;
-    long long sent = streamtime / duration;
+    BMDTimeValue arrival, frameduration;
+    result = videoframe->GetHardwareReferenceTimestamp(180000, &arrival, &frameduration);
+    if (result!=S_OK) {
+        dlstatus("frame %u: no hardware timestamp", received);
+        return S_OK;
+    }
+    const sts_t offset = clock_offset;
 
-    /* the received frame number, unwrapped to the day of timecode nearest the output */
+    /* the received frame number, unwrapped to the day of timecode nearest the output frame at arrival */
     const long long day = frames_per_day(fps, dropframe);
+    long long now = (arrival - offset) / duration;
     long long frame = timecode_to_frame(&t, fps, dropframe);
-    frame += day * llround((double)(sent - frame) / day);
+    frame += day * llround((double)(now - frame) / day);
 
-    /* report each change of delay, and the latest frame on the status line */
-    long long d = sent - frame;
+    /* the latency from the time the frame was sent, less the card's own delay */
+    sts_t latency = arrival - (frame*duration + offset) - calibration;
+    if (!measured || latency<min)
+        min = latency;
+    if (!measured || latency>max)
+        max = latency;
+    sum += latency;
+
+    /* report a jump of more than half a frame with a message, and every frame on the status line */
     char string[16];
     snprintf(string, sizeof(string), "%02d:%02d:%02d%c%02d", t.hh, t.mm, t.ss, dropframe? ';' : ':', highrate? t.ff/2 : t.ff);
-    if (!measured || d!=delay)
-        dlmessage("info: received %s%s as frame %lld on output frame %lld, delay %lld frames", string, highrate? (odd? ".1" : ".0") : "", frame, sent, d);
-    else if (verbose>=0)
-        dlstatus("received %s%s as frame %lld on output frame %lld, delay %lld frames", string, highrate? (odd? ".1" : ".0") : "", frame, sent, d);
-    delay = d;
-    measured = true;
+    if (!measured || llabs(latency-reported)>duration/2) {
+        dlmessage("info: received %s%s as frame %lld, latency %.2f ms (%.2f frames)", string, highrate? (odd? ".1" : ".0") : "", frame, latency/180.0, (double)latency/duration);
+        reported = latency;
+    } else if (verbose>=0)
+        dlstatus("received %s%s as frame %lld, latency %.2f ms (%.2f frames)", string, highrate? (odd? ".1" : ".0") : "", frame, latency/180.0, (double)latency/duration);
+    measured++;
 
     return S_OK;
 }
@@ -494,11 +511,79 @@ void draw_timecode(unsigned char *uyvy, int width, int height, int rowbytes, con
 }
 #endif
 
+/* the default calibration file, in the home directory */
+const char *default_calibration_file()
+{
+    static char filename[PATH_MAX];
+    const char *home = getenv("HOME");
+    snprintf(filename, sizeof(filename), "%s/.dlsync", home? home : ".");
+    return filename;
+}
+
+/* read the card's own delay in a mode from the calibration file, returning false if there is none */
+bool read_calibration(const char *filename, const char *modename, double *video_ms)
+{
+    FILE *file = fopen(filename, "r");
+    if (file==NULL)
+        return false;
+
+    /* each line is a mode then its delays, a line starting # is a comment */
+    char line[256];
+    bool found = false;
+    while (fgets(line, sizeof(line), file)) {
+        char mode[32];
+        double ms;
+        if (line[0]!='#' && sscanf(line, "%31s video %lf", mode, &ms)==2 && strcmp(mode, modename)==0) {
+            *video_ms = ms;
+            found = true;
+        }
+    }
+    fclose(file);
+    return found;
+}
+
+/* write the card's own delay in a mode to the calibration file, keeping the lines for other modes */
+void write_calibration(const char *filename, const char *modename, double video_ms)
+{
+    /* keep the existing lines except the one for this mode */
+    char *kept = NULL;
+    size_t keptlen = 0;
+    FILE *file = fopen(filename, "r");
+    if (file) {
+        char line[256];
+        size_t len = strlen(modename);
+        while (fgets(line, sizeof(line), file)) {
+            if (line[0]=='#' || (strncmp(line, modename, len)==0 && line[len]==' '))
+                continue;
+            size_t n = strlen(line);
+            kept = (char *)realloc(kept, keptlen+n+1);
+            if (kept==NULL)
+                dlexit("error: failed to allocate calibration file buffer");
+            memcpy(kept+keptlen, line, n+1);
+            keptlen += n;
+        }
+        fclose(file);
+    }
+
+    file = fopen(filename, "w");
+    if (file==NULL)
+        dlerror("error: failed to open calibration file \"%s\"", filename);
+    fprintf(file, "# dlsync calibration: video mode, then the card's own delay from output to input in ms\n");
+    if (kept)
+        fputs(kept, file);
+    fprintf(file, "%s video %.3f\n", modename, video_ms);
+    if (fclose(file)!=0)
+        dlerror("error: failed to write calibration file \"%s\"", filename);
+    free(kept);
+}
+
 void usage(int exitcode)
 {
     fprintf(stderr, "%s: measure the latency of a chain from the sdi output back to the sdi input\n", appname);
     fprintf(stderr, "usage: %s [options]\n", appname);
     fprintf(stderr, "  -s, --sizeformat    : specify display size format: 480i,480p,576i,720p,1080i,1080p [optional +framerate] (default: 720p5994)\n");
+    fprintf(stderr, "  -c, --calibrate     : measure the card's own delay with a loopback cable and save it (default: subtract the saved delay)\n");
+    fprintf(stderr, "  -f, --calfile       : calibration file (default: ~/.dlsync)\n");
     fprintf(stderr, "  -i, --index         : index of decklink card to use (default: 0)\n");
     fprintf(stderr, "  -q, --quiet         : decrease verbosity, can be used multiple times\n");
     fprintf(stderr, "  -v, --verbose       : increase verbosity, can be used multiple times\n");
@@ -511,6 +596,8 @@ int main(int argc, char *argv[])
 {
     /* command line defaults */
     const char *sizeformat = "720p5994";
+    bool calibrate = false;
+    const char *calfile = default_calibration_file();
     int index = 0;
     int verbose = 0;
 
@@ -518,6 +605,8 @@ int main(int argc, char *argv[])
     while (1) {
         static struct option long_options[] = {
             {"sizeformat",1, NULL, 's'},
+            {"calibrate", 0, NULL, 'c'},
+            {"calfile",   1, NULL, 'f'},
             {"index",     1, NULL, 'i'},
             {"quiet",     0, NULL, 'q'},
             {"verbose",   0, NULL, 'v'},
@@ -526,13 +615,21 @@ int main(int argc, char *argv[])
             {NULL,        0, NULL,  0 }
         };
 
-        int optchar = getopt_long(argc, argv, "s:i:qvh", long_options, NULL);
+        int optchar = getopt_long(argc, argv, "s:cf:i:qvh", long_options, NULL);
         if (optchar==-1)
             break;
 
         switch (optchar) {
             case 's':
                 sizeformat = optarg;
+                break;
+
+            case 'c':
+                calibrate = true;
+                break;
+
+            case 'f':
+                calfile = optarg;
                 break;
 
             case 'i':
@@ -647,6 +744,17 @@ int main(int argc, char *argv[])
         dlmessage("info: video mode %s", modename);
     free((char *)modename);
 
+    /* the card's own delay in this mode, which calibration measures rather than subtracts */
+    char calmode[32];
+    snprintf(calmode, sizeof(calmode), "%s", describe_display_mode(mode));
+    double calibration_ms = 0.0;
+    if (calibrate)
+        dlmessage("info: calibrating %s, the output must be looped straight back to the input", calmode);
+    else if (read_calibration(calfile, calmode, &calibration_ms))
+        dlmessage("info: subtracting the card's own delay of %.3f ms from %s", calibration_ms, calfile);
+    else
+        dlmessage("warning: no calibration for %s in %s, the latency includes the card's own delay", calmode, calfile);
+
     /* frame duration in 180kHz */
     sts_t duration = llround(180000.0 * framerate_duration / framerate_scale);
 
@@ -687,6 +795,7 @@ int main(int argc, char *argv[])
     the_capture.highrate = highrate;
     the_capture.sd = sd;
     the_capture.verbose = verbose;
+    the_capture.calibration = llround(calibration_ms*180.0);
     if (input->SetCallback(&the_capture)!=S_OK)
         dlexit("error: could not set input callback object");
     result = input->EnableVideoInput(mode->GetDisplayMode(), bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection);
@@ -732,6 +841,11 @@ int main(int argc, char *argv[])
         ringbuf[i] = (unsigned char *)voidptr;
     }
 
+    /* samples of the offset of the input's clock from the output stream time */
+    sts_t best_offset = 0, best_spread = 0, offset_min = 0, offset_max = 0, spread_max = 0;
+    int window = 0;
+    unsigned clock_samples = 0;
+
     /* main loop, which prerolls frames without waiting until playback starts */
     sem_init(&sem, 0, 0);
     unsigned scheduled = 0;
@@ -773,6 +887,34 @@ int main(int argc, char *argv[])
             /* keep the audio buffer filled, audio is timed in samples rather than 180kHz so every sample time is exact */
             top_up_audio(output, &tone, started);
 
+            /* relate the stream time to the input's clock, which times the received frames, publishing the sample of
+               each second whose clock reads were closest together so the offset follows any drift between the two */
+            if (started) {
+                BMDTimeValue hw1, hw2, streamtime, timeinframe, ticksperframe;
+                double speed;
+                if (input->GetHardwareReferenceClock(180000, &hw1, &timeinframe, &ticksperframe)==S_OK &&
+                    output->GetScheduledStreamTime(180000, &streamtime, &speed)==S_OK &&
+                    input->GetHardwareReferenceClock(180000, &hw2, &timeinframe, &ticksperframe)==S_OK && speed>0.0) {
+                    sts_t offset = (hw1+hw2)/2 - streamtime;
+                    sts_t spread = hw2 - hw1;
+                    if (window==0 || spread<=best_spread) {
+                        best_offset = offset;
+                        best_spread = spread;
+                    }
+                    if (++window==fps) {
+                        clock_offset = best_offset;
+                        clock_valid = true;
+                        window = 0;
+
+                        /* the range of the published offsets shows any drift between the stream time and the clock */
+                        offset_min = clock_samples? mmin(offset_min, best_offset) : best_offset;
+                        offset_max = clock_samples? mmax(offset_max, best_offset) : best_offset;
+                        spread_max = clock_samples? mmax(spread_max, best_spread) : best_spread;
+                        clock_samples++;
+                    }
+                }
+            }
+
             /* start playback once prerolled, then the input so every frame received was sent in this run */
             if (!started && scheduled==PREROLL_FRAMES) {
                 result = output->EndAudioPreroll();
@@ -787,7 +929,7 @@ int main(int argc, char *argv[])
                 started = true;
 
                 if (verbose>=0)
-                    dlmessage("press q to exit");
+                    dlmessage(calibrate? "press q to exit calibration and save, when result looks stable" : "press q to exit");
             }
         }
     }
@@ -807,10 +949,23 @@ int main(int argc, char *argv[])
         dlmessage("info: displayed %d frames, %d late, %d dropped", completed, late, dropped);
     if (verbose>=1)
         dlmessage("info: received %u frames, %u without timecode", the_capture.received, the_capture.untimed);
-    if (the_capture.measured)
-        dlmessage("delay %lld frames", the_capture.delay);
-    else
-        dlmessage("no delay measured, %s", the_capture.received? "no timecode was received" : "no input signal was received");
+    if (verbose>=1 && clock_samples)
+        dlmessage("info: over %u seconds the stream time moved %.3f ms against the input clock, each second read within %.3f ms", clock_samples, (offset_max-offset_min)/180.0, spread_max/180.0);
+    if (the_capture.measured) {
+        double mean = the_capture.sum / 180.0 / the_capture.measured;
+        dlmessage("latency %.2f ms (%.2f frames), min %.2f ms, max %.2f ms, over %u frames", mean, mean*180.0/duration, the_capture.min/180.0, the_capture.max/180.0, the_capture.measured);
+
+        /* save the card's own delay */
+        if (calibrate) {
+            if (mean*180.0 > 3*duration)
+                dlmessage("warning: %.2f ms is long for a loopback cable, is a chain still connected?", mean);
+            write_calibration(calfile, calmode, mean);
+            dlmessage("saved the card's own delay in %s to %s", calmode, calfile);
+        }
+    } else
+        dlmessage("no latency measured, %s", the_capture.received? "no timecode was received" : "no input signal was received");
+    if (calibrate && !the_capture.measured)
+        dlmessage("warning: nothing saved to %s", calfile);
 
     /* tidy up */
     for (int i=0; i<RING_FRAMES; i++)
