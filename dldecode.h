@@ -237,6 +237,9 @@ public:
     virtual int attach(dlformat *format);
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
 
+protected:
+    bool weave_field(unsigned char *buffer);
+
 public:
     virtual const char *description() { return codeccontext->codec->name; }
 
@@ -253,6 +256,12 @@ protected:
     const unsigned char *ptr;
     int got_frame;
 
+    /* field coding, where each picture is one field and two are woven into a frame */
+    bool fields;
+    int first_field;        /* parity of the first field of each frame, 1 for top, -1 until known */
+    bool pending;           /* the first field of the frame has been written */
+    long long pending_pts;  /* timestamp of the first field */
+
     /* error string */
     char *errorstring;
 };
@@ -265,6 +274,9 @@ public:
 
     virtual int attach(dlformat *format);
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
+
+protected:
+    bool weave_field(unsigned char *buffer);
 
 public:
     virtual const char *description() { return codeccontext->codec->name; }

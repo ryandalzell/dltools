@@ -285,6 +285,19 @@ Decoders produce planar YUV (`I420`/`I422`/`I444`, or `YU15`/`YU20` for 10-bit) 
 used where available with hand-written fallbacks in the same file. Field-based
 variants (`convert_top_field_*`, `convert_bot_field_*`) exist for interlaced output.
 
+HEVC has no interlaced coding tools, so interlaced HEVC is coded as fields, each a picture of
+half the height, flagged by the `pic_struct` SEI. ffmpeg's HEVC decoder marks only such a
+picture as interlaced (with `AV_FRAME_FLAG_TOP_FIELD_FIRST` on a top field), so `dlffvideo`
+takes that as field coding: it reports twice the height at half the picture rate, and
+`weave_field()` writes each field into every other row with `convert_yuv_uyvy_rows` or
+`convert_yuv10_v210_rows`, which take the plane strides and an output row pitch. A frame
+starts with a field of the parity decoded first, is timed by its first field, and a lone
+field is skipped. 720x240 fields therefore play as 480i29.97 (in the 486 line NTSC mode, as
+a frame-coded 480i picture does) and 1920x540 as 1080i. `dlhevc` (libde265) does not do
+this. A packet can leave more than one picture in the decoder, so `decode()` takes a
+picture already held before sending another packet, or `avcodec_send_packet` returns
+EAGAIN.
+
 ### Playout, threading and buffers
 
 `dlplay` runs three concurrent things: the main thread decodes and schedules frames;

@@ -115,7 +115,7 @@ dlconv.o: dlconv.cpp dlutil.h /usr/local/decklink/include/DeckLinkAPI.h \
  /usr/local/decklink/include/DeckLinkAPIModes.h \
  /usr/local/decklink/include/DeckLinkAPIDiscovery.h \
  /usr/local/decklink/include/DeckLinkAPIConfiguration.h \
- /usr/local/decklink/include/DeckLinkAPIDeckControl.h
+ /usr/local/decklink/include/DeckLinkAPIDeckControl.h dlconv.h
 dldecode.o: dldecode.cpp dldecode.h dlutil.h \
  /usr/local/decklink/include/DeckLinkAPI.h \
  /usr/local/decklink/include/LinuxCOM.h \

@@ -1206,6 +1206,10 @@ void dlffvideo::init()
     size = 0;
     ptr = NULL;
     got_frame = 0;
+    fields = false;
+    first_field = -1;
+    pending = false;
+    pending_pts = -1ll;
     errorstring = (char *) malloc(AV_ERROR_MAX_STRING_SIZE);
     codecid = AV_CODEC_ID_H264; /* default codec is h.264 */
 }
@@ -1305,6 +1309,13 @@ int dlffvideo::attach(dlformat* f)
     width = codeccontext->width;
     height = codeccontext->height;
     interlaced = codeccontext->field_order!=AV_FIELD_PROGRESSIVE && codeccontext->field_order!=AV_FIELD_UNKNOWN;
+
+    /* hevc codes interlaced video as separate fields, and ffmpeg flags only such a picture as interlaced */
+    fields = codecid==AV_CODEC_ID_HEVC && got_frame && (frame->flags & AV_FRAME_FLAG_INTERLACED);
+    if (fields) {
+        height *= 2;
+        interlaced = true;
+    }
     switch (codeccontext->pix_fmt) {
         //case AV_PIX_FMT_YUV444P  : pixelformat = I444; break;
         case AV_PIX_FMT_YUV422P  :
@@ -1317,6 +1328,8 @@ int dlffvideo::attach(dlformat* f)
         default : dlexit("unknown chroma format: %s", av_get_pix_fmt_name(codeccontext->pix_fmt));
     }
     framerate = av_q2d(codeccontext->framerate);
+    if (fields)
+        framerate /= 2.0;
     /* h.264 doesn't require timing info in elementary stream */
     if (framerate<0.1) {
         framerate = 30000.0/1001.0;
@@ -1328,6 +1341,43 @@ int dlffvideo::attach(dlformat* f)
         dlmessage("video format is %dx%d%c%.2f", width, height, interlaced? 'i' : 'p', framerate);
 
     return 0;
+}
+
+/* weave the field just decoded into the frame, returning true when it completes the frame */
+bool dlffvideo::weave_field(unsigned char *buffer)
+{
+    const bool is8bit = pixelformat_is_8bit(pixelformat);
+    const int rowbytes = is8bit? width*2 : ((width+47)/48)*128;
+    const int top = (frame->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST)? 1 : 0;
+
+    /* each frame starts with a field of the parity decoded first, a lone field is skipped */
+    if (first_field<0)
+        first_field = top;
+    if (!pending && top!=first_field) {
+        if (verbose>=1)
+            dlmessage("warning: skipped a %s field which has no first field", top? "top" : "bottom");
+        return false;
+    }
+    if (pending && top==first_field) {
+        if (verbose>=1)
+            dlmessage("warning: skipped a %s field which has no second field", top? "top" : "bottom");
+        pending = false;
+    }
+
+    /* the field goes into every other row, the top field into the first */
+    unsigned char *out = buffer + (top? 0 : rowbytes);
+    if (is8bit)
+        convert_yuv_uyvy_rows((const unsigned char **)frame->data, frame->linesize, out, rowbytes*2, width, height/2, pixelformat);
+    else
+        convert_yuv10_v210_rows((const unsigned char **)frame->data, frame->linesize, out, rowbytes*2, width, height/2, pixelformat);
+
+    if (!pending) {
+        pending = true;
+        pending_pts = frame->pts;
+        return false;
+    }
+    pending = false;
+    return true;
 }
 
 decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
@@ -1357,8 +1407,14 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
                 got_frame = 0;
                 last_sts = -1ll;
                 frames_since_pts = 0;
+                first_field = -1;
+                pending = false;
             }
         }
+
+        /* take a picture the decoder already holds before sending it more, as a packet can give two */
+        if (!got_frame && avcodec_receive_frame(codeccontext, frame)==0)
+            got_frame = 1;
 
         /* use the parser to split the data into frames */
         if (!got_frame) {
@@ -1374,7 +1430,7 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
                 packet->pos = parser->pos;
                 ret = avcodec_send_packet(codeccontext, packet);
                 if (ret < 0)
-                    dlexit("failed to send a packet for decoding");
+                    dlexit("failed to send a packet for decoding: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret));
 
                 while (ret >= 0) {
                     ret = avcodec_receive_frame(codeccontext, frame);
@@ -1395,7 +1451,16 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
             results.decode_time = decode - start;
 
             /* copy frame to the output buffer, 10-bit formats are packed as v210 */
-            if (pixelformat_is_8bit(pixelformat)) {
+            sts_t sts = frame->pts;
+            if (fields) {
+                /* weave a field into every other row, and wait for the second field of the frame */
+                if (!weave_field(uyvy)) {
+                    got_frame = 0;
+                    continue;
+                }
+                sts = pending_pts;
+                results.size = pixelformat_is_8bit(pixelformat)? width*height*2 : ((width+47)/48)*128 * height;
+            } else if (pixelformat_is_8bit(pixelformat)) {
                 convert_yuv_uyvy((const unsigned char **)frame->data, uyvy, width, height, pixelformat);
                 results.size = width*height*2;
             } else {
@@ -1404,7 +1469,6 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
             }
 
             /* get timestamp from decoder */
-            sts_t sts = frame->pts;
             if (sts<0 || sts==last_sts) {
                 /* extrapolate a timestamp if necessary */
                 frames_since_pts++;

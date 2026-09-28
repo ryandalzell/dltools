@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "dlutil.h"
+#include "dlconv.h"
 
 #ifdef HAVE_LIBYUV
 #include <libyuv.h>
@@ -65,7 +66,13 @@ static inline uint32_t sample10(const uint16_t *plane, int i, int n)
 /* pack 10-bit planar yuv in separate planes into v210, honouring the plane strides */
 void convert_yuv10_v210(const unsigned char *yuv[3], const int stride[3], unsigned char *v210, int width, int height, pixelformat_t pixelformat)
 {
-    const int rowbytes = ((width+47)/48)*128;
+    convert_yuv10_v210_rows(yuv, stride, v210, ((width+47)/48)*128, width, height, pixelformat);
+}
+
+/* pack 10-bit planar yuv into rows of v210 which are rowbytes apart, so a field can be packed into every other row */
+void convert_yuv10_v210_rows(const unsigned char *yuv[3], const int stride[3], unsigned char *v210, int rowbytes, int width, int height, pixelformat_t pixelformat)
+{
+    const int packedbytes = ((width+47)/48)*128;
 
     /* chroma is subsampled vertically in 4:2:0 but not in 4:2:2 */
     const int chroma_shift = pixelformat==YU15? 1 : 0;
@@ -87,7 +94,7 @@ void convert_yuv10_v210(const unsigned char *yuv[3], const int stride[3], unsign
 
         /* clear the padding at the end of the row */
         unsigned char *tail = (unsigned char *) out;
-        memset(tail, 0, v210 + rowbytes*(y+1) - tail);
+        memset(tail, 0, v210 + rowbytes*y + packedbytes - tail);
     }
 }
 
@@ -135,6 +142,33 @@ void convert_yuv_uyvy(const unsigned char *yuv[3], unsigned char *uyvy, int widt
         default  : dlexit("unknown pixel format in conversion: %s", pixelformatname[pixelformat]);
     }
 #endif
+}
+
+/* convert 8-bit planar yuv with the plane strides into rows of uyvy which are rowbytes apart, so a field can be written into every other row */
+void convert_yuv_uyvy_rows(const unsigned char *yuv[3], const int stride[3], unsigned char *uyvy, int rowbytes, int width, int height, pixelformat_t pixelformat)
+{
+#ifdef HAVE_LIBYUV
+    switch (pixelformat) {
+        case I420: libyuv::I420ToUYVY(yuv[0], stride[0], yuv[1], stride[1], yuv[2], stride[2], uyvy, rowbytes, width, height); return;
+        case I422: libyuv::I422ToUYVY(yuv[0], stride[0], yuv[1], stride[1], yuv[2], stride[2], uyvy, rowbytes, width, height); return;
+        default  : break;
+    }
+#endif
+    if (pixelformat!=I420 && pixelformat!=I422)
+        dlexit("unknown pixel format in conversion: %s", pixelformatname[pixelformat]);
+    for (int y=0; y<height; y++) {
+        const int c = pixelformat==I422? y : y/2;
+        const unsigned char *ly = yuv[0] + stride[0]*y;
+        const unsigned char *cb = yuv[1] + stride[1]*c;
+        const unsigned char *cr = yuv[2] + stride[2]*c;
+        unsigned char *out = uyvy + rowbytes*y;
+        for (int x=0; x<width/2; x++) {
+            *(out++) = *(cb++);
+            *(out++) = *(ly++);
+            *(out++) = *(cr++);
+            *(out++) = *(ly++);
+        }
+    }
 }
 
 void convert_i420_uyvy_lumaonly(const unsigned char *i420, unsigned char *uyvy, int width, int height)
