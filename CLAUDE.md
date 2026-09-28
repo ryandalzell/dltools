@@ -136,7 +136,9 @@ Set at the top of the Makefile, not via configure:
 support for ... in this build")`, in both the elementary-stream and transport-stream
 dispatch, so the README's claim of H.264 support only holds while ffmpeg is enabled.
 MPEG-2 falls back to libmpeg2 when ffmpeg is off, so an `FFMPEG=0` build still
-plays MPEG-2 but nothing else beyond raw YUV. HEVC was decoded by libde265 in that
+plays MPEG-2 but nothing else beyond raw YUV. The ffmpeg decoders pad each plane's rows, so their output
+is converted with `frame->linesize`; an SD width such as 720 is not a multiple of the
+padding, and ignoring it sheared the picture, which had looked like an ffmpeg bug in PAL. HEVC was decoded by libde265 in that
 build until ffmpeg's decoder had replaced it in every way, including field coding.
 
 The ffmpeg code targets the current API (verified against ffmpeg 8.0): the decoders

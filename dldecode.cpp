@@ -1179,7 +1179,7 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
                 sts = pending_pts;
                 results.size = pixelformat_is_8bit(pixelformat)? width*height*2 : ((width+47)/48)*128 * height;
             } else if (pixelformat_is_8bit(pixelformat)) {
-                convert_yuv_uyvy((const unsigned char **)frame->data, uyvy, width, height, pixelformat);
+                convert_yuv_uyvy_rows((const unsigned char **)frame->data, frame->linesize, uyvy, width*2, width, height, pixelformat);
                 results.size = width*height*2;
             } else {
                 convert_yuv10_v210((const unsigned char **)frame->data, frame->linesize, uyvy, width, height, pixelformat);
@@ -1367,7 +1367,7 @@ decode_t dlffmpeg::decode(unsigned char *uyvy, size_t uyvysize)
 
             /* copy frame to the output buffer, 10-bit formats are packed as v210 */
             if (pixelformat_is_8bit(pixelformat)) {
-                convert_yuv_uyvy((const unsigned char **)frame->data, uyvy, width, height, pixelformat);
+                convert_yuv_uyvy_rows((const unsigned char **)frame->data, frame->linesize, uyvy, width*2, width, height, pixelformat);
                 results.size = width*height*2;
             } else {
                 convert_yuv10_v210((const unsigned char **)frame->data, frame->linesize, uyvy, width, height, pixelformat);
