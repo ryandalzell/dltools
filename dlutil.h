@@ -34,6 +34,10 @@ typedef enum {
 typedef long long pts_t;        /* presentation timestamp in 90kHz */
 typedef long long sts_t;        /* system timestamp in 180kHz */
 
+/* audio is output on this many channels, reduced to what the card supports, with stereo repeated in each pair */
+#define AUDIO_CHANNELS 8
+#define MAX_AUDIO_CHANNELS 64
+
 #define mmax(a, b) ((a) > (b) ? (a) : (b))
 #define mmin(a, b) ((a) < (b) ? (a) : (b))
 
@@ -45,6 +49,9 @@ void dlexit(const char *format, ...);
 void dlmessage(const char *format, ...);
 void dlstatus(const char *format, ...);
 void dlabort(const char *format, ...);
+
+int audio_channels(IDeckLink *card, int wanted);
+void duplicate_stereo(int16_t *out, const int16_t *stereo, unsigned frames, int channels);
 
 long parse_int_arg(const char *string, long min, long max, const char *name);
 float parse_framerate_arg(const char *string, const char *name);

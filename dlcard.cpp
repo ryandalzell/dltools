@@ -53,6 +53,8 @@ typedef struct {
     double gain;            /* gain of the next sample, ramped towards target */
     double target;          /* 1 when playing, 0 when muted */
     bool underrun;          /* an underrun has been reported */
+    int channels;           /* channels of audio output, each with the tone */
+    int16_t *buf;           /* a block of samples for every channel */
 } tone_t;
 
 /* timecode of a frame */
@@ -167,8 +169,8 @@ double ramp_gain(double gain, double target, unsigned samples)
     return mmax(gain-step, target);
 }
 
-/* fill a buffer with stereo 16-bit samples of the tone, starting at sample number first */
-void generate_tone(int16_t *buf, long long first, unsigned count, double gain, double target)
+/* fill a buffer with 16-bit samples of the tone in every channel, starting at sample number first */
+void generate_tone(int16_t *buf, int channels, long long first, unsigned count, double gain, double target)
 {
     const double amplitude = 32767.0 * pow(10.0, TONE_LEVEL/20.0);
     for (unsigned i=0; i<count; i++) {
@@ -176,7 +178,8 @@ void generate_tone(int16_t *buf, long long first, unsigned count, double gain, d
         long long n = first + i;
         double cycles = fmod((n/AUDIO_RATE) * TONE_FREQUENCY, 1.0) + (n%AUDIO_RATE) * TONE_FREQUENCY / AUDIO_RATE;
         int16_t sample = lround(gain * amplitude * sin(2.0*M_PI*cycles));
-        buf[2*i] = buf[2*i+1] = sample;
+        for (int c=0; c<channels; c++)
+            buf[channels*i + c] = sample;
         gain = ramp_gain(gain, target, 1);
     }
 }
@@ -194,10 +197,9 @@ void top_up_audio(IDeckLinkOutput *output, tone_t *tone, bool started)
     }
 
     while (buffered<AUDIO_TARGET) {
-        int16_t buf[AUDIO_BLOCK*2];
-        generate_tone(buf, tone->next, AUDIO_BLOCK, tone->gain, tone->target);
+        generate_tone(tone->buf, tone->channels, tone->next, AUDIO_BLOCK, tone->gain, tone->target);
         uint32_t written;
-        result = output->ScheduleAudioSamples(buf, AUDIO_BLOCK, tone->next, AUDIO_RATE, &written);
+        result = output->ScheduleAudioSamples(tone->buf, AUDIO_BLOCK, tone->next, AUDIO_RATE, &written);
         if (result!=S_OK)
             dlapierror(result, "error: failed to schedule audio samples");
 
@@ -506,7 +508,7 @@ void usage(int exitcode)
     fprintf(stderr, "  -o, --text          : display a string in the centre of the image, toggle with o (default: off, card name when toggled on)\n");
     fprintf(stderr, "  -m, --showmode      : display the video mode in the bottom right of the image, toggle with m (default: off)\n");
     fprintf(stderr, "  -t, --timecode      : add timecode to the sdi output and display it at the bottom of the image, toggle display with t (default: off)\n");
-    fprintf(stderr, "  -a, --audio         : add a stereo middle c tone at -20 dBFS, mute with a (default: off)\n");
+    fprintf(stderr, "  -a, --audio         : add a middle c tone at -20 dBFS on 8 channels, mute with a (default: off)\n");
     fprintf(stderr, "  -i, --index         : index of decklink card to use (default: 0)\n");
     fprintf(stderr, "  -q, --quiet         : decrease verbosity, can be used multiple times\n");
     fprintf(stderr, "  -v, --verbose       : increase verbosity, can be used multiple times\n");
@@ -711,9 +713,13 @@ int main(int argc, char *argv[])
         dlapierror(result, "failed to enable video output");
 
     /* set the audio output mode and fill the audio buffer during preroll */
-    tone_t tone = {0, 1.0, 1.0, false};
+    tone_t tone = {0, 1.0, 1.0, false, 0, NULL};
     if (audio) {
-        result = output->EnableAudioOutput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, 2, bmdAudioOutputStreamTimestamped);
+        tone.channels = audio_channels(card, AUDIO_CHANNELS);
+        tone.buf = (int16_t *)malloc(AUDIO_BLOCK*tone.channels*sizeof(int16_t));
+        if (tone.buf==NULL)
+            dlexit("error: failed to allocate audio buffer");
+        result = output->EnableAudioOutput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, tone.channels, bmdAudioOutputStreamTimestamped);
         if (result!=S_OK)
             dlapierror(result, "error: failed to enable audio output");
         result = output->BeginAudioPreroll();
@@ -886,13 +892,14 @@ int main(int argc, char *argv[])
     if (verbose>=1)
         dlmessage("info: displayed %d frames, %d late, %d dropped", completed, late, dropped);
     if (verbose>=1 && audio)
-        dlmessage("info: audio: %lld samples scheduled", tone.next);
+        dlmessage("info: audio: %lld samples scheduled on %d channels", tone.next, tone.channels);
 
     /* tidy up */
     for (int i=0; i<RING_FRAMES; i++)
         ring[i]->Release();
     for (int i=0; i<NUM_CARDS; i++)
         free(cards[i]);
+    free(tone.buf);
 #ifdef HAVE_FREETYPE
     if (timecode)
         tcfont_done(&tcfont);

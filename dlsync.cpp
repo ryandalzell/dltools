@@ -42,14 +42,11 @@ const unsigned AUDIO_BLOCK = 2400;
 const unsigned AUDIO_TARGET = 12000;
 const int TONE_RAMP = 240;                  /* samples over which the tone turns on or off, 5ms */
 
-/* channels of audio received */
-const int CHANNELS = 2;
-
 /* a chain which has to change mode restarts, so it has settled once its latency has stayed within half a frame for this long */
 const int SETTLE_SECONDS = 10;
 
 /* the picture and tone are on for a run of this many seconds of frames then off for the same, the edges being what lipsync is measured from */
-const int CYCLE_SECONDS = 30;
+const int CYCLE_SECONDS = 10;
 
 /* the received level of the tone is its rectified mean over one period, which a linear ramp does not bias, with the
    level when on measured from a quarter of a second after the edge */
@@ -61,6 +58,8 @@ const int PLATEAU_SKIP = AUDIO_RATE/4;
 typedef struct {
     long long next;         /* sample number of the next sample to schedule */
     bool underrun;          /* an underrun has been reported */
+    int channels;           /* channels of audio output, each with the tone */
+    int16_t *buf;           /* a block of samples for every channel */
 } tone_t;
 
 /* timecode of a frame */
@@ -189,7 +188,8 @@ public:
     bool settled;           /* the chain sends the mode sent to it and its latency is steady, set by main if it already did */
     bool discard_first;     /* the chain changed mode, so the first lipsync is left out, set by main */
     unsigned mismatched;    /* frames whose picture disagrees with their timecode */
-    stats_t lipsync[CHANNELS];  /* lipsync in each channel */
+    int channels;           /* channels of audio received, as many as are sent */
+    stats_t lipsync[MAX_AUDIO_CHANNELS];    /* lipsync in each channel */
     unsigned dropouts;      /* frames without timecode after it was first received */
     unsigned repeated;      /* frames whose timecode did not advance */
     unsigned ahead;         /* frames whose timecode was ahead of the output */
@@ -207,7 +207,7 @@ private:
     sts_t raw_latency;      /* the last latency before calibration */
     long long audio_next;   /* sample number expected at the start of the next packet */
     long long audio_filled; /* samples since the audio started or had a gap */
-    channel_t channel[CHANNELS];
+    channel_t channel[MAX_AUDIO_CHANNELS];
     long long video_edge[2];    /* number of the last on and off edges received in the picture */
     double video_time[2];       /* and their arrival times on the input's clock */
     bool disagree;          /* the picture disagrees with the timecode */
@@ -225,9 +225,9 @@ private:
     unsigned steady;        /* frames in a row within half a frame of the latency at their start */
     sts_t steady_latency;
     sts_t last_latency;
-    double last_lipsync[CHANNELS];
-    bool has_lipsync[CHANNELS];
-    long long result_edge[CHANNELS];    /* the edge of the last lipsync in each channel */
+    double last_lipsync[MAX_AUDIO_CHANNELS];
+    bool has_lipsync[MAX_AUDIO_CHANNELS];
+    long long result_edge[MAX_AUDIO_CHANNELS];  /* the edge of the last lipsync in each channel */
     long long reported_edge;    /* the last edge reported with a message */
     void report_measurement(long long e, bool incomplete);
 };
@@ -437,7 +437,7 @@ HRESULT capture::VideoInputFrameArrived(IDeckLinkVideoInputFrame *videoframe, ID
         }
         video_edge[e%2] = e;
         video_time[e%2] = arrival;
-        for (int ch=0; ch<CHANNELS; ch++)
+        for (int ch=0; ch<channels; ch++)
             match_edge(ch);
     }
 
@@ -446,11 +446,17 @@ HRESULT capture::VideoInputFrameArrived(IDeckLinkVideoInputFrame *videoframe, ID
     return S_OK;
 }
 
-/* format a value for each channel as [1: v, 2: v], with - for a channel without one */
-int format_channels(char *s, size_t size, const double *value, const bool *has)
+/* format a value for each channel as [1: v, 2: v], with - for a channel without one, or if brief and they all agree as [1-8: v] */
+int format_channels(char *s, size_t size, const double *value, const bool *has, int channels, bool brief)
 {
+    bool agree = true;
+    for (int ch=0; ch<channels; ch++)
+        agree &= has[ch] && fabs(value[ch]-value[0])<0.05;
+    if (brief && agree && channels>1)
+        return snprintf(s, size, "[1-%d: %+.2f]", channels, value[0]);
+
     size_t len = snprintf(s, size, "[");
-    for (int ch=0; ch<CHANNELS && len<size; ch++) {
+    for (int ch=0; ch<channels && len<size; ch++) {
         if (has[ch])
             len += snprintf(s+len, size-len, "%s%d: %+.2f", ch? ", " : "", ch+1, value[ch]);
         else
@@ -470,16 +476,6 @@ void capture::show_status(const char *note)
     size_t len = 0;
     if (measured) {
         len += snprintf(line+len, sizeof(line)-len, "end-to-end latency %.2f ms", last_latency/180.0);
-        bool any = false;
-        for (int ch=0; ch<CHANNELS; ch++)
-            any |= has_lipsync[ch];
-        if (any) {
-            len += snprintf(line+len, sizeof(line)-len, ", lipsync ");
-            if (len<sizeof(line))
-                len += format_channels(line+len, sizeof(line)-len, last_lipsync, has_lipsync);
-            if (len<sizeof(line))
-                len += snprintf(line+len, sizeof(line)-len, " ms");
-        }
     }
     if (len<sizeof(line)) {
         if (note)
@@ -567,8 +563,8 @@ void capture::process_audio(IDeckLinkAudioInputPacket *packet, sts_t in_offset)
 
     const int16_t *samples = (const int16_t *)bytes;
     for (long i=0; i<count; i++) {
-        for (int ch=0; ch<CHANNELS; ch++)
-            detect_edge(ch, samples[CHANNELS*i+ch], first+i, in_offset);
+        for (int ch=0; ch<channels; ch++)
+            detect_edge(ch, samples[channels*i+ch], first+i, in_offset);
         audio_filled++;
     }
 }
@@ -685,17 +681,17 @@ void capture::match_edge(int ch)
 /* report the latency and the lipsync of an edge once every channel has it, or with what there is when the next edge comes */
 void capture::report_measurement(long long e, bool incomplete)
 {
-    bool has[CHANNELS];
+    bool has[MAX_AUDIO_CHANNELS];
     bool any = false, all = true;
-    for (int ch=0; ch<CHANNELS; ch++) {
+    for (int ch=0; ch<channels; ch++) {
         has[ch] = result_edge[ch]==e;
         any |= has[ch];
         all &= has[ch];
     }
     if (e<=0 || e==reported_edge || !any || (!all && !incomplete))
         return;
-    char values[160];
-    format_channels(values, sizeof(values), last_lipsync, has);
+    char values[1024];
+    format_channels(values, sizeof(values), last_lipsync, has, channels, false);
     dlmessage("info: end-to-end latency %.2f ms, lipsync %s ms", last_latency/180.0, values);
     reported_edge = e;
 }
@@ -767,8 +763,8 @@ double tone_gain(long long n, double samples_per_frame, int cycle)
     return ramp(x) - ramp(x-run) + ramp(x-2.0*run);
 }
 
-/* fill a buffer with stereo 16-bit samples of the tone, starting at sample number first */
-void generate_tone(int16_t *buf, long long first, unsigned count, double samples_per_frame, int cycle)
+/* fill a buffer with 16-bit samples of the tone in every channel, starting at sample number first */
+void generate_tone(int16_t *buf, int channels, long long first, unsigned count, double samples_per_frame, int cycle)
 {
     const double amplitude = 32767.0 * pow(10.0, TONE_LEVEL/20.0);
     for (unsigned i=0; i<count; i++) {
@@ -776,7 +772,8 @@ void generate_tone(int16_t *buf, long long first, unsigned count, double samples
         long long n = first + i;
         double cycles = fmod((n/AUDIO_RATE) * TONE_FREQUENCY, 1.0) + (n%AUDIO_RATE) * TONE_FREQUENCY / AUDIO_RATE;
         int16_t sample = lround(tone_gain(n, samples_per_frame, cycle) * amplitude * sin(2.0*M_PI*cycles));
-        buf[2*i] = buf[2*i+1] = sample;
+        for (int c=0; c<channels; c++)
+            buf[channels*i + c] = sample;
     }
 }
 
@@ -793,10 +790,9 @@ void top_up_audio(IDeckLinkOutput *output, tone_t *tone, bool started, double sa
     }
 
     while (buffered<AUDIO_TARGET) {
-        int16_t buf[AUDIO_BLOCK*2];
-        generate_tone(buf, tone->next, AUDIO_BLOCK, samples_per_frame, cycle);
+        generate_tone(tone->buf, tone->channels, tone->next, AUDIO_BLOCK, samples_per_frame, cycle);
         uint32_t written;
-        result = output->ScheduleAudioSamples(buf, AUDIO_BLOCK, tone->next, AUDIO_RATE, &written);
+        result = output->ScheduleAudioSamples(tone->buf, AUDIO_BLOCK, tone->next, AUDIO_RATE, &written);
         if (result!=S_OK)
             dlapierror(result, "error: failed to schedule audio samples");
 
@@ -1266,10 +1262,13 @@ int main(int argc, char *argv[])
         dlapierror(result, "failed to enable video output");
 
     /* set the audio output mode and fill the audio buffer during preroll */
-    tone_t tone = {0, false};
+    tone_t tone = {0, false, audio_channels(card, AUDIO_CHANNELS), NULL};
+    tone.buf = (int16_t *)malloc(AUDIO_BLOCK*tone.channels*sizeof(int16_t));
+    if (tone.buf==NULL)
+        dlexit("error: failed to allocate audio buffer");
     const int cycle = CYCLE_SECONDS*fps;
     const double samples_per_frame = (double)duration*AUDIO_RATE/180000;
-    result = output->EnableAudioOutput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, 2, bmdAudioOutputStreamTimestamped);
+    result = output->EnableAudioOutput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, tone.channels, bmdAudioOutputStreamTimestamped);
     if (result!=S_OK)
         dlapierror(result, "error: failed to enable audio output");
     result = output->BeginAudioPreroll();
@@ -1299,7 +1298,8 @@ int main(int argc, char *argv[])
         dlapierror(result, "error: failed to enable video input");
     if (config->SetInt(bmdDeckLinkConfigAudioInputConnection, bmdAudioConnectionEmbedded)!=S_OK)
         dlmessage("warning: failed to set card configuration to input embedded audio");
-    result = input->EnableAudioInput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, CHANNELS);
+    the_capture.channels = tone.channels;
+    result = input->EnableAudioInput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, the_capture.channels);
     if (result!=S_OK)
         dlapierror(result, "error: failed to enable audio input");
 
@@ -1472,7 +1472,7 @@ int main(int argc, char *argv[])
 
     /* the level of the tone, which shows any gain in the chain, and any channel without edges while the picture had one */
     if (the_capture.measured)
-        for (int ch=0; ch<CHANNELS; ch++) {
+        for (int ch=0; ch<the_capture.channels; ch++) {
             bool edges;
             double dbfs = the_capture.tone_dbfs(ch, &edges);
             if (!edges && the_capture.edge_measured())
@@ -1492,9 +1492,9 @@ int main(int argc, char *argv[])
         dlmessage("  no end-to-end latency measured, %s", the_capture.received? "no timecode was received" : "no input signal was received");
     double lipsync_sum = 0.0;
     unsigned lipsync_count = 0, measurements = 0;
-    double mean[CHANNELS], min[CHANNELS], max[CHANNELS];
-    bool has[CHANNELS];
-    for (int ch=0; ch<CHANNELS; ch++) {
+    double mean[MAX_AUDIO_CHANNELS], min[MAX_AUDIO_CHANNELS], max[MAX_AUDIO_CHANNELS];
+    bool has[MAX_AUDIO_CHANNELS];
+    for (int ch=0; ch<the_capture.channels; ch++) {
         stats_t *l = &the_capture.lipsync[ch];
         has[ch] = l->count>0;
         mean[ch] = has[ch]? l->sum/l->count : 0.0;
@@ -1505,10 +1505,10 @@ int main(int argc, char *argv[])
         lipsync_count += l->count;
     }
     if (lipsync_count) {
-        char values[160], low[160], high[160];
-        format_channels(values, sizeof(values), mean, has);
-        format_channels(low, sizeof(low), min, has);
-        format_channels(high, sizeof(high), max, has);
+        char values[1024], low[1024], high[1024];
+        format_channels(values, sizeof(values), mean, has, the_capture.channels, false);
+        format_channels(low, sizeof(low), min, has, the_capture.channels, false);
+        format_channels(high, sizeof(high), max, has, the_capture.channels, false);
         dlmessage("  lipsync %s ms over %u measurement%s", values, measurements, measurements==1? "" : "s");
         dlmessage("  lipsync from %s to %s ms", low, high);
     }
@@ -1535,6 +1535,7 @@ int main(int argc, char *argv[])
         ring[i]->Release();
     free(background[0]);
     free(background[1]);
+    free(tone.buf);
 #ifdef HAVE_FREETYPE
     tcfont_done(&tcfont);
     FT_Done_FreeType(library);

@@ -24,7 +24,7 @@ change what the next frame gets, so a toggle appears after the preroll depth.
 Timecode is drop frame at 29.97 and 59.94 (flag on every frame, `;` on screen); 23.98
 has no drop frame form and counts non-drop.
 
-`-a` adds a stereo middle C tone at -20 dBFS. Like the timecode it is computed from its
+`-a` adds a middle C tone at -20 dBFS on every audio channel. Like the timecode it is computed from its
 sample number, so a partial `ScheduleAudioSamples` write needs no leftover buffer: the next
 block starts from the first sample not written. It is scheduled with a timescale of 48000
 and the sample number as the stream time, the one exception to the 180kHz convention,
@@ -249,7 +249,22 @@ adding accessors.
 `decode()` writes converted pixels directly into a caller-supplied Decklink buffer
 and returns a `decode_t` carrying the size and the timestamp. `decode_t::size` is
 a count of **bytes** for audio as well as video, so `dlplay` divides it by four to
-get sample frames for a stereo 16-bit output.
+get sample frames of the decoders' stereo 16-bit output.
+
+### Audio channels
+
+`dlplay`, `dlcard` and `dlsync` output `AUDIO_CHANNELS` (8, in `dlutil.h`) channels of
+audio, with no option yet to change it. `audio_channels()` in `dlutil.cpp` reduces that to
+the most the card reports in `BMDDeckLinkMaximumAudioChannels`, from the counts the SDK
+accepts (2, 8, 16, 32, 64), so a card with 16 or more is ready for a larger count and a
+card with fewer falls back with a message. For now every pair carries the same audio:
+`dlplay` copies each decoded stereo frame into every pair with `duplicate_stereo()`, into a
+separate output buffer, so the scheduling offsets are in frames of `aud_channels*2` bytes;
+`dlcard` and `dlsync` write the tone into every channel, from a block buffer allocated for
+the channel count. `dlsync` captures as many channels as it sends, measuring lipsync in
+each, with its arrays sized for `MAX_AUDIO_CHANNELS` (64). Changing the channel count on
+the SDI makes the enc->dec chain tested restart, like a change of mode.
+
 
 ### Timebases
 

@@ -324,6 +324,10 @@ int main(int argc, char *argv[])
     unsigned char *aud_data = NULL;
     uint32_t aud_rem = 0;              /* audio samples remaining to enqueue */
 
+    /* decoded stereo audio repeated in each pair of the output channels */
+    int aud_channels = 2;
+    int16_t *aud_out = NULL;
+
     /* transport stream variables */
     int vid_pid = 0;
     int aud_pid = 0;
@@ -959,9 +963,14 @@ int main(int argc, char *argv[])
                 dlapierror(result, "failed to enable video output");
         }
 
-        /* set the audio output mode */
+        /* set the audio output mode, with a buffer for the decoded stereo repeated in each pair of channels */
         if (audio) {
-            HRESULT result = output->EnableAudioOutput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, 2, bmdAudioOutputStreamTimestamped);
+            aud_channels = audio_channels(card, AUDIO_CHANNELS);
+            free(aud_out);
+            aud_out = (int16_t *)malloc(aud_size/4*aud_channels*sizeof(int16_t));
+            if (aud_out==NULL)
+                dlexit("error: failed to allocate audio output buffer");
+            HRESULT result = output->EnableAudioOutput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, aud_channels, bmdAudioOutputStreamTimestamped);
             if (result != S_OK) {
                 switch (result) {
                     case E_ACCESSDENIED : fprintf(stderr, "%s: error: access denied when enabling audio output\n", appname); break;
@@ -1087,7 +1096,7 @@ int main(int argc, char *argv[])
 
                     /* resume the audio output */
                     if (audio) {
-                        HRESULT result = output->EnableAudioOutput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, 2, bmdAudioOutputStreamTimestamped);
+                        HRESULT result = output->EnableAudioOutput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, aud_channels, bmdAudioOutputStreamTimestamped);
                         if (result != S_OK) {
                             dlmessage("error: failed to resume audio output\n");
                         }
@@ -1258,7 +1267,7 @@ int main(int argc, char *argv[])
                     uint32_t scheduled;
                     /* the unscheduled samples are at the end of what was decoded,
                        not at the end of the buffer it was decoded into */
-                    HRESULT result = output->ScheduleAudioSamples(aud_data+aud.size-aud_rem*4, aud_rem, aud.timestamp, 180000, &scheduled); // FIXME timestamp
+                    HRESULT result = output->ScheduleAudioSamples(aud_out + (aud.size/4-aud_rem)*aud_channels, aud_rem, aud.timestamp, 180000, &scheduled); // FIXME timestamp
                     if (result != S_OK) {
                         dlmessage("error: block %d: failed to re-schedule audio data", blocknum);
                         delete audio;
@@ -1289,10 +1298,11 @@ int main(int argc, char *argv[])
                     audio_end_time = mmax(aud.timestamp, audio_end_time);
 
                     /* buffer decoded audio */
-                    /* the audio output is enabled with two channels of 16-bit
-                       samples, so a sample frame is four bytes */
+                    /* the decoders produce two channels of 16-bit samples, so a
+                       sample frame is four bytes, repeated in each pair of the output */
                     uint32_t scheduled, num_sample_frames = aud.size/4;
-                    HRESULT result = output->ScheduleAudioSamples(aud_data, num_sample_frames, aud.timestamp, 180000, &scheduled);
+                    duplicate_stereo(aud_out, (const int16_t *)aud_data, num_sample_frames, aud_channels);
+                    HRESULT result = output->ScheduleAudioSamples(aud_out, num_sample_frames, aud.timestamp, 180000, &scheduled);
                     //dlmessage("buffer level %d: decoded %d bytes at timestamp %s and scheduled %d samples", buffered, aud.size, describe_sts(aud.timestamp), scheduled);
                     if (result != S_OK) {
                         dlmessage("error: block %d: failed to schedule audio data", blocknum);
@@ -1411,6 +1421,7 @@ int main(int argc, char *argv[])
     iterator->Release();
     if (aud_data)
         free(aud_data);
+    free(aud_out);
 
     /* report statistics */
     if (verbose>=0)

@@ -21,7 +21,7 @@ static int not_at_home;
 void dlapierror(HRESULT result, const char *format, ...)
 {
     va_list ap;
-    char message[256];
+    char message[1024];
     int len = 0;
 
     /* move cursor to home position */
@@ -64,7 +64,7 @@ void dlapierror(HRESULT result, const char *format, ...)
 void dlerror(const char *format, ...)
 {
     va_list ap;
-    char message[256];
+    char message[1024];
     int len = 0;
     int exitcode = errno;
 
@@ -89,7 +89,7 @@ void dlerror(const char *format, ...)
 void dlexit(const char *format, ...)
 {
     va_list ap;
-    char message[256];
+    char message[1024];
     int len = 0;
 
     /* move cursor to home position */
@@ -113,7 +113,7 @@ void dlexit(const char *format, ...)
 void dlmessage(const char *format, ...)
 {
     va_list ap;
-    char message[256];
+    char message[1024];
     int len = 0;
 
     /* move cursor to home position */
@@ -135,7 +135,7 @@ void dlmessage(const char *format, ...)
 void dlstatus(const char *format, ...)
 {
     va_list ap;
-    char message[256];
+    char message[1024];
 
     /* start output with carriage return and application name */
     int len = snprintf(message, sizeof(message), "\r%s: ", appname);
@@ -153,7 +153,7 @@ void dlstatus(const char *format, ...)
 void dlabort(const char *format, ...)
 {
     va_list ap;
-    char message[256];
+    char message[1024];
     int len = 0;
 
     /* move cursor to home position */
@@ -175,6 +175,36 @@ void dlabort(const char *format, ...)
 }
 
 /* parse an integer command line argument, exits on any error */
+/* the number of audio channels to use, the most up to the number wanted which both the sdk and the card support */
+int audio_channels(IDeckLink *card, int wanted)
+{
+    static const int counts[] = {64, 32, 16, 8, 2};
+    int64_t maximum = 2;
+    IDeckLinkProfileAttributes *attributes;
+    if (card->QueryInterface(IID_IDeckLinkProfileAttributes, (void **)&attributes)==S_OK) {
+        if (attributes->GetInt(BMDDeckLinkMaximumAudioChannels, &maximum)!=S_OK)
+            maximum = 2;
+        attributes->Release();
+    }
+    for (unsigned i=0; i<sizeof(counts)/sizeof(counts[0]); i++)
+        if (counts[i]<=wanted && counts[i]<=maximum) {
+            if (counts[i]<wanted)
+                dlmessage("info: the card has %lld audio channels, so %d are used rather than %d", (long long)maximum, counts[i], wanted);
+            return counts[i];
+        }
+    return 2;
+}
+
+/* copy stereo 16-bit sample frames into each pair of channels of the output frames */
+void duplicate_stereo(int16_t *out, const int16_t *stereo, unsigned frames, int channels)
+{
+    for (unsigned i=0; i<frames; i++)
+        for (int c=0; c<channels; c+=2) {
+            out[i*channels + c] = stereo[2*i];
+            out[i*channels + c+1] = stereo[2*i+1];
+        }
+}
+
 long parse_int_arg(const char *string, long min, long max, const char *name)
 {
     if (string==NULL || *string=='\0')
