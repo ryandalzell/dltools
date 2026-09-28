@@ -446,25 +446,60 @@ HRESULT capture::VideoInputFrameArrived(IDeckLinkVideoInputFrame *videoframe, ID
     return S_OK;
 }
 
-/* format a value for each channel as [1: v, 2: v], with - for a channel without one, or if brief and they all agree as [1-8: v] */
-int format_channels(char *s, size_t size, const double *value, const bool *has, int channels, bool brief)
+/* format a value for each channel as [1: v, 2: v], with - for a channel without one, and a pair which agrees to the digits shown as [1-2: v] */
+int format_channels(char *s, size_t size, const double *value, const bool *has, int channels)
 {
-    bool agree = true;
-    for (int ch=0; ch<channels; ch++)
-        agree &= has[ch] && fabs(value[ch]-value[0])<0.05;
-    if (brief && agree && channels>1)
-        return snprintf(s, size, "[1-%d: %+.2f]", channels, value[0]);
-
     size_t len = snprintf(s, size, "[");
     for (int ch=0; ch<channels && len<size; ch++) {
-        if (has[ch])
-            len += snprintf(s+len, size-len, "%s%d: %+.2f", ch? ", " : "", ch+1, value[ch]);
-        else
-            len += snprintf(s+len, size-len, "%s%d: -", ch? ", " : "", ch+1);
+        char v[32], w[32];
+        snprintf(v, sizeof(v), has[ch]? "%+.2f" : "-", value[ch]);
+        if (ch%2==0 && ch+1<channels) {
+            snprintf(w, sizeof(w), has[ch+1]? "%+.2f" : "-", value[ch+1]);
+            if (strcmp(v, w)==0) {
+                len += snprintf(s+len, size-len, "%s%d-%d: %s", ch? ", " : "", ch+1, ch+2, v);
+                ch++;
+                continue;
+            }
+        }
+        len += snprintf(s+len, size-len, "%s%d: %s", ch? ", " : "", ch+1, v);
     }
     if (len<size)
         len += snprintf(s+len, size-len, "]");
     return len;
+}
+
+/* format rows of a value for each channel like format_channels, aligned in columns, a pair written once only if it agrees in every row */
+void format_channel_rows(char s[][1024], const double *const *value, int rows, const bool *has, int channels)
+{
+    size_t len[rows];
+    for (int r=0; r<rows; r++)
+        len[r] = snprintf(s[r], sizeof(s[r]), "[");
+    for (int ch=0; ch<channels; ch++) {
+        char v[rows][32], w[32];
+        size_t width = 0;
+        bool joined = ch%2==0 && ch+1<channels;
+        for (int r=0; r<rows; r++) {
+            snprintf(v[r], sizeof(v[r]), has[ch]? "%+.2f" : "-", value[r][ch]);
+            if (joined) {
+                snprintf(w, sizeof(w), has[ch+1]? "%+.2f" : "-", value[r][ch+1]);
+                joined = strcmp(v[r], w)==0;
+            }
+            width = mmax(width, strlen(v[r]));
+        }
+        char label[32];
+        if (joined)
+            snprintf(label, sizeof(label), "%d-%d", ch+1, ch+2);
+        else
+            snprintf(label, sizeof(label), "%d", ch+1);
+        for (int r=0; r<rows; r++)
+            if (len[r]<sizeof(s[r]))
+                len[r] += snprintf(s[r]+len[r], sizeof(s[r])-len[r], "%s%s: %*s", ch? ", " : "", label, (int)width, v[r]);
+        if (joined)
+            ch++;
+    }
+    for (int r=0; r<rows; r++)
+        if (len[r]<sizeof(s[r]))
+            snprintf(s[r]+len[r], sizeof(s[r])-len[r], "]");
 }
 
 /* the status line: the last latency and lipsync, then a note or the time until the next lipsync measurement */
@@ -691,7 +726,7 @@ void capture::report_measurement(long long e, bool incomplete)
     if (e<=0 || e==reported_edge || !any || (!all && !incomplete))
         return;
     char values[1024];
-    format_channels(values, sizeof(values), last_lipsync, has, channels, false);
+    format_channels(values, sizeof(values), last_lipsync, has, channels);
     dlmessage("info: end-to-end latency %.2f ms, lipsync %s ms", last_latency/180.0, values);
     reported_edge = e;
 }
@@ -1505,12 +1540,12 @@ int main(int argc, char *argv[])
         lipsync_count += l->count;
     }
     if (lipsync_count) {
-        char values[1024], low[1024], high[1024];
-        format_channels(values, sizeof(values), mean, has, the_capture.channels, false);
-        format_channels(low, sizeof(low), min, has, the_capture.channels, false);
-        format_channels(high, sizeof(high), max, has, the_capture.channels, false);
-        dlmessage("  lipsync %s ms over %u measurement%s", values, measurements, measurements==1? "" : "s");
-        dlmessage("  lipsync from %s to %s ms", low, high);
+        char rows[3][1024];
+        const double *value[3] = {mean, min, max};
+        format_channel_rows(rows, value, 3, has, the_capture.channels);
+        dlmessage("  lipsync mean %s ms over %u measurement%s", rows[0], measurements, measurements==1? "" : "s");
+        dlmessage("          min  %s ms", rows[1]);
+        dlmessage("          max  %s ms", rows[2]);
     }
     if (lipsync_count==0)
         dlmessage("  no lipsync measured, it is measured every %d seconds", CYCLE_SECONDS);

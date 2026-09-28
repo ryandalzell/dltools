@@ -84,7 +84,9 @@ delays the first result by 30 s; so far the one left out has matched the next.
 Messages to the user speak of the "enc->dec chain", the "end-to-end latency" and the
 "lipsync" per channel, never of edges or the picture and tone turning on or off: each
 lipsync measurement is reported as one line with the latency and both channels, and the
-report gives each channel's lipsync over the run. The status line shows the last latency
+report gives each channel's lipsync over the run. A pair of channels whose values agree to the
+digits shown is written once, `[1-2: +74.60, 3-4: +74.60]`. The report puts the mean, min and
+max on three lines in aligned columns, joining a pair only if it agrees in all three. The status line shows the last latency
 and lipsync, then either a note (`no timecode`, `timecode not advancing`, `timecode ahead
 of the output`) or `next measurement in N s`, the countdown to the next edge. Latency is
 from the first arrival of a frame, so a frame whose timecode does not advance (a decoder repeating a frame) is left out and counted, as is one whose latency would
