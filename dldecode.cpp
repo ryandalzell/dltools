@@ -1646,7 +1646,7 @@ decode_t dlffmpeg::decode(unsigned char *uyvy, size_t uyvysize)
                 results.size = ((width+47)/48)*128 * height;
             }
             /* get pts from decoder */
-            sts_t sts = 2*frame->pts;
+            sts_t sts = frame->pts!=AV_NOPTS_VALUE? 2*frame->pts : -1ll;
             if (sts<0 || sts<=last_sts) {
                 /* extrapolate a timestamp if necessary */
                 sts = last_sts + llround(180000.0/framerate);
