@@ -35,7 +35,7 @@ LFLAGS += -lyuv -ljpeg
 endif
 ifeq ($(FFMPEG),1)
 CXXFLAGS += -DHAVE_FFMPEG
-LFLAGS += -lavcodec -lavformat -lavutil
+LFLAGS += -lavcodec -lavformat -lavutil -lswresample
 endif
 ifeq ($(FREETYPE),1)
 CXXFLAGS += -DHAVE_FREETYPE $(shell pkg-config --cflags freetype2 fontconfig)

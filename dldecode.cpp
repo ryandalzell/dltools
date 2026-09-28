@@ -1114,8 +1114,6 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
                 break;
             ptr = buf;
 
-            /* the input has jumped, so throw away the part of a frame the parser
-               is holding rather than joining it to data which does not follow it */
             if (format->discontinuity()) {
                 av_parser_close(parser);
                 parser = av_parser_init(codecid);
@@ -1209,6 +1207,280 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
     } while (!got_frame);
 
     got_frame = 0;
+
+    return results;
+}
+
+/* the audio decoders all give stereo, which dlplay repeats in each pair of the output */
+static const int FFAUDIO_CHANNELS = 2;
+
+dlffaudio::dlffaudio(enum AVCodecID id)
+{
+    codecid = id;
+    parser = NULL;
+    codeccontext = NULL;
+    frame = NULL;
+    packet = NULL;
+    got_frame = 0;
+    swr = NULL;
+    memset(&swr_layout, 0, sizeof(swr_layout));
+    swr_rate = 0;
+    swr_format = AV_SAMPLE_FMT_NONE;
+    size = 0;
+    ptr = NULL;
+    buf_pts = AV_NOPTS_VALUE;
+    last_sts = -1ll;
+    samples_since_pts = 0;
+    errorstring = (char *) malloc(AV_ERROR_MAX_STRING_SIZE);
+}
+
+dlffaudio::~dlffaudio()
+{
+    swr_free(&swr);
+    av_channel_layout_uninit(&swr_layout);
+    if (parser)
+        av_parser_close(parser);
+    av_packet_free(&packet);
+    av_frame_free(&frame);
+    avcodec_free_context(&codeccontext);
+    free(errorstring);
+}
+
+int dlffaudio::attach(dlformat* f)
+{
+    int ret;
+
+    /* attach the input source */
+    format = f;
+
+    /* read the first packet */
+    do {
+        const unsigned char *buf = format->read(&size);
+        if (size==0) {
+            dlmessage("failed to read any %s audio", avcodec_get_name(codecid));
+            return -1;
+        }
+        ptr = buf;
+    } while (size<2);
+    sts_t sts = format->get_pts();
+    buf_pts = sts>=0? sts : AV_NOPTS_VALUE;
+
+    /* a pes packet of aac starts with a frame, so its sync word says whether the
+       stream is adts or latm, whatever the stream type said */
+    if (codecid==AV_CODEC_ID_AAC || codecid==AV_CODEC_ID_AAC_LATM) {
+        if (ptr[0]==0xff && (ptr[1]&0xf6)==0xf0)
+            codecid = AV_CODEC_ID_AAC;
+        else if (ptr[0]==0x56 && (ptr[1]&0xe0)==0xe0)
+            codecid = AV_CODEC_ID_AAC_LATM;
+        else if (verbose>=1)
+            dlmessage("no adts or latm sync word at the start of the aac audio, assuming %s", avcodec_get_name(codecid));
+    }
+
+    /* find required decoder */
+    const AVCodec *codec = avcodec_find_decoder(codecid);
+    if (!codec)
+        dlexit("failed to find %s audio decoder", avcodec_get_name(codecid));
+
+    /* initialise the parser */
+    parser = av_parser_init(codec->id);
+    if (!parser)
+        dlexit("failed to initialise the %s parser", avcodec_get_name(codecid));
+
+    /* initialise the codec context, timestamps are passed through in system time */
+    codeccontext = avcodec_alloc_context3(codec);
+    if (!codeccontext)
+        dlexit("failed to initialise codec context");
+    codeccontext->pkt_timebase = av_make_q(1, 180000);
+
+    /* initialise the frame and packet */
+    frame = av_frame_alloc();
+    packet = av_packet_alloc();
+    if (!frame || !packet) {
+        dlmessage("failed to allocate audio frame");
+        return -1;
+    }
+
+    /* the ac3 and e-ac3 decoders downmix with the levels the stream carries, which
+       is better than the resampler's defaults, other decoders ignore the option */
+    AVDictionary *opts = NULL;
+    av_dict_set(&opts, "downmix", "stereo", 0);
+    ret = avcodec_open2(codeccontext, codec, &opts);
+    av_dict_free(&opts);
+    if (ret < 0) {
+        dlmessage("failed to open audio codec: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret));
+        return ret;
+    }
+
+    /* decode up to the first frame with a timestamp, to find the audio format */
+    int skipped = 0;
+    while (1) {
+        if (receive_frame()<=0) {
+            dlmessage("failed to decode any %s audio", avcodec_get_name(codecid));
+            return -1;
+        }
+        if (frame->pts!=AV_NOPTS_VALUE)
+            break;
+        skipped++;
+    }
+    got_frame = 1;
+    if (verbose>=2 && skipped)
+        dlmessage("discarded %d %s frames before the first timestamp", skipped, avcodec_get_name(codecid));
+
+    /* report the format parameters */
+    char layout[64];
+    av_channel_layout_describe(&frame->ch_layout, layout, sizeof(layout));
+    const char *profile = av_get_profile_name(codec, codeccontext->profile);
+    if (verbose>=0)
+        dlmessage("audio format is %s%s%s %.1fkHz %s, %d samples a frame", avcodec_get_name(codecid), profile? " " : "", profile? profile : "", frame->sample_rate/1000.0, layout, frame->nb_samples);
+
+    return setup_resampler();
+}
+
+/* receive the next decoded frame, reading and parsing as much input as that takes,
+   returns 1 for a frame and 0 at the end of the input or on an error */
+int dlffaudio::receive_frame()
+{
+    while (1) {
+        /* take a frame the decoder already has */
+        int ret = avcodec_receive_frame(codeccontext, frame);
+        if (ret==0)
+            return 1;
+        if (ret!=AVERROR(EAGAIN)) {
+            dlmessage("error during decoding audio: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret));
+            return 0;
+        }
+
+        /* read more input */
+        if (size==0) {
+            const unsigned char *buf = format->read(&size);
+            if (size==0)
+                return 0;
+            ptr = buf;
+
+            if (format->discontinuity())
+                reset();
+
+            sts_t sts = format->get_pts();
+            buf_pts = sts>=0? sts : AV_NOPTS_VALUE;
+        }
+
+        /* use the parser to split the data into frames, the pts goes with the first
+           call only, as the parser gives it to every frame starting after that call */
+        ret = av_parser_parse2(parser, codeccontext, &packet->data, &packet->size, ptr, size, buf_pts, AV_NOPTS_VALUE, 0);
+        if (ret < 0)
+            dlexit("failed to parse %s data", avcodec_get_name(codecid));
+        ptr += ret;
+        size -= ret;
+        buf_pts = AV_NOPTS_VALUE;
+
+        if (packet->size) {
+            packet->pts = parser->pts;
+            packet->dts = parser->dts;
+            /* a corrupt frame is dropped by the decoder, which is not fatal in a broadcast */
+            ret = avcodec_send_packet(codeccontext, packet);
+            if (ret<0 && verbose>=1)
+                dlmessage("failed to decode a frame of %s audio: %s", avcodec_get_name(codecid), av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret));
+        }
+    }
+}
+
+/* the input has jumped, so the parser is holding the last frame before the jump,
+   which it only gives up when no data follows it: send that frame to the decoder,
+   then start the parser again rather than join the next frame to data which does
+   not follow it, the decoder and resampler carry on as there is nothing to reference */
+void dlffaudio::reset()
+{
+    uint8_t *data;
+    int bytes;
+    av_parser_parse2(parser, codeccontext, &data, &bytes, NULL, 0, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+    if (bytes) {
+        packet->data = data;
+        packet->size = bytes;
+        packet->pts = parser->pts;
+        packet->dts = parser->dts;
+        /* the decoder takes a copy of the data, which belongs to the parser */
+        int ret = avcodec_send_packet(codeccontext, packet);
+        if (ret<0 && verbose>=1)
+            dlmessage("failed to decode the last frame of %s audio before a discontinuity: %s", avcodec_get_name(codecid), av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret));
+    }
+
+    av_parser_close(parser);
+    parser = av_parser_init(codecid);
+    if (parser==NULL)
+        dlexit("failed to re-initialise the %s parser", avcodec_get_name(codecid));
+}
+
+/* convert the format of the current frame to 48kHz 16-bit interleaved stereo,
+   downmixing or upmixing as need be */
+int dlffaudio::setup_resampler()
+{
+    AVChannelLayout out;
+    av_channel_layout_default(&out, FFAUDIO_CHANNELS);
+
+    swr_free(&swr);
+    int ret = swr_alloc_set_opts2(&swr, &out, AV_SAMPLE_FMT_S16, 48000, &frame->ch_layout, (enum AVSampleFormat)frame->format, frame->sample_rate, 0, NULL);
+    av_channel_layout_uninit(&out);
+    if (ret<0 || (ret = swr_init(swr))<0) {
+        dlmessage("failed to initialise the audio resampler: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret));
+        return -1;
+    }
+
+    /* remember the input so that a change of format can be seen */
+    av_channel_layout_uninit(&swr_layout);
+    av_channel_layout_copy(&swr_layout, &frame->ch_layout);
+    swr_rate = frame->sample_rate;
+    swr_format = frame->format;
+
+    return 0;
+}
+
+decode_t dlffaudio::decode(unsigned char *samples, size_t sampsize) // sampsize is in bytes.
+{
+    decode_t results = {0, -1ll, 0ll, 0ll};
+
+    /* start timer */
+    unsigned long long start = get_utime();
+
+    /* the resampler can take a frame without giving any samples back yet */
+    int num_samples = 0;
+    while (num_samples==0) {
+        if (!got_frame && !receive_frame()) {
+            if (format->error())
+                dlmessage("error reading input stream \"%s\": %s", format->name(), strerror(errno));
+            return results;
+        }
+        got_frame = 0;
+
+        /* the channels or rate can change, at a programme boundary for instance */
+        if (frame->sample_rate!=swr_rate || frame->format!=swr_format || av_channel_layout_compare(&frame->ch_layout, &swr_layout)) {
+            if (verbose>=1) {
+                char layout[64];
+                av_channel_layout_describe(&frame->ch_layout, layout, sizeof(layout));
+                dlmessage("audio format changed to %.1fkHz %s", frame->sample_rate/1000.0, layout);
+            }
+            if (setup_resampler()<0)
+                return results;
+        }
+
+        /* the first sample out is behind the first sample of this frame by the
+           samples the resampler is holding */
+        if (frame->pts!=AV_NOPTS_VALUE) {
+            last_sts = frame->pts - swr_get_delay(swr, 180000);
+            samples_since_pts = 0;
+        }
+        results.timestamp = last_sts + samples_since_pts*180000ll/48000ll;
+
+        /* convert as much as fits, the resampler keeps the rest for the next call */
+        num_samples = swr_convert(swr, &samples, sampsize/(FFAUDIO_CHANNELS*2), (const uint8_t **)frame->extended_data, frame->nb_samples);
+        if (num_samples<0) {
+            dlmessage("failed to convert audio samples: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, num_samples));
+            num_samples = 0;
+        }
+        samples_since_pts += num_samples;
+    }
+
+    results.size = num_samples*FFAUDIO_CHANNELS*2;
+    results.decode_time = get_utime() - start;
 
     return results;
 }

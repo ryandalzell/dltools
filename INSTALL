@@ -2,7 +2,7 @@
 
   On Debian/Ubuntu:
 
-  > sudo apt install libmpeg2-4-dev libmpg123-dev liba52-0.7.4-dev libavcodec-dev libavformat-dev libavutil-dev libfreetype-dev libfontconfig-dev
+  > sudo apt install libmpeg2-4-dev libmpg123-dev liba52-0.7.4-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libfreetype-dev libfontconfig-dev
 
   Or, get the source code for each package and build,install:
 

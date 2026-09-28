@@ -129,14 +129,15 @@ Set at the top of the Makefile, not via configure:
 | Flag | Default | Effect |
 |---|---|---|
 | `LIBYUV` | 1 | `-DHAVE_LIBYUV`, links `-lyuv -ljpeg` |
-| `FFMPEG` | 1 | `-DHAVE_FFMPEG`, links avcodec/avformat/avutil |
+| `FFMPEG` | 1 | `-DHAVE_FFMPEG`, links avcodec/avformat/avutil/swresample |
 | `FREETYPE` | 1 | `-DHAVE_FREETYPE`, links freetype and fontconfig into `dlcard` only, for its `-d`/`-m` text |
 
-**`FFMPEG=0` means H.264, HEVC and AV1 do not decode.** Those paths become `dlexit("no
+**`FFMPEG=0` means H.264, HEVC, AV1, AAC and E-AC-3 do not decode.** Those paths become `dlexit("no
 support for ... in this build")`, in both the elementary-stream and transport-stream
 dispatch, so the README's claim of H.264 support only holds while ffmpeg is enabled.
-MPEG-2 falls back to libmpeg2 when ffmpeg is off, so an `FFMPEG=0` build still
-plays MPEG-2 but nothing else beyond raw YUV. The ffmpeg decoders pad each plane's rows, so their output
+MPEG-2 falls back to libmpeg2 when ffmpeg is off, and MPEG audio and AC-3 to `dlmpg123` and
+`dlliba52`, so an `FFMPEG=0` build still plays MPEG-2 with those but nothing else beyond raw
+YUV. The AAC and E-AC-3 stream types are left out of its list, so their pids are not chosen. The ffmpeg decoders pad each plane's rows, so their output
 is converted with `frame->linesize`; an SD width such as 720 is not a multiple of the
 padding, and ignoring it sheared the picture, which had looked like an ffmpeg bug in PAL. HEVC was decoded by libde265 in that
 build until ffmpeg's decoder had replaced it in every way, including field coding.
@@ -158,7 +159,7 @@ dlsource  (dlsource.h)  transport:  dlfile / dlmmap / dlsock / dltcpsock
    |  raw bytes
 dlformat  (dlformat.h)  container:  dlformat(raw) / dlestream / dltstream / dlavformat
    |  elementary stream bytes + PTS/DTS
-dldecode  (dldecode.h)  codec:      dlyuv / dlmpeg2 / dlffvideo / dlmpg123 / dlliba52 / dlpcm
+dldecode  (dldecode.h)  codec:      dlyuv / dlmpeg2 / dlffvideo / dlffaudio / dlmpg123 / dlliba52 / dlpcm
    |  UYVY or v210 written straight into a Decklink frame buffer
 IDeckLinkOutput
 ```
@@ -212,7 +213,8 @@ PAT and PMT and returns the first pid carrying one of a list of stream types, al
 with the type it found, which is how `dlplay` picks a decoder. Stream type 0x06 is
 private data and does not name a codec, so the descriptors of that elementary stream
 are consulted: a DVB AC-3 descriptor or an `AC-3` registration reports 0x81 (so DVB
-AC-3 audio reaches `dlliba52`, not `dlpcm`), a `BSSD` registration reports 302M, and a
+AC-3 audio reaches the AC-3 decoder, not `dlpcm`), the DVB enhanced AC-3 and AAC
+descriptors report 0x87 and 0x11, a `BSSD` registration reports 302M, and a
 codec with no decoder here reports a stream type which is not in the list, so the pid
 is skipped and the search goes on. Private data with nothing to identify it is still
 assumed to be SMPTE 302M.
@@ -239,7 +241,10 @@ The data either side of a loop is not continuous, and a decoder which is holding
 of a frame will otherwise join the two and emit a frame with the wrong timestamp. So
 the first PES packet of each pid in a new pass is marked, `dlformat::discontinuity()`
 reports it for the packet just read, and a decoder throws away what it has buffered:
-`dlffvideo` re-initialises its parser and flushes the codec, `dlmpg123` re-opens its
+`dlffvideo` re-initialises its parser and flushes the codec, `dlffaudio` drains its
+parser into the decoder and re-initialises it (the parser holds the last frame of a pass
+until told no more data follows, and throwing it away lost an AC-3 frame at every loop;
+the decoder and resampler carry on, as audio frames reference nothing), `dlmpg123` re-opens its
 feed, `dlliba52` drops the part of an AC-3 frame it holds and syncs again, and `dlpcm`
 drops a partly filled AES3 packet and starts the next one. `dlmpeg2`, which is only used when
 the ffmpeg decoders are compiled out, does not do this yet.
@@ -257,6 +262,26 @@ adding accessors.
 and returns a `decode_t` carrying the size and the timestamp. `decode_t::size` is
 a count of **bytes** for audio as well as video, so `dlplay` divides it by four to
 get sample frames of the decoders' stereo 16-bit output.
+
+### Audio decoders
+
+With ffmpeg, MPEG audio (0x03/0x04, through the `mp3` decoder, which takes layers 1-3),
+AAC (0x0F/0x11), AC-3 (0x81) and E-AC-3 (0x87) are decoded by `dlffaudio`: parser, then
+decoder, then libswresample to 48kHz 16-bit stereo, which resamples 44.1 and 32kHz (mpg123
+played them at the wrong pitch), upmixes mono and downmixes more channels. AC-3 and E-AC-3
+downmix in the decoder (its `downmix` option), with the levels the stream carries. The
+timestamp of a block is the frame's pts less the resampler's delay, counted on in output
+samples, so any frame length works. The pts of a PES packet goes to the parser on its first
+call only, as the parser otherwise gives it to every frame starting after that call.
+
+AAC is ADTS or LATM/LOAS by the sync word of the first PES packet, not by the stream type.
+ADTS can only signal Main, LC, SSR and LTP (and HE-AAC implicitly), so AAC-LD and AAC-ELD come
+in LATM (0x11). ffmpeg decodes LC, HE-AAC v1/v2, LD and ELD; LTP in LD is not implemented, and
+ELD with LD-SBR is untested. The profile is reported when the decoder is attached.
+
+SMPTE 302M stays with `dlpcm` in both builds, as there are plans for it. `dlmpg123` and
+`dlliba52` are only the `FFMPEG=0` fallback and are to go once `dlffaudio` has been used a
+while.
 
 ### Audio channels
 
