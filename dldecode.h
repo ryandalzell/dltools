@@ -12,6 +12,8 @@ extern "C" {
     #include <libavcodec/avcodec.h>
     #include <libavutil/imgutils.h>
     #include <libavformat/avformat.h>
+    #include <libavutil/channel_layout.h>
+    #include <libswresample/swresample.h>
 #endif
 }
 #include <mpg123.h>
@@ -236,6 +238,50 @@ protected:
     int first_field;        /* parity of the first field of each frame, 1 for top, -1 until known */
     bool pending;           /* the first field of the frame has been written */
     long long pending_pts;  /* timestamp of the first field */
+
+    /* error string */
+    char *errorstring;
+};
+
+/* compressed audio, decoded to the stereo 16-bit 48kHz the other audio decoders give */
+class dlffaudio : public dldecode
+{
+public:
+    dlffaudio(enum AVCodecID id);
+    ~dlffaudio();
+
+    virtual int attach(dlformat *format);
+    virtual decode_t decode(unsigned char *buffer, size_t bufsize);
+
+public:
+    virtual const char *description() { return codeccontext? codeccontext->codec->name : avcodec_get_name(codecid); }
+
+protected:
+    int receive_frame();
+    void reset();
+    int setup_resampler();
+
+    /* ffmpeg variables */
+    enum AVCodecID codecid;
+    AVCodecParserContext *parser;
+    AVCodecContext *codeccontext;
+    AVFrame *frame;
+    AVPacket *packet;
+    int got_frame;
+
+    /* resampler to 48kHz 16-bit stereo, and the input it was set up for */
+    SwrContext *swr;
+    AVChannelLayout swr_layout;
+    int swr_rate;
+    int swr_format;
+
+    /* data buffer, and the pts of the part of it not yet given to the parser */
+    size_t size;
+    const unsigned char *ptr;
+    long long buf_pts;
+
+    /* output samples since the last timestamp from the decoder */
+    long long samples_since_pts;
 
     /* error string */
     char *errorstring;

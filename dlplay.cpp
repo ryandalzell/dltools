@@ -45,6 +45,7 @@ int exit_thread;
 /* display statistics */
 const int PREROLL_FRAMES = 60;
 const int MAX_HISTORY_FRAMES = PREROLL_FRAMES*3/2;  /* the history buffer needs to be larger than preroll for pause mode to work */
+const int FFAUDIO_SIZE = 8192*2*sizeof(int16_t);     /* stereo 16-bit, room for the longest frame after resampling to 48kHz */
 bool preroll;
 unsigned int completed;
 unsigned int late, dropped, flushed;
@@ -640,7 +641,11 @@ int main(int argc, char *argv[])
 
                 /* look for an audio pid */
                 if (!videoonly) {
-                    int audio_stream_types[] = { 0x03, 0x04, 0x81, 0x1C, 0x06 };
+#ifdef HAVE_FFMPEG
+                    int audio_stream_types[] = { 0x03, 0x04, 0x0F, 0x11, 0x81, 0x87, 0x06 };
+#else
+                    int audio_stream_types[] = { 0x03, 0x04, 0x81, 0x06 };
+#endif
                     //int audio_stream_types[] = { 0x03, 0x04 };
                     /* a pid given on the command line is looked up for its stream type */
                     int wanted_pid = aud_pid;
@@ -664,14 +669,44 @@ int main(int argc, char *argv[])
                     switch (stream_type) {
                         case 0x03:
                         case 0x04:
+#ifdef HAVE_FFMPEG
+                            /* the mp3 decoder takes all three layers */
+                            audio = new dlffaudio(AV_CODEC_ID_MP3);
+                            aud_size = FFAUDIO_SIZE;
+#else
                             audio = new dlmpg123;
                             aud_size = 48000*2; // 0.5 sec
+#endif
                             break;
 
-                        case 0x1c:
+                        case 0x0f:
+                        case 0x11:
+#ifdef HAVE_FFMPEG
+                            /* the decoder checks the sync word for adts or latm itself */
+                            audio = new dlffaudio(stream_type==0x11? AV_CODEC_ID_AAC_LATM : AV_CODEC_ID_AAC);
+                            aud_size = FFAUDIO_SIZE;
+#else
+                            dlexit("error: no support for aac decoder in this build");
+#endif
+                            break;
+
                         case 0x81:
+#ifdef HAVE_FFMPEG
+                            audio = new dlffaudio(AV_CODEC_ID_AC3);
+                            aud_size = FFAUDIO_SIZE;
+#else
                             audio = new dlliba52;
                             aud_size = 6*256*2*sizeof(uint16_t);
+#endif
+                            break;
+
+                        case 0x87:
+#ifdef HAVE_FFMPEG
+                            audio = new dlffaudio(AV_CODEC_ID_EAC3);
+                            aud_size = FFAUDIO_SIZE;
+#else
+                            dlexit("error: no support for e-ac3 decoder in this build");
+#endif
                             break;
 
                         case 0x06:
@@ -979,7 +1014,7 @@ int main(int argc, char *argv[])
         /* preroll as many video frames as possible */
         preroll = 1;
         IDeckLinkMutableVideoFrame *frame = NULL;
-        decode_t vid, aud;
+        decode_t vid, aud = {0, -1ll, 0ll, 0ll};
         vid.timestamp = aud.timestamp = 0;      /* fixes warning */
 
         /* playback timestamp boundaries */

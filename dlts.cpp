@@ -213,10 +213,10 @@ int next_pes_packet_data(unsigned char *data, long long *pts, long long *dts, in
 }
 
 /* the stream type of private data in a transport stream does not say what the
-   data is, the descriptors of the elementary stream do: dvb signals ac3 audio as
-   private data with an ac3 descriptor, and smpte 302m audio with a registration
-   descriptor of "BSSD". return the stream type which normally carries the codec
-   the descriptors describe, or zero if they do not describe one */
+   data is, the descriptors of the elementary stream do: dvb signals ac3, e-ac3
+   and aac audio as private data with a descriptor for each, and smpte 302m audio
+   with a registration descriptor of "BSSD". return the stream type which normally
+   carries the codec the descriptors describe, or zero if they do not describe one */
 static int stream_type_of_private_data(const unsigned char *descriptors, size_t length)
 {
     for (size_t i=0; i+2<=length; i+=2+descriptors[i+1]) {
@@ -240,19 +240,19 @@ static int stream_type_of_private_data(const unsigned char *descriptors, size_t 
                 /* dvb ac3 descriptor */
                 return 0x81;
 
-            /* there is no decoder for these here, but naming the stream type
-               which normally carries them means the pid is not selected */
             case 0x7a:
                 /* dvb enhanced ac3 descriptor */
                 return 0x87;
 
+            case 0x7c:
+                /* dvb aac descriptor, the decoder tells adts from latm by the sync word */
+                return 0x11;
+
+            /* there is no decoder for this here, but naming the stream type
+               which normally carries it means the pid is not selected */
             case 0x7b:
                 /* dvb dts descriptor */
                 return 0x82;
-
-            case 0x7c:
-                /* dvb aac descriptor */
-                return 0x11;
         }
     }
 

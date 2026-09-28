@@ -10,7 +10,8 @@ series of cards. Currently the utilities are:
 
 dlplay: video player, supports file and network input and
         can play raw yuv, yuv4mpeg2 (y4m) and mpeg2, h.264 and
-        hevc video codecs and mpeg2 and ac3 audio codecs.
+        hevc video codecs and mpeg audio, aac (lc, he, ld, eld),
+        ac3, e-ac3 and smpte 302m audio codecs.
 
 dlcap:  video recorder, captures raw yuv data in supported formats
 
