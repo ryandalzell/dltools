@@ -3,7 +3,6 @@
 
 # Build options
 LIBYUV = 1
-HEVC = 1
 FFMPEG = 1
 FREETYPE = 1
 
@@ -33,10 +32,6 @@ LFLAGS = -lm -ldl -lpthread
 ifeq ($(LIBYUV),1)
 CXXFLAGS += -DHAVE_LIBYUV
 LFLAGS += -lyuv -ljpeg
-endif
-ifeq ($(HEVC),1)
-CXXFLAGS += -DHAVE_LIBDE265
-LFLAGS += -lde265
 endif
 ifeq ($(FFMPEG),1)
 CXXFLAGS += -DHAVE_FFMPEG

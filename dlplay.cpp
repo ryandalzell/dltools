@@ -21,9 +21,6 @@ extern "C" {
     #include <mpeg2dec/mpeg2convert.h>
     #include <a52dec/a52.h>
     #include <a52dec/mm_accel.h>
-#ifdef HAVE_LIBDE265
-    #include <libde265/de265.h>
-#endif
 }
 #include <mpg123.h>
 
@@ -622,8 +619,6 @@ int main(int argc, char *argv[])
                         case 0x24:
 #ifdef HAVE_FFMPEG
                             video = new dlffvideo(AV_CODEC_ID_HEVC);
-#elif HAVE_LIBDE265
-                            video = new dlhevc;
 #else
                             dlexit("error: no support for hevc decoder in this build");
 #endif
@@ -772,11 +767,6 @@ int main(int argc, char *argv[])
                 vid_fmt->attach(source);
                 video = new dlffvideo(AV_CODEC_ID_H265);
                 videoonly = 1;
-#elif HAVE_LIBDE265
-                vid_fmt = new dlestream;
-                vid_fmt->attach(source);
-                video = new dlhevc;
-                videoonly = 1;
 #else
                 dlexit("error: no support for hevc decoder in this build");
 #endif
@@ -875,9 +865,7 @@ int main(int argc, char *argv[])
             }
             switch (pic_height) {
                 case 480 : dis_height = 486; break;
-                case 744 : dis_height = 720; break; /* work around a bug in libde265 in 4:2:2 mode */
                 case 1088: dis_height = 1080; break;
-                case 1116: dis_height = 1080; break; /* work around a bug in libde265 in 4:2:2 mode */
             }
             if (pic_width<704 && pic_height<480) {
                 if (framerate<29.0) {

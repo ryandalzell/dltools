@@ -8,9 +8,6 @@ extern "C" {
     #include <mpeg2dec/mpeg2.h>
     #include <a52dec/a52.h>
     #include <a52dec/mm_accel.h>
-#ifdef HAVE_LIBDE265
-    #include <libde265/de265.h>
-#endif
 #ifdef HAVE_FFMPEG
     #include <libavcodec/avcodec.h>
     #include <libavutil/imgutils.h>
@@ -201,28 +198,6 @@ private:
     int frames_since_pts;
 
 };
-
-/* libde265 class */
-#ifdef HAVE_LIBDE265
-class dlhevc : public dldecode
-{
-public:
-    dlhevc();
-    ~dlhevc();
-
-    virtual int attach(dlformat *format);
-    virtual decode_t decode(unsigned char *buffer, size_t bufsize);
-
-public:
-    virtual const char *description() { return "hevc"; }
-
-protected:
-    /* libde265 variables */
-    de265_error err;
-    de265_decoder_context* ctx;
-    const struct de265_image *image;
-};
-#endif
 
 /* ffmpeg classes */
 #ifdef HAVE_FFMPEG

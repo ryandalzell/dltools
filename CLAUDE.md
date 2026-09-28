@@ -129,15 +129,15 @@ Set at the top of the Makefile, not via configure:
 | Flag | Default | Effect |
 |---|---|---|
 | `LIBYUV` | 1 | `-DHAVE_LIBYUV`, links `-lyuv -ljpeg` |
-| `HEVC` | 1 | `-DHAVE_LIBDE265`, links `-lde265` |
 | `FFMPEG` | 1 | `-DHAVE_FFMPEG`, links avcodec/avformat/avutil |
 | `FREETYPE` | 1 | `-DHAVE_FREETYPE`, links freetype and fontconfig into `dlcard` only, for its `-d`/`-m` text |
 
-**`FFMPEG=0` means H.264 and AV1 do not decode.** Those paths become `dlexit("no
+**`FFMPEG=0` means H.264, HEVC and AV1 do not decode.** Those paths become `dlexit("no
 support for ... in this build")`, in both the elementary-stream and transport-stream
 dispatch, so the README's claim of H.264 support only holds while ffmpeg is enabled.
-MPEG-2 falls back to libmpeg2 and HEVC to libde265 when ffmpeg is off, so an
-`FFMPEG=0` build still plays MPEG-2 but nothing else beyond raw YUV.
+MPEG-2 falls back to libmpeg2 when ffmpeg is off, so an `FFMPEG=0` build still
+plays MPEG-2 but nothing else beyond raw YUV. HEVC was decoded by libde265 in that
+build until ffmpeg's decoder had replaced it in every way, including field coding.
 
 The ffmpeg code targets the current API (verified against ffmpeg 8.0): the decoders
 use `avcodec_send_packet`/`avcodec_receive_frame`, and `libavcodec/avcodec.h` must be
@@ -156,7 +156,7 @@ dlsource  (dlsource.h)  transport:  dlfile / dlmmap / dlsock / dltcpsock
    |  raw bytes
 dlformat  (dlformat.h)  container:  dlformat(raw) / dlestream / dltstream / dlavformat
    |  elementary stream bytes + PTS/DTS
-dldecode  (dldecode.h)  codec:      dlyuv / dlmpeg2 / dlhevc / dlffvideo / dlmpg123 / dlliba52 / dlpcm
+dldecode  (dldecode.h)  codec:      dlyuv / dlmpeg2 / dlffvideo / dlmpg123 / dlliba52 / dlpcm
    |  UYVY or v210 written straight into a Decklink frame buffer
 IDeckLinkOutput
 ```
@@ -239,8 +239,8 @@ the first PES packet of each pid in a new pass is marked, `dlformat::discontinui
 reports it for the packet just read, and a decoder throws away what it has buffered:
 `dlffvideo` re-initialises its parser and flushes the codec, `dlmpg123` re-opens its
 feed, `dlliba52` drops the part of an AC-3 frame it holds and syncs again, and `dlpcm`
-drops a partly filled AES3 packet and starts the next one. `dlmpeg2` and `dlhevc`, which are only used when
-the ffmpeg decoders are compiled out, do not do this yet.
+drops a partly filled AES3 packet and starts the next one. `dlmpeg2`, which is only used when
+the ffmpeg decoders are compiled out, does not do this yet.
 
 ### Decoder probing
 
@@ -293,10 +293,9 @@ takes that as field coding: it reports twice the height at half the picture rate
 `convert_yuv10_v210_rows`, which take the plane strides and an output row pitch. A frame
 starts with a field of the parity decoded first, is timed by its first field, and a lone
 field is skipped. 720x240 fields therefore play as 480i29.97 (in the 486 line NTSC mode, as
-a frame-coded 480i picture does) and 1920x540 as 1080i. `dlhevc` (libde265) does not do
-this. A packet can leave more than one picture in the decoder, so `decode()` takes a
-picture already held before sending another packet, or `avcodec_send_packet` returns
-EAGAIN.
+a frame-coded 480i picture does) and 1920x540 as 1080i. A packet can leave more than one picture in the
+decoder, so `decode()` takes a picture already held before sending another packet, or
+`avcodec_send_packet` returns EAGAIN.
 
 ### Playout, threading and buffers
 
