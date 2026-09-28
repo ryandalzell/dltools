@@ -183,7 +183,8 @@ public:
     unsigned measured;      /* frames with a latency */
     sts_t sum, min, max;    /* statistics of the latency */
     sts_t reported;         /* latency last reported with a message */
-    char newmodename[64];   /* the mode the input changed to */
+    char newmodename[64];
+    const char *timecode_kind;  /* the timecode last received in sd, vitc or rp188 */   /* the mode the input changed to */
     char modename[32];      /* the mode sent, set by main */
     bool settled;           /* the chain sends the mode sent to it and its latency is steady, set by main if it already did */
     bool discard_first;     /* the chain changed mode, so the first lipsync is left out, set by main */
@@ -330,16 +331,25 @@ HRESULT capture::VideoInputFrameArrived(IDeckLinkVideoInputFrame *videoframe, ID
     if (audiopacket)
         process_audio(audiopacket, arrival - streamtime);
 
-    /* the timecode as sent, a high frame rate frame is odd if it carries vitc2 rather than vitc1 */
+    /* the timecode as sent, in sd vitc if the chain kept it or else rp188, a high frame rate frame is odd if it carries vitc2 rather than vitc1 */
     IDeckLinkTimecode *tc = NULL;
     bool odd = false;
-    if (sd)
-        videoframe->GetTimecode(bmdTimecodeVITC, &tc);
-    else if (videoframe->GetTimecode(bmdTimecodeRP188VITC1, &tc)!=S_OK) {
-        if (videoframe->GetTimecode(bmdTimecodeRP188VITC2, &tc)==S_OK)
-            odd = true;
-        else if (videoframe->GetTimecode(bmdTimecodeRP188Any, &tc)==S_OK)
-            odd = (tc->GetFlags() & bmdTimecodeFieldMark)!=0;
+    const char *kind = "vitc";
+    if (!sd || (videoframe->GetTimecode(bmdTimecodeVITC, &tc)!=S_OK && videoframe->GetTimecode(bmdTimecodeVITCField2, &tc)!=S_OK)) {
+        tc = NULL;
+        kind = "ancillary timecode, rp188";
+        if (videoframe->GetTimecode(bmdTimecodeRP188VITC1, &tc)!=S_OK) {
+            if (videoframe->GetTimecode(bmdTimecodeRP188VITC2, &tc)==S_OK)
+                odd = true;
+            else if (videoframe->GetTimecode(bmdTimecodeRP188Any, &tc)==S_OK)
+                odd = (tc->GetFlags() & bmdTimecodeFieldMark)!=0;
+            else
+                tc = NULL;
+        }
+    }
+    if (tc && sd && timecode_kind!=kind) {
+        dlmessage("info: the enc->dec chain sends timecode as %s", kind);
+        timecode_kind = kind;
     }
     uint8_t hh, mm, ss, ff;
     if (tc) {
@@ -839,17 +849,13 @@ void top_up_audio(IDeckLinkOutput *output, tone_t *tone, bool started, double sa
     }
 }
 
-/* set the timecode in the ancillary data of a frame, following smpte st 12-2 for the choice of vitc1 and vitc2 */
-void set_timecode(IDeckLinkMutableVideoFrame *frame, const timecode_t *tc, bool dropframe, bool progressive, bool highrate, bool sd)
+/* set the timecode of a frame as either vitc1 and vitc2 or vitc and vitc field 2, following smpte st 12-2 for the choice of each */
+void set_timecode_as(IDeckLinkMutableVideoFrame *frame, const timecode_t *tc, bool dropframe, bool progressive, bool highrate, BMDTimecodeFormat vitc1, BMDTimecodeFormat vitc2)
 {
     /* the frames field cannot exceed 30, so high frame rates count frame pairs */
     int ff = highrate? tc->ff/2 : tc->ff;
     bool odd = tc->ff & 1;
     BMDTimecodeFlags flags = dropframe? bmdTimecodeIsDropFrame : bmdTimecodeFlagDefault;
-
-    /* standard definition has vitc in the vertical interval rather than rp188 */
-    BMDTimecodeFormat vitc1 = sd? bmdTimecodeVITC : bmdTimecodeRP188VITC1;
-    BMDTimecodeFormat vitc2 = sd? bmdTimecodeVITCField2 : bmdTimecodeRP188VITC2;
 
     /* an interlaced or psf frame has both, a high frame rate uses vitc1 for even frames and vitc2 for odd */
     bool set1 = !progressive || !highrate || !odd;
@@ -866,6 +872,15 @@ void set_timecode(IDeckLinkMutableVideoFrame *frame, const timecode_t *tc, bool 
         if (result!=S_OK)
             dlapierror(result, "error: failed to set timecode");
     }
+}
+
+/* set the timecode of a frame, in sd as vitc and also rp188 where the card can send it in sd, since a chain may pass only one of them */
+void set_timecode(IDeckLinkMutableVideoFrame *frame, const timecode_t *tc, bool dropframe, bool progressive, bool highrate, bool sd, bool rp188)
+{
+    if (sd)
+        set_timecode_as(frame, tc, dropframe, progressive, highrate, bmdTimecodeVITC, bmdTimecodeVITCField2);
+    if (rp188)
+        set_timecode_as(frame, tc, dropframe, progressive, highrate, bmdTimecodeRP188VITC1, bmdTimecodeRP188VITC2);
 }
 
 #ifdef HAVE_FREETYPE
@@ -1077,7 +1092,7 @@ void usage(int exitcode)
     fprintf(stderr, "%s: measure the latency and lipsync of an enc->dec chain from the sdi output back to the sdi input\n", appname);
     fprintf(stderr, "usage: %s [options]\n", appname);
     fprintf(stderr, "  -s, --sizeformat    : specify display size format: 480i,480p,576i,720p,1080i,1080p [optional +framerate] (default: 720p5994)\n");
-    fprintf(stderr, "  -c, --calibrate     : measure the card's own delay and lipsync with a loopback cable and save them, lipsync is measured every 30 seconds (default: subtract the saved ones)\n");
+    fprintf(stderr, "  -c, --calibrate     : measure the card's own delay and lipsync with a loopback cable and save them, lipsync is measured every %d seconds (default: subtract the saved ones)\n", CYCLE_SECONDS);
     fprintf(stderr, "  -f, --calfile       : calibration file (default: ~/.dlsync)\n");
     fprintf(stderr, "  -i, --index         : index of decklink card to use (default: 0)\n");
     fprintf(stderr, "  -q, --quiet         : decrease verbosity, can be used multiple times\n");
@@ -1292,9 +1307,17 @@ int main(int argc, char *argv[])
         dlmessage("info: the enc->dec chain is already in %s", calmode);
 
     /* set the video output mode, with timecode in the ancillary data */
-    result = output->EnableVideoOutput(mode->GetDisplayMode(), sd? bmdVideoOutputVITC : bmdVideoOutputRP188);
+    /* in sd send rp188 as well as vitc if the card can, on 4k models */
+    bool rp188 = true;
+    result = output->EnableVideoOutput(mode->GetDisplayMode(), sd? bmdVideoOutputVITC | bmdVideoOutputRP188 : bmdVideoOutputRP188);
+    if (result!=S_OK && sd) {
+        rp188 = false;
+        result = output->EnableVideoOutput(mode->GetDisplayMode(), bmdVideoOutputVITC);
+    }
     if (result!=S_OK)
         dlapierror(result, "failed to enable video output");
+    if (sd && verbose>=1)
+        dlmessage("info: sending timecode as vitc%s", rp188? " and rp188" : "");
 
     /* set the audio output mode and fill the audio buffer during preroll */
     tone_t tone = {0, false, audio_channels(card, AUDIO_CHANNELS), NULL};
@@ -1415,7 +1438,7 @@ int main(int argc, char *argv[])
             memcpy(uyvy, background[frame_is_on(scheduled, cycle)? 0 : 1], size);
             timecode_t tc;
             frame_to_timecode(scheduled, fps, dropframe, &tc);
-            set_timecode(frame, &tc, dropframe, progressive, highrate, sd);
+            set_timecode(frame, &tc, dropframe, progressive, highrate, sd, rp188);
 #ifdef HAVE_FREETYPE
             char string[16];
             snprintf(string, sizeof(string), "%02d:%02d:%02d%c%02d", tc.hh, tc.mm, tc.ss, dropframe? ';' : ':', highrate? tc.ff/2 : tc.ff);

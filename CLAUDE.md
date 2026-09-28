@@ -39,7 +39,9 @@ the duplex mode). Each received frame's timecode is turned back into the frame n
 was sent as (`timecode_to_frame`, the inverse of `frame_to_timecode`, unwrapped to the
 nearest day), whose send time is its number times the frame duration in output stream
 time. At high frame rates a frame carrying VITC2 rather than VITC1 is the odd one of its
-pair. A change of display mode in the chain wakes the main loop, which stops and exits
+pair. In SD the timecode is sent as VITC and, where the card can (the 4K models), as RP188
+too, and read back as whichever arrives, VITC first: the enc->dec chain tested passes only
+the RP188 (ancillary timecode) in 576i and drops VITC. A change of display mode in the chain wakes the main loop, which stops and exits
 with an error. Capture passthrough is disabled so the output never follows the input.
 
 The latency is the frame's `GetHardwareReferenceTimestamp` less its send time. On the 4K
@@ -49,8 +51,8 @@ clock, not the output clock, by reading input clock, stream time, input clock an
 the midpoint. The stream time drifts about 46 ppm against that clock, so the main loop
 publishes the tightest sample of each second to the callback rather than measuring once.
 
-The picture (bars or black) and the tone are on for 30 s of frames (`30*fps`, so 30.03 s at
-59.94) and off for the same, `frame_is_on()`. The tone's gain is a pure function of the
+The picture (bars or black) and the tone are on for `CYCLE_SECONDS` (10) s of frames (`10*fps`, so 10.01 s
+at 59.94) and off for the same, `frame_is_on()`. It was 30 s, cut to 10 s to see results sooner. The tone's gain is a pure function of the
 sample number, `tone_gain()`: a 5 ms linear ramp centred on the exact time of the first frame
 of each run, which falls between samples at 59.94. Received audio samples are timed on the
 input's clock through the stream time of the video frame they came with. The level is the
@@ -65,7 +67,7 @@ mean luma of each frame is only a check against its timecode.
 `--calibrate`, run on a loopback cable, saves the mean latency and lipsync as the card's own
 to `~/.dlsync` (or `-f`), one line per mode keyed by `describe_display_mode`, e.g.
 `720p5994 video 16.661 lipsync 0.123`, and normal runs subtract them. Lipsync needs the off
-edge at 30 s and the on edge at 60 s; a calibration stopped before any edge keeps the
+edge at 10 s and the on edge at 20 s; a calibration stopped before any edge keeps the
 lipsync saved before.
 
 At startup `IDeckLinkStatus` gives the mode the card is still sending from its last use
@@ -77,9 +79,10 @@ mode is waited for rather than fatal, nothing is measured, and the status line s
 is being waited for. It has settled once the latency has stayed within half a frame for
 `SETTLE_SECONDS` (10). After that a mode change is fatal. The lipsync of the encoder and
 decoder tested is different after each restart (+58, +75, +77, +96 ms at 720p59.94) but
-steady within a run to 0.15 ms, while its latency returns to within 1 ms. After a mode
+steady within a run to 0.15 ms, while its latency returns to within 1 ms. Each stereo pair
+can be encoded with a different audio codec, so pairs can differ in lipsync by tens of ms. After a mode
 change the first lipsync measurement is left out (`discard_first`) as a precaution, which
-delays the first result by 30 s; so far the one left out has matched the next.
+delays the first result by 10 s; so far the one left out has matched the next.
 
 Messages to the user speak of the "enc->dec chain", the "end-to-end latency" and the
 "lipsync" per channel, never of edges or the picture and tone turning on or off: each
