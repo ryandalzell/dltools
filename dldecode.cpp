@@ -1114,8 +1114,6 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
                 break;
             ptr = buf;
 
-            /* the input has jumped, so throw away the part of a frame the parser
-               is holding rather than joining it to data which does not follow it */
             if (format->discontinuity()) {
                 av_parser_close(parser);
                 parser = av_parser_init(codecid);
