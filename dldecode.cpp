@@ -21,6 +21,8 @@ dldecode::dldecode()
     last_sts = 0;
     timestamp = 0;
     frames_since_pts = 0;
+    /* audio */
+    channels = 2;
     /* debug */
     top_field_first = 1;
     blank_field = 0;
@@ -370,6 +372,9 @@ int dlpcm::attach(dlformat *f)
         return -1;
     }
 
+    /* every channel is decoded, the caller maps them to the output */
+    channels = number_channels;
+
     /* allocate the packet buffer */
     pkt = (unsigned char *) malloc(audio_packet_size);
 
@@ -496,8 +501,10 @@ decode_t dlpcm::decode(unsigned char *samples, size_t sampsize) // sampsize is i
         //if (start!=end)
         //    dlmessage("start=%d end=%d", start-data, end-data);
 
-        /* copy data from aes3 buffer to audio buffer */
-        for (unsigned char *ptr=pkt; ptr<pkt+audio_packet_size && numsamps<sampsize; numsamps+=4) {
+        /* copy data from aes3 buffer to audio buffer, a pair of channels at a time,
+           as the pairs of a sample frame follow one another in the packet */
+        size_t limit = sampsize - sampsize%(2*number_channels);
+        for (unsigned char *ptr=pkt; ptr<pkt+audio_packet_size && numsamps<limit; numsamps+=4) {
             switch (bits_per_sample) {
                 case 16:
                     samples[numsamps+0] = ff_reverse[ptr[0]];
@@ -528,9 +535,9 @@ decode_t dlpcm::decode(unsigned char *samples, size_t sampsize) // sampsize is i
 
     } while (discontinuity); //(numsamps<sampsize);
 
-    /* numsamps counts bytes in the sample buffer, four per sample frame */
+    /* numsamps counts bytes in the sample buffer, two per channel of a sample frame */
     results.size += numsamps;
-    frames_since_pts += numsamps /4; /* number of sample frames */
+    frames_since_pts += numsamps / (2*number_channels); /* number of sample frames */
 
     /* extrapolate a timestamp if necessary,
      * should not be required according to the spec para 6.10 */

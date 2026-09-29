@@ -289,9 +289,13 @@ while.
 audio, with no option yet to change it. `audio_channels()` in `dlutil.cpp` reduces that to
 the most the card reports in `BMDDeckLinkMaximumAudioChannels`, from the counts the SDK
 accepts (2, 8, 16, 32, 64), so a card with 16 or more is ready for a larger count and a
-card with fewer falls back with a message. For now every pair carries the same audio:
-`dlplay` copies each decoded stereo frame into every pair with `duplicate_stereo()`, into a
-separate output buffer, so the scheduling offsets are in frames of `aud_channels*2` bytes;
+card with fewer falls back with a message. A decoder reports how many channels its sample
+frames have in its public `channels` (2 unless it sets it; only `dlpcm` does, with every
+channel of a 302M stream, 2, 4, 6 or 8), so a decoded frame is `2*channels` bytes.
+`dlplay` repeats those channels to fill the output with `duplicate_channels()`, so stereo
+goes into every pair and 4-channel 302M plays as 1-4 then 1-4 again, and a card with fewer
+channels than the stream takes the first ones. The output is a separate buffer, so the
+scheduling offsets are in frames of `aud_channels*2` bytes;
 `dlcard` and `dlsync` write the tone into every channel, from a block buffer allocated for
 the channel count. `dlsync` captures as many channels as it sends, measuring lipsync in
 each, with its arrays sized for `MAX_AUDIO_CHANNELS` (64). Changing the channel count on

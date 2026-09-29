@@ -64,6 +64,9 @@ public: /* yes public, we're not designing a type library here */
     float framerate;
     pixelformat_t pixelformat;
 
+    /* audio parameters, the decoded sample frames are this many channels of 16-bit samples */
+    int channels;
+
     /* decoder debug */
 public:
     virtual const char *description() { return "unknown"; }
