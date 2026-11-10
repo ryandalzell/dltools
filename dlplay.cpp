@@ -233,7 +233,7 @@ void usage(int exitcode)
     fprintf(stderr, "  -2, --halfrate      : allow using half frame rate, e.g. 30fps when 60fps is not supported (default: off)\n");
     fprintf(stderr, "  -l, --luma          : display luma plane only (default: luma and chroma)\n");
     fprintf(stderr, "  -=, --videoonly     : play video only (default: video and audio if possible)\n");
-    fprintf(stderr, "  -~, --audiooonly    : play audio only (default: video and audio if possible)\n");
+    fprintf(stderr, "  -~, --audioonly     : play audio only, with a black picture (default: video and audio if possible)\n");
     fprintf(stderr, "  -p, --video-pid     : decode specific video pid from transport stream (default: first program)\n");
     fprintf(stderr, "  -o, --audio-pid     : decode specific audio pid from transport stream (default: first program)\n");
     fprintf(stderr, "  -i, --index         : index of decklink card to use (default: 0)\n");
@@ -895,6 +895,47 @@ int main(int argc, char *argv[])
         if (video && verbose>=1)
             dlmessage("info: video format is %dx%d%c%.2f %s", pic_width, pic_height, interlaced? 'i' : 'p', framerate, pixelformatname[pixelformat]);
 
+        /* the card only plays audio with a video output, so audio alone has a black picture,
+           in the mode the card is already sending so that what it is connected to is not disturbed */
+        BMDDisplayMode current = 0;
+        if (!video && !sizeformat) {
+            void *voidptr;
+            if (card->QueryInterface(IID_IDeckLinkStatus, &voidptr)==S_OK) {
+                IDeckLinkStatus *status = (IDeckLinkStatus *)voidptr;
+                int64_t value;
+                if (status->GetInt(bmdDeckLinkStatusCurrentVideoOutputMode, &value)==S_OK)
+                    current = value;
+                status->Release();
+            }
+
+            /* look the mode up for its size and frame rate */
+            IDeckLinkDisplayModeIterator *iterator;
+            IDeckLinkDisplayMode *m;
+            bool found = false;
+            if (current && output->GetDisplayModeIterator(&iterator)==S_OK) {
+                while (!found && iterator->Next(&m)==S_OK) {
+                    if (m->GetDisplayMode()==current) {
+                        BMDTimeValue duration;
+                        BMDTimeScale scale;
+                        m->GetFrameRate(&duration, &scale);
+                        dis_width = m->GetWidth();
+                        dis_height = m->GetHeight();
+                        interlaced = m->GetFieldDominance()!=bmdProgressiveFrame;
+                        framerate = (float)scale/duration;
+                        found = true;
+                    }
+                    m->Release();
+                }
+                iterator->Release();
+            }
+
+            /* a card which is not sending anything has the default mode of dlcard */
+            if (!found) {
+                current = 0;
+                sizeformat = (char *)"720p5994";
+            }
+        }
+
         /* determine display dimensions */
         if (sizeformat) {
             /* lookup specified format, but don't undo an explicit frame rate */
@@ -903,7 +944,7 @@ int main(int argc, char *argv[])
             /* the 525 line display modes are 486 lines high */
             if (dis_height==480)
                 dis_height = 486;
-        } else {
+        } else if (video) {
             /* determine from picture parameters */
             dis_width = pic_width;
             dis_height = pic_height;
@@ -932,7 +973,7 @@ int main(int argc, char *argv[])
         IDeckLinkDisplayMode *mode;
         BMDTimeValue framerate_duration;
         BMDTimeScale framerate_scale;
-        if (video) {
+        {
             IDeckLinkDisplayModeIterator *iterator;
             if (output->GetDisplayModeIterator(&iterator) != S_OK)
                 dlerror("failed to get display mode iterator");
@@ -948,13 +989,20 @@ int main(int argc, char *argv[])
                     dlmessage("mode available: %s", name);
                     free((char *)name);
                 }
+                /* the mode the card is sending is matched exactly */
+                if (current) {
+                    if (mode->GetDisplayMode()==current)
+                        break;
+                    mode->Release();
+                    continue;
+                }
                 if (mode->GetWidth()==dis_width && mode->GetHeight()==dis_height) {
                     if ((mode->GetFieldDominance()==bmdProgressiveFrame) ^ interlaced) {
                         mode->GetFrameRate(&framerate_duration, &framerate_scale);
                         /* look for an integer frame rate match */
                         if ((framerate_scale / framerate_duration)==(int)floor(framerate))
                             break;
-                        if (allowhalfrate) {
+                        if (allowhalfrate && video) {
                             /* also look for a half-rate match, to support 1080p60 in a hacky way */
                             if ((framerate_scale / framerate_duration)==(int)floor(framerate/2)) {
                                 halfframerate = true;
@@ -970,7 +1018,7 @@ int main(int argc, char *argv[])
             iterator->Release();
 
             if (mode==NULL)
-                dlexit("error: failed to find mode for %dx%d%c%.2f", pic_width, pic_height, interlaced? 'i' : 'p', framerate);
+                dlexit("error: failed to find mode for %dx%d%c%.2f", dis_width, dis_height, interlaced? 'i' : 'p', framerate);
 
             /* display mode name */
             const char *name = NULL;
@@ -980,7 +1028,8 @@ int main(int argc, char *argv[])
 
             /* a decoder which weaves fields into frames needs the field the mode displays first */
             topfieldfirst = mode->GetFieldDominance()!=bmdLowerFieldFirst;
-            video->set_field_order(topfieldfirst);
+            if (video)
+                video->set_field_order(topfieldfirst);
         }
 
         /* vanc timecode enabled */
@@ -999,6 +1048,13 @@ int main(int argc, char *argv[])
             }
 
             HRESULT result = output->EnableVideoOutput(mode->GetDisplayMode(), videoOutputFlags);
+            if (result!=S_OK)
+                dlapierror(result, "failed to enable video output");
+        } else {
+            /* audio only has one black frame, the size of the display mode */
+            alloc.init(dis_width*2*dis_height);
+
+            HRESULT result = output->EnableVideoOutput(mode->GetDisplayMode(), bmdVideoOutputFlagDefault);
             if (result!=S_OK)
                 dlapierror(result, "failed to enable video output");
         }
@@ -1402,16 +1458,32 @@ int main(int argc, char *argv[])
                     return 2;
                 }
 
+                /* schedule a black frame at the start, which the card holds as nothing follows it */
+                IDeckLinkMutableVideoFrame *black_frame;
+                IDeckLinkVideoBuffer *buffer;
+                HRESULT result = alloc.AllocateVideoBuffer(&buffer);
+                if (result!=S_OK)
+                    dlapierror(result, "error: failed to allocate video buffer");
+                result = output->CreateVideoFrameWithBuffer(dis_width, dis_height, dis_width*2, bmdFormat8BitYUV, bmdFrameFlagDefault, buffer, &black_frame);
+                if (result!=S_OK)
+                    dlapierror(result, "error: failed to create video frame");
+                void *voidptr;
+                result = buffer->GetBytes(&voidptr);
+                if (result!=S_OK)
+                    dlapierror(result, "error: failed to get pointer to data in video frame");
+                unsigned char *black = (unsigned char *)voidptr;
+                for (int i=0; i<dis_width*dis_height*2; i+=2) {
+                    black[i] = 0x80;
+                    black[i+1] = 0x10;
+                }
+                result = output->ScheduleVideoFrame(black_frame, audio_start_time, lround(180000.0/framerate), 180000);
+                if (result!=S_OK)
+                    dlapierror(result, "error: failed to schedule video frame");
+
                 /* start the playback */
-                HRESULT result = output->StartScheduledPlayback(audio_start_time, 180000, 1.0);
+                result = output->StartScheduledPlayback(audio_start_time, 180000, 1.0);
                 if (result != S_OK)
                     dlapierror(result, "error: failed to start audio playback");
-
-                audio_start_time = aud.timestamp;
-                if (verbose>=1) {
-                    dlmessage("info: start time of audio is %lld, %s", audio_start_time, describe_sts(audio_start_time));
-                }
-
             }
 
             /* loop debugging */
@@ -1481,7 +1553,7 @@ int main(int argc, char *argv[])
         sem_destroy(&sem);
 
         /* report timing statistics */
-        if (verbose>=1)
+        if (verbose>=1 && framenum && queuenum)
             dlmessage("\nmean decode time=%.2fms, mean render time=%.2fms (frame period %.2fms)", (decodetime/framenum)/1000.0, (queuetime/queuenum)/1000.0, 1000.0/framerate);
 
         /* tidy up */

@@ -353,6 +353,16 @@ scheduled before the start time, which keeps everything after it in sync, and `d
 reports how much audio that was at verbosity 1. A video with no timestamps of its own,
 where the audio has them, starts with the audio instead.
 
+`-~` plays the audio of a transport stream alone. The card refuses to start scheduled
+playback without a video output ("access denied"), so the video output is enabled in the
+mode given with `-s`, or else the mode the card is already sending
+(`bmdDeckLinkStatusCurrentVideoOutputMode`, as `dlsync` reads it), so that what it is
+connected to is not disturbed, or 720p59.94 as `dlcard` defaults to if the card is sending
+nothing, and one black frame is scheduled
+at the start time of the audio, which the card holds as nothing follows it. There is no
+frame completion to wait on, so the loop sleeps 250ms between top-ups of the audio buffer,
+and with `-c` it stops when the buffer has emptied after the last pass.
+
 Frame memory comes from `dlalloc`, a custom `IDeckLinkVideoBufferAllocator` (the SDK
 14.3+ interface, replacing the old memory allocator) handing out a fixed pool of 256
 `dlvideobuf` objects.
