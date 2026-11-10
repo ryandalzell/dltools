@@ -59,6 +59,16 @@ protected:
     /* verbose level */
     int verbose;
 
+    /* 3:2 pulldown, where each picture is shown for two or three fields of the output */
+    bool weave_pulldown(const unsigned char *const data[3], const int linesize[3], long long pts, bool repeat, bool top_first, bool progressive, unsigned char *buffer, int *slot, sts_t *sts);
+    bool pulldown;
+    int fields_left;        /* fields the picture last decoded has still to give */
+    sts_t field_sts;        /* time of the next field of the output, -1 until known */
+    long long field_pts;    /* the last timestamp a picture came with */
+    sts_t frame_sts;        /* time of the last frame of the output, -1 before the first */
+    sts_t pts_shift;        /* added to the timestamps to keep the frames a whole number of frames apart */
+    bool field_start;       /* the next picture is the first, or the first after a discontinuity */
+
 public: /* yes public, we're not designing a type library here */
     /* video parameters */
     int width;
@@ -141,6 +151,11 @@ protected:
     /* libmpeg2 variables */
     mpeg2dec_t *mpeg2dec;
     const mpeg2_info_t *info;
+
+    /* the picture last decoded, which libmpeg2 keeps until it is parsed again */
+    const unsigned char *held[3];
+    bool held_progressive;
+    bool repeat_seen;       /* a picture with a repeated field has been reported */
 };
 
 /* pcm class */
@@ -225,7 +240,6 @@ public:
 
 protected:
     bool weave_field(unsigned char *buffer);
-    bool weave_pulldown(unsigned char *buffer, int *slot, sts_t *sts);
 
 public:
     virtual const char *description() { return codeccontext->codec->name; }
@@ -250,15 +264,8 @@ protected:
     bool pending;           /* the first field of the frame has been written */
     long long pending_pts;  /* timestamp of the first field */
 
-    /* 3:2 pulldown, where each picture is shown for two or three fields of the output */
-    bool pulldown;
+    /* looking for 3:2 pulldown */
     bool pulldown_warned;   /* the stream started pulldown after it was taken as progressive */
-    int fields_left;        /* fields the picture in frame has still to give */
-    sts_t field_sts;        /* time of the next field of the output, -1 until known */
-    long long field_pts;    /* the last timestamp a picture came with */
-    sts_t frame_sts;        /* time of the last frame of the output, -1 before the first */
-    sts_t pts_shift;        /* added to the timestamps since the last loop to keep whole frames between the passes */
-    bool field_start;       /* the next picture is the first, or the first after a discontinuity */
     AVFrame *probed;        /* the second picture decoded when looking for pulldown */
 
     /* error string */

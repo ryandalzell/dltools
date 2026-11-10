@@ -26,6 +26,14 @@ dldecode::dldecode()
     /* debug */
     top_field_first = 1;
     blank_field = 0;
+    /* pulldown */
+    pulldown = false;
+    fields_left = 0;
+    field_sts = -1ll;
+    field_pts = -1ll;
+    frame_sts = -1ll;
+    pts_shift = 0;
+    field_start = true;
 }
 
 dldecode::~dldecode()
@@ -53,6 +61,103 @@ void dldecode::set_field_order(int tff)
 void dldecode::set_blank_field(int order)
 {
     blank_field = order;
+}
+
+/* write the fields of a picture into the frame, returning true when they complete the frame.
+   the picture is a new one if the last has no fields left, otherwise it is the last again */
+bool dldecode::weave_pulldown(const unsigned char *const data[3], const int linesize[3], long long pts, bool repeat, bool top_first, bool progressive, unsigned char *buffer, int *slot, sts_t *sts)
+{
+    const bool is8bit = pixelformat_is_8bit(pixelformat);
+    const int rowbytes = is8bit? width*2 : ((width+47)/48)*128;
+    const sts_t period = llround(90000.0/framerate);
+
+    /* a new picture is shown for two fields, or three with a repeated first field */
+    if (fields_left==0) {
+        fields_left = repeat? 3 : 2;
+
+        /* the fields are timed by counting, a timestamp is only taken when it disagrees
+           as the rounding of a 90kHz timestamp would otherwise move a frame by a tick */
+        if (field_start)
+            pts_shift = 0;
+        if (pts>=0 && pts!=field_pts) {
+            field_pts = pts;
+            if (field_sts<0 || field_start)
+                field_sts = pts;
+            else if (llabs(pts+pts_shift-field_sts)>4) {
+                /* the card reports every frame late unless it is a whole number of frames
+                   from the last, so the count only jumps by whole frames, and not back */
+                long long frames = llround((double)(pts+pts_shift-field_sts)/(2*period));
+                if (frames>0)
+                    field_sts += frames*2*period;
+                pts_shift = field_sts - pts;
+            }
+        }
+        if (field_sts<0)
+            field_sts = 0;
+
+        /* a frame of the output starts with the field the display shows first, so
+           the first field of the first picture is skipped if it is the other one */
+        if (field_start) {
+            const sts_t skip = (top_first? 1 : 0)!=top_field_first? period : 0;
+
+            /* after a loop the timestamps carry on from any point, so the first frame
+               is moved to a whole number of frames from the last one */
+            if (frame_sts>=0 && field_sts+skip>frame_sts) {
+                long long frames = llround((double)(field_sts+skip-frame_sts)/(2*period));
+                if (frames<1)
+                    frames = 1;
+                const sts_t snapped = frame_sts + frames*2*period - skip;
+                pts_shift = snapped - field_sts;
+                field_sts = snapped;
+            }
+
+            if (skip) {
+                fields_left--;
+                field_sts += period;
+            }
+            field_start = false;
+        }
+    }
+
+    /* each field of the output takes its own rows from the picture shown at that time */
+    while (fields_left>0 && *slot<2) {
+        const int top = *slot==0? top_field_first : !top_field_first;
+        const int row = top? 0 : 1;
+        const bool chroma420 = pixelformat==I420 || pixelformat==YU15;
+
+        /* the chroma of a progressive 4:2:0 picture is shared by both fields, as it is when
+           the whole frame is converted, but an interlaced picture has chroma rows for each field */
+        const bool shared = chroma420 && progressive;
+        const pixelformat_t rowformat = !shared? pixelformat : is8bit? I422 : YU20;
+
+        const unsigned char *plane[3];
+        int stride[3];
+        for (int i=0; i<3; i++) {
+            if (i>0 && shared) {
+                plane[i] = data[i];
+                stride[i] = linesize[i];
+            } else {
+                plane[i] = data[i] + row*linesize[i];
+                stride[i] = linesize[i]*2;
+            }
+        }
+
+        /* the field goes into every other row, the top field into the first */
+        unsigned char *out = buffer + row*rowbytes;
+        if (is8bit)
+            convert_yuv_uyvy_rows(plane, stride, out, rowbytes*2, width, height/2, rowformat);
+        else
+            convert_yuv10_v210_rows(plane, stride, out, rowbytes*2, width, height/2, rowformat);
+
+        /* the frame is timed by its first field */
+        if (*slot==0)
+            *sts = frame_sts = field_sts;
+        field_sts += period;
+        fields_left--;
+        (*slot)++;
+    }
+
+    return *slot==2;
 }
 
 dlyuv::dlyuv()
@@ -204,6 +309,9 @@ dlmpeg2::dlmpeg2()
     mpeg2_accel(MPEG2_ACCEL_DETECT);
     /* don't assume timestamps start from zero */
     last_sts = -1;
+    held[0] = held[1] = held[2] = NULL;
+    held_progressive = false;
+    repeat_seen = false;
 }
 
 dlmpeg2::~dlmpeg2()
@@ -242,6 +350,8 @@ int dlmpeg2::attach(dlformat *f)
                 interlaced = !(info->sequence->flags & SEQ_FLAG_PROGRESSIVE_SEQUENCE);
                 framerate = 27000000.0/info->sequence->frame_period;
                 pixelformat = info->sequence->height==info->sequence->chroma_height? I422 : I420;
+                /* an interlaced sequence is played as fields, as any of its pictures can repeat one */
+                pulldown = interlaced;
                 seq_found = 1;
                 break;
 
@@ -256,6 +366,18 @@ int dlmpeg2::attach(dlformat *f)
 decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
 {
     decode_t results = {0, -1ll, 0ll, 0ll};
+
+    /* fields of a 3:2 pulldown written to this frame, and the time of the first */
+    int slot = 0;
+    sts_t slot_sts = -1ll;
+    const int linesize[3] = {width, width/2, width/2};
+
+    /* the picture last decoded can have a field still to give, or two which make a frame */
+    if (pulldown && fields_left>0 && weave_pulldown(held, linesize, -1ll, false, false, held_progressive, uyvy, &slot, &slot_sts)) {
+        results.size = width*height*2;
+        results.timestamp = last_sts = slot_sts;
+        return results;
+    }
 
     const unsigned char *data;
     size_t read = 0;
@@ -282,6 +404,34 @@ decode_t dlmpeg2::decode(unsigned char *uyvy, size_t uyvysize)
             case STATE_END:
                 if (info->display_fbuf) {
                     const unsigned char *yuv[3] = {info->display_fbuf->buf[0], info->display_fbuf->buf[1], info->display_fbuf->buf[2]};
+                    const mpeg2_picture_t *picture = info->display_picture;
+
+                    /* film in 3:2 pulldown repeats a field */
+                    if (pulldown && picture && picture->nb_fields==3 && !repeat_seen) {
+                        if (verbose>=1)
+                            dlmessage("video has 3:2 pulldown");
+                        repeat_seen = true;
+                    }
+                    if (pulldown && picture) {
+                        /* a timestamp which goes back is from a bug in libmpeg2 overwriting the tag */
+                        sts_t pts = -1ll;
+                        if (picture->flags & PIC_FLAG_TAGS)
+                            pts = ((sts_t)(picture->tag2)<<32) | (sts_t)picture->tag;
+                        if (pts<last_sts)
+                            pts = -1ll;
+
+                        /* write the fields of this picture, and wait for the next picture if the frame needs another */
+                        held[0] = yuv[0];
+                        held[1] = yuv[1];
+                        held[2] = yuv[2];
+                        held_progressive = picture->flags & PIC_FLAG_PROGRESSIVE_FRAME;
+                        if (!weave_pulldown(held, linesize, pts, picture->nb_fields==3, picture->flags & PIC_FLAG_TOP_FIELD_FIRST, held_progressive, uyvy, &slot, &slot_sts))
+                            break;
+                        results.size = width*height*2;
+                        results.timestamp = last_sts = slot_sts;
+                        return results;
+                    }
+
                     convert_yuv_uyvy(yuv, uyvy, width, height, pixelformat);
                     results.size = width*height*2;
                     sts_t sts = -1;
@@ -957,14 +1107,7 @@ void dlffvideo::init()
     pending = false;
     pending_pts = -1ll;
     probed = NULL;
-    pulldown = false;
     pulldown_warned = false;
-    fields_left = 0;
-    field_sts = -1ll;
-    field_pts = -1ll;
-    frame_sts = -1ll;
-    pts_shift = 0;
-    field_start = true;
     errorstring = (char *) malloc(AV_ERROR_MAX_STRING_SIZE);
     codecid = AV_CODEC_ID_H264; /* default codec is h.264 */
 }
@@ -1171,95 +1314,6 @@ bool dlffvideo::weave_field(unsigned char *buffer)
     return true;
 }
 
-/* write the fields of the picture just decoded into the frame, returning true when they complete the frame */
-bool dlffvideo::weave_pulldown(unsigned char *buffer, int *slot, sts_t *sts)
-{
-    const bool is8bit = pixelformat_is_8bit(pixelformat);
-    const int rowbytes = is8bit? width*2 : ((width+47)/48)*128;
-    const sts_t period = llround(90000.0/framerate);
-
-    /* a new picture is shown for two fields, or three with a repeated first field */
-    if (fields_left==0) {
-        fields_left = frame->repeat_pict==1? 3 : 2;
-
-        /* the fields are timed by counting, a timestamp is only taken when it disagrees
-           as the rounding of a 90kHz timestamp would otherwise move a frame by a tick */
-        if (field_start)
-            pts_shift = 0;
-        if (frame->pts>=0 && frame->pts!=field_pts) {
-            field_pts = frame->pts;
-            if (field_sts<0 || field_start || llabs(frame->pts+pts_shift-field_sts)>4)
-                field_sts = frame->pts + pts_shift;
-        }
-        if (field_sts<0)
-            field_sts = 0;
-
-        /* a frame of the output starts with the field the display shows first, so
-           the first field of the first picture is skipped if it is the other one */
-        if (field_start) {
-            const int top = (frame->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST)? 1 : 0;
-            const sts_t skip = top!=top_field_first? period : 0;
-
-            /* after a loop the timestamps carry on from any point, but the card reports every
-               frame late unless they carry on a whole number of frames from the last one */
-            if (frame_sts>=0 && field_sts+skip>frame_sts) {
-                long long frames = llround((double)(field_sts+skip-frame_sts)/(2*period));
-                if (frames<1)
-                    frames = 1;
-                const sts_t snapped = frame_sts + frames*2*period - skip;
-                pts_shift = snapped - field_sts;
-                field_sts = snapped;
-            }
-
-            if (skip) {
-                fields_left--;
-                field_sts += period;
-            }
-            field_start = false;
-        }
-    }
-
-    /* each field of the output takes its own rows from the picture shown at that time */
-    while (fields_left>0 && *slot<2) {
-        const int top = *slot==0? top_field_first : !top_field_first;
-        const int row = top? 0 : 1;
-        const bool chroma420 = pixelformat==I420 || pixelformat==YU15;
-
-        /* the chroma of a progressive 4:2:0 picture is shared by both fields, as it is when
-           the whole frame is converted, but an interlaced picture has chroma rows for each field */
-        const bool shared = chroma420 && !(frame->flags & AV_FRAME_FLAG_INTERLACED);
-        const pixelformat_t rowformat = !shared? pixelformat : is8bit? I422 : YU20;
-
-        const unsigned char *data[3];
-        int stride[3];
-        for (int i=0; i<3; i++) {
-            if (i>0 && shared) {
-                data[i] = frame->data[i];
-                stride[i] = frame->linesize[i];
-            } else {
-                data[i] = frame->data[i] + row*frame->linesize[i];
-                stride[i] = frame->linesize[i]*2;
-            }
-        }
-
-        /* the field goes into every other row, the top field into the first */
-        unsigned char *out = buffer + row*rowbytes;
-        if (is8bit)
-            convert_yuv_uyvy_rows(data, stride, out, rowbytes*2, width, height/2, rowformat);
-        else
-            convert_yuv10_v210_rows(data, stride, out, rowbytes*2, width, height/2, rowformat);
-
-        /* the frame is timed by its first field */
-        if (*slot==0)
-            *sts = frame_sts = field_sts;
-        field_sts += period;
-        fields_left--;
-        (*slot)++;
-    }
-
-    return *slot==2;
-}
-
 decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
 {
     decode_t results = {0, -1ll, 0ll, 0ll};
@@ -1396,7 +1450,7 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
                 results.size = pixelformat_is_8bit(pixelformat)? width*height*2 : ((width+47)/48)*128 * height;
             } else if (pulldown) {
                 /* write the fields of this picture, and wait for the next picture if the frame needs another */
-                if (!weave_pulldown(uyvy, &slot, &slot_sts)) {
+                if (!weave_pulldown(frame->data, frame->linesize, frame->pts, frame->repeat_pict==1, frame->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST, !(frame->flags & AV_FRAME_FLAG_INTERLACED), uyvy, &slot, &slot_sts)) {
                     got_frame = 0;
                     continue;
                 }

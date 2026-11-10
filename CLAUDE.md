@@ -357,16 +357,18 @@ Frame memory comes from `dlalloc`, a custom `IDeckLinkVideoBufferAllocator` (the
 14.3+ interface, replacing the old memory allocator) handing out a fixed pool of 256
 `dlvideobuf` objects.
 
-3:2 pulldown (soft telecine) is woven in software by `dlffvideo`, because the card cannot
+3:2 pulldown (soft telecine) is woven in software by the decoder, because the card cannot
 repeat a field: `ScheduleVideoFrame` works in whole frames of the display mode. The output
 is taken as a run of fields half a frame period apart (3003 at 29.97), alternating in
 parity. Each decoded picture is shown for two of them, or three when `repeat_pict` is 1
 (MPEG-2 repeat_first_field, or the top-bottom-top `pic_struct` of H.264), and each field
-takes its own rows from the picture shown at that time, `weave_pulldown()`. So four coded
+takes its own rows from the picture shown at that time, `dldecode::weave_pulldown()`, which
+`dlffvideo` and `dlmpeg2` both call with the planes and flags of a picture. So four coded
 frames become five output frames, each timed by its first field. The fields are timed by
 counting, and a picture's timestamp is only taken when it is more than 4 ticks from the
-count, as a 90kHz PTS cannot hold the 4504.5 of three fields. The picture stays in `frame`,
-with `got_frame` left set, while it has a field still to give to the next output frame.
+count, as a 90kHz PTS cannot hold the 4504.5 of three fields, and then the count only
+jumps by whole frames, and not back. In `dlffvideo` the picture stays in `frame`, with
+`got_frame` left set, while it has a field still to give to the next output frame.
 
 ffmpeg reports such a stream as progressive 29.97, and its `field_order` goes by one
 picture (brv_tdy_130611.ts starts with interlaced pictures and is still called
@@ -390,8 +392,16 @@ of frames on (rio.ts, sarnoff.ts) but need not be: the end of gladiator.1080i60.
 31.38 frames, and the whole second pass was late. So after a discontinuity the field clock
 is moved to the nearest whole frame from the last output frame, and `pts_shift` carries
 that on the timestamps of the rest of the pass, which moves the video up to half a frame
-against the audio. This is only done for pulldown; nothing keeps the other paths on the
-grid.
+against the audio. This is only done where fields are woven; nothing keeps the other paths
+on the grid.
+
+`dlmpeg2`, the `FFMPEG=0` decoder, has the sequence header before any picture, so it weaves
+every interlaced sequence as fields from the start, repeat or not, and reports pulldown at
+the first repeated field (`nb_fields` of 3). libmpeg2 keeps the displayed picture until it
+is parsed again, so `held` points at its planes for the field left over. The timestamp is
+the tag of the displayed picture, where the frame path still uses the current picture's.
+Its timestamps before this stepped by half frames in a stream which mixes film and video
+(brv_tdy_130611.ts), which made every frame late.
 
 An output frame starts with the field the display mode shows first, which `dlplay` sets
 with `set_field_order()` from the mode's field dominance (lower for NTSC SD) and the `s`
@@ -402,7 +412,7 @@ progressive picture anywhere and for an interlaced one in a stream whose field p
 alternates as it must. In 4:2:0 the chroma of a progressive picture is shared by both
 fields, exactly as the whole frame conversion does, but an interlaced picture has chroma
 rows for each field. Frame doubling and tripling in a progressive sequence (`repeat_pict`
-of 2 or 4) is not handled, nor is pulldown in `dlmpeg2` or `dlffmpeg`.
+of 2 or 4) is not handled, nor is pulldown in `dlffmpeg`.
 
 ### Interactive keys in dlplay
 
