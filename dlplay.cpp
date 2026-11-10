@@ -1145,6 +1145,10 @@ int main(int argc, char *argv[])
                         if (result != S_OK) {
                             dlmessage("error: failed to resume audio output\n");
                         }
+
+                        /* the audio is prerolled again with the video */
+                        if (output->BeginAudioPreroll()!=S_OK)
+                            dlmessage("error: failed to begin audio preroll");
                     }
 
                     /* the semaphone has to be re-initialised */
@@ -1342,8 +1346,9 @@ int main(int argc, char *argv[])
 
                 while (aud_rem==0) {
                     unsigned int buffered;
-                    if (output->GetBufferedAudioSampleFrameCount(&buffered) != S_OK)
-                        dlexit("failed to get audio buffer level");
+                    HRESULT level = output->GetBufferedAudioSampleFrameCount(&buffered);
+                    if (level != S_OK)
+                        dlapierror(level, "error: failed to get audio buffer level");
 
                     /* maintain audio buffer at >=0.5 secs */
                     if (buffered >= 24000)
