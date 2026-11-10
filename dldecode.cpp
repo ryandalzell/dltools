@@ -939,6 +939,7 @@ dlffvideo::dlffvideo(enum AVCodecID id)
 dlffvideo::~dlffvideo()
 {
     av_frame_free(&frame);
+    av_frame_free(&probed);
     avcodec_free_context(&codeccontext);
     free(errorstring);
 }
@@ -955,13 +956,32 @@ void dlffvideo::init()
     first_field = -1;
     pending = false;
     pending_pts = -1ll;
+    probed = NULL;
+    pulldown = false;
+    pulldown_warned = false;
+    fields_left = 0;
+    field_sts = -1ll;
+    field_pts = -1ll;
+    frame_sts = -1ll;
+    pts_shift = 0;
+    field_start = true;
     errorstring = (char *) malloc(AV_ERROR_MAX_STRING_SIZE);
     codecid = AV_CODEC_ID_H264; /* default codec is h.264 */
+}
+
+/* find progressive_sequence in an mpeg-2 sequence extension, returning -1 if there is none in the data */
+static int find_progressive_sequence(const unsigned char *buf, size_t size)
+{
+    for (size_t i=0; i+5<size; i++)
+        if (buf[i]==0 && buf[i+1]==0 && buf[i+2]==1 && buf[i+3]==0xb5 && (buf[i+4]>>4)==1)
+            return (buf[i+5]>>3) & 1;
+    return -1;
 }
 
 int dlffvideo::attach(dlformat* f)
 {
     int ret;
+    int progressive_sequence = -1;
 
     /* attach the input source */
     format = f;
@@ -984,6 +1004,11 @@ int dlffvideo::attach(dlformat* f)
     /* initialise the frame */
     frame = av_frame_alloc();
     if (!frame) {
+        dlmessage("failed to allocate video frame");
+        return -1;
+    }
+    probed = av_frame_alloc();
+    if (!probed) {
         dlmessage("failed to allocate video frame");
         return -1;
     }
@@ -1011,14 +1036,24 @@ int dlffvideo::attach(dlformat* f)
         return ret;
     }
 
-    /* decode the first frame to get the image parameters */
-    got_frame = 0;
-    while (!got_frame) {
+    /* decode the first frame to get the image parameters, and a second if the first could be film in 3:2 pulldown */
+    int pictures = 0, wanted = 1;
+    while (pictures<wanted) {
+        /* take a picture the decoder already holds before sending it more */
+        if (pictures==1 && avcodec_receive_frame(codeccontext, probed)==0) {
+            pictures++;
+            break;
+        }
+
         if (size==0) {
             const unsigned char *buf = format->read(&size);
             if (size==0)
                 break;
             ptr = buf;
+
+            /* ffmpeg goes by one picture, but the sequence says whether mpeg-2 is for an interlaced display */
+            if (codecid==AV_CODEC_ID_MPEG2VIDEO && progressive_sequence<0)
+                progressive_sequence = find_progressive_sequence(buf, size);
         }
 
         /* use the parser to split the data into frames */
@@ -1038,22 +1073,29 @@ int dlffvideo::attach(dlformat* f)
                 dlmessage("failed to send a packet for decoding: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret)); */
 
             while (ret >= 0) {
-                ret = avcodec_receive_frame(codeccontext, frame);
+                ret = avcodec_receive_frame(codeccontext, pictures? probed : frame);
                 if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
                     break;
                 else if (ret < 0)
                     dlexit("error during decoding frame");
 
-                got_frame = 1;
+                /* any two pictures of a 3:2 cadence include one with a repeated field */
+                if (pictures==0 && (codecid==AV_CODEC_ID_MPEG2VIDEO || codecid==AV_CODEC_ID_H264) && !(frame->flags & AV_FRAME_FLAG_INTERLACED) && frame->repeat_pict==0)
+                    wanted = 2;
+                pictures++;
                 break;
             }
         }
     }
+    got_frame = pictures>0;
+    pulldown = (pictures>0 && frame->repeat_pict==1) || (pictures>1 && probed->repeat_pict==1);
 
     /* read the image parameters from the codeccontext */
     width = codeccontext->width;
     height = codeccontext->height;
     interlaced = codeccontext->field_order!=AV_FIELD_PROGRESSIVE && codeccontext->field_order!=AV_FIELD_UNKNOWN;
+    if (progressive_sequence>=0)
+        interlaced = !progressive_sequence;
 
     /* hevc codes interlaced video as separate fields, and ffmpeg flags only such a picture as interlaced */
     fields = codecid==AV_CODEC_ID_HEVC && got_frame && (frame->flags & AV_FRAME_FLAG_INTERLACED);
@@ -1061,6 +1103,10 @@ int dlffvideo::attach(dlformat* f)
         height *= 2;
         interlaced = true;
     }
+
+    /* film in 3:2 pulldown is progressive pictures, shown as the fields of an interlaced display */
+    if (pulldown)
+        interlaced = true;
     switch (codeccontext->pix_fmt) {
         //case AV_PIX_FMT_YUV444P  : pixelformat = I444; break;
         case AV_PIX_FMT_YUV422P  :
@@ -1083,7 +1129,7 @@ int dlffvideo::attach(dlformat* f)
 
     /* dump input information to stderr */
     if (verbose>=1)
-        dlmessage("video format is %dx%d%c%.2f", width, height, interlaced? 'i' : 'p', framerate);
+        dlmessage("video format is %dx%d%c%.2f%s", width, height, interlaced? 'i' : 'p', framerate, pulldown? " with 3:2 pulldown" : "");
 
     return 0;
 }
@@ -1125,10 +1171,103 @@ bool dlffvideo::weave_field(unsigned char *buffer)
     return true;
 }
 
+/* write the fields of the picture just decoded into the frame, returning true when they complete the frame */
+bool dlffvideo::weave_pulldown(unsigned char *buffer, int *slot, sts_t *sts)
+{
+    const bool is8bit = pixelformat_is_8bit(pixelformat);
+    const int rowbytes = is8bit? width*2 : ((width+47)/48)*128;
+    const sts_t period = llround(90000.0/framerate);
+
+    /* a new picture is shown for two fields, or three with a repeated first field */
+    if (fields_left==0) {
+        fields_left = frame->repeat_pict==1? 3 : 2;
+
+        /* the fields are timed by counting, a timestamp is only taken when it disagrees
+           as the rounding of a 90kHz timestamp would otherwise move a frame by a tick */
+        if (field_start)
+            pts_shift = 0;
+        if (frame->pts>=0 && frame->pts!=field_pts) {
+            field_pts = frame->pts;
+            if (field_sts<0 || field_start || llabs(frame->pts+pts_shift-field_sts)>4)
+                field_sts = frame->pts + pts_shift;
+        }
+        if (field_sts<0)
+            field_sts = 0;
+
+        /* a frame of the output starts with the field the display shows first, so
+           the first field of the first picture is skipped if it is the other one */
+        if (field_start) {
+            const int top = (frame->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST)? 1 : 0;
+            const sts_t skip = top!=top_field_first? period : 0;
+
+            /* after a loop the timestamps carry on from any point, but the card reports every
+               frame late unless they carry on a whole number of frames from the last one */
+            if (frame_sts>=0 && field_sts+skip>frame_sts) {
+                long long frames = llround((double)(field_sts+skip-frame_sts)/(2*period));
+                if (frames<1)
+                    frames = 1;
+                const sts_t snapped = frame_sts + frames*2*period - skip;
+                pts_shift = snapped - field_sts;
+                field_sts = snapped;
+            }
+
+            if (skip) {
+                fields_left--;
+                field_sts += period;
+            }
+            field_start = false;
+        }
+    }
+
+    /* each field of the output takes its own rows from the picture shown at that time */
+    while (fields_left>0 && *slot<2) {
+        const int top = *slot==0? top_field_first : !top_field_first;
+        const int row = top? 0 : 1;
+        const bool chroma420 = pixelformat==I420 || pixelformat==YU15;
+
+        /* the chroma of a progressive 4:2:0 picture is shared by both fields, as it is when
+           the whole frame is converted, but an interlaced picture has chroma rows for each field */
+        const bool shared = chroma420 && !(frame->flags & AV_FRAME_FLAG_INTERLACED);
+        const pixelformat_t rowformat = !shared? pixelformat : is8bit? I422 : YU20;
+
+        const unsigned char *data[3];
+        int stride[3];
+        for (int i=0; i<3; i++) {
+            if (i>0 && shared) {
+                data[i] = frame->data[i];
+                stride[i] = frame->linesize[i];
+            } else {
+                data[i] = frame->data[i] + row*frame->linesize[i];
+                stride[i] = frame->linesize[i]*2;
+            }
+        }
+
+        /* the field goes into every other row, the top field into the first */
+        unsigned char *out = buffer + row*rowbytes;
+        if (is8bit)
+            convert_yuv_uyvy_rows(data, stride, out, rowbytes*2, width, height/2, rowformat);
+        else
+            convert_yuv10_v210_rows(data, stride, out, rowbytes*2, width, height/2, rowformat);
+
+        /* the frame is timed by its first field */
+        if (*slot==0)
+            *sts = frame_sts = field_sts;
+        field_sts += period;
+        fields_left--;
+        (*slot)++;
+    }
+
+    return *slot==2;
+}
+
 decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
 {
     decode_t results = {0, -1ll, 0ll, 0ll};
     int ret;
+
+    /* fields of a 3:2 pulldown written to this frame, and the time of the first */
+    int slot = 0;
+    sts_t slot_sts = -1ll;
 
     /* start timer */
     unsigned long long start = get_utime();
@@ -1156,7 +1295,18 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
                 frames_since_pts = 0;
                 first_field = -1;
                 pending = false;
+                av_frame_unref(probed);
+                fields_left = 0;
+                field_start = true;
+                slot = 0;
             }
+        }
+
+        /* the second picture decoded when the decoder was attached comes before any other */
+        if (!got_frame && probed->buf[0]) {
+            av_frame_unref(frame);
+            av_frame_move_ref(frame, probed);
+            got_frame = 1;
         }
 
         /* take a picture the decoder already holds before sending it more, as a packet can give two */
@@ -1218,6 +1368,24 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
 
             /* copy frame to the output buffer, 10-bit formats are packed as v210 */
             sts_t sts = frame->pts;
+
+            /* pulldown can start after the first pictures, which only works if the display mode is already interlaced */
+            if (!fields && !pulldown && frame->repeat_pict==1) {
+                if (interlaced) {
+                    if (verbose>=1)
+                        dlmessage("3:2 pulldown starts after the first pictures");
+                    /* the fields carry on from the pictures before, so none is skipped */
+                    pulldown = true;
+                    fields_left = 0;
+                    field_start = false;
+                    field_pts = -1ll;
+                    field_sts = (sts<0 || sts==last_sts)? last_sts + (frames_since_pts+1)*llround(180000.0/framerate) : -1ll;
+                } else if (!pulldown_warned) {
+                    dlmessage("warning: 3:2 pulldown starts after the video was taken as progressive, its frames will be late");
+                    pulldown_warned = true;
+                }
+            }
+
             if (fields) {
                 /* weave a field into every other row, and wait for the second field of the frame */
                 if (!weave_field(uyvy)) {
@@ -1225,6 +1393,14 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
                     continue;
                 }
                 sts = pending_pts;
+                results.size = pixelformat_is_8bit(pixelformat)? width*height*2 : ((width+47)/48)*128 * height;
+            } else if (pulldown) {
+                /* write the fields of this picture, and wait for the next picture if the frame needs another */
+                if (!weave_pulldown(uyvy, &slot, &slot_sts)) {
+                    got_frame = 0;
+                    continue;
+                }
+                sts = slot_sts;
                 results.size = pixelformat_is_8bit(pixelformat)? width*height*2 : ((width+47)/48)*128 * height;
             } else if (pixelformat_is_8bit(pixelformat)) {
                 convert_yuv_uyvy_rows((const unsigned char **)frame->data, frame->linesize, uyvy, width*2, width, height, pixelformat);
@@ -1235,7 +1411,11 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
             }
 
             /* get timestamp from decoder */
-            if (sts<0 || sts==last_sts) {
+            if (pulldown) {
+                /* the fields have been timed already */
+                last_sts = sts;
+                frames_since_pts = 0;
+            } else if (sts<0 || sts==last_sts) {
                 /* extrapolate a timestamp if necessary */
                 frames_since_pts++;
                 sts = last_sts + frames_since_pts * llround(180000.0/framerate); /* this is the more correct version */
@@ -1256,7 +1436,8 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
         //av_packet_unref(packet);
     } while (!got_frame);
 
-    got_frame = 0;
+    /* a picture with a field still to give is kept for the next frame */
+    got_frame = pulldown && fields_left>0;
 
     return results;
 }

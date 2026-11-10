@@ -357,22 +357,52 @@ Frame memory comes from `dlalloc`, a custom `IDeckLinkVideoBufferAllocator` (the
 14.3+ interface, replacing the old memory allocator) handing out a fixed pool of 256
 `dlvideobuf` objects.
 
-3:2 pulldown (soft telecine) is not handled, see BUGS. Nothing reads `repeat_pict`
-(or libmpeg2's repeat_first_field), so each coded frame is scheduled for one frame
-period. ffmpeg reports such a stream as progressive 29.97, and it plays as 1080p29.97
-with its frames reported late. The card cannot repeat a field, because
-`ScheduleVideoFrame` works in whole frames of the display mode and an interlaced frame
-always carries both of its fields. A fix therefore has to weave the frames in software
-in `dlffvideo::decode()`:
+3:2 pulldown (soft telecine) is woven in software by `dlffvideo`, because the card cannot
+repeat a field: `ScheduleVideoFrame` works in whole frames of the display mode. The output
+is taken as a run of fields half a frame period apart (3003 at 29.97), alternating in
+parity. Each decoded picture is shown for two of them, or three when `repeat_pict` is 1
+(MPEG-2 repeat_first_field, or the top-bottom-top `pic_struct` of H.264), and each field
+takes its own rows from the picture shown at that time, `weave_pulldown()`. So four coded
+frames become five output frames, each timed by its first field. The fields are timed by
+counting, and a picture's timestamp is only taken when it is more than 4 ticks from the
+count, as a 90kHz PTS cannot hold the 4504.5 of three fields. The picture stays in `frame`,
+with `got_frame` left set, while it has a field still to give to the next output frame.
 
-- queue the decoded fields, two or three per coded frame, taken from `repeat_pict` and
-  `AV_FRAME_FLAG_TOP_FIELD_FIRST`;
-- time each field at the frame's PTS plus 3003 (180kHz) per field;
-- build each output frame from the next top and bottom field;
-- report the stream as interlaced 29.97.
+ffmpeg reports such a stream as progressive 29.97, and its `field_order` goes by one
+picture (brv_tdy_130611.ts starts with interlaced pictures and is still called
+progressive). So for MPEG-2 `attach()` reads `progressive_sequence` from the sequence
+extension itself, `find_progressive_sequence()`, and a sequence which is not progressive
+is reported as interlaced whatever its pictures are. It also looks for the cadence: if the
+first picture is progressive with no repeat it decodes a second into `probed`, as any two
+pictures of the cadence include a repeat, and `decode()` gives that one out before any
+other; this is what finds pulldown in H.264, which has no such flag to read. With
+pulldown found the stream is reported as interlaced, which picks the 1080i59.94 mode.
+Pulldown which starts later (bravo.m2v, animalplanet.m2v) is followed from its first
+repeat if the stream was already taken as interlaced, without skipping a field as the
+fields carry on from the pictures before, and only warned about if it was taken as
+progressive, as the display mode is chosen by then. The cadence is followed for each
+picture, not assumed: gladiator.1080i60.ts has short interlaced sections among the film.
 
-The simpler alternative is to ignore the flag and play the coded frames in a
-1080p23.98 mode.
+The card reports every frame late once frames are scheduled off its frame grid, that is
+other than a whole number of frame periods from the first. A loop of a transport stream
+carries on from the highest timestamp of any pid, which for most streams is a whole number
+of frames on (rio.ts, sarnoff.ts) but need not be: the end of gladiator.1080i60.ts gives
+31.38 frames, and the whole second pass was late. So after a discontinuity the field clock
+is moved to the nearest whole frame from the last output frame, and `pts_shift` carries
+that on the timestamps of the rest of the pass, which moves the video up to half a frame
+against the audio. This is only done for pulldown; nothing keeps the other paths on the
+grid.
+
+An output frame starts with the field the display mode shows first, which `dlplay` sets
+with `set_field_order()` from the mode's field dominance (lower for NTSC SD) and the `s`
+key swaps. The first field of the first picture, and of the first after a discontinuity,
+is skipped if it is the other one. After that fields are taken by the parity of their
+place in the output, not by `AV_FRAME_FLAG_TOP_FIELD_FIRST`, which is right for a
+progressive picture anywhere and for an interlaced one in a stream whose field parity
+alternates as it must. In 4:2:0 the chroma of a progressive picture is shared by both
+fields, exactly as the whole frame conversion does, but an interlaced picture has chroma
+rows for each field. Frame doubling and tripling in a progressive sequence (`repeat_pict`
+of 2 or 4) is not handled, nor is pulldown in `dlmpeg2` or `dlffmpeg`.
 
 ### Interactive keys in dlplay
 

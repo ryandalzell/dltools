@@ -977,6 +977,10 @@ int main(int argc, char *argv[])
             if (mode->GetName(&name)==S_OK)
                 dlmessage("info: video mode %s %s", name, halfframerate?"(half rate)":"");
             free((char *)name);
+
+            /* a decoder which weaves fields into frames needs the field the mode displays first */
+            topfieldfirst = mode->GetFieldDominance()!=bmdLowerFieldFirst;
+            video->set_field_order(topfieldfirst);
         }
 
         /* vanc timecode enabled */
