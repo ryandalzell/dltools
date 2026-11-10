@@ -75,18 +75,19 @@ bool dldecode::weave_pulldown(const unsigned char *const data[3], const int line
     if (fields_left==0) {
         fields_left = repeat? 3 : 2;
 
-        /* the fields are timed by counting, a timestamp is only taken when it disagrees
-           as the rounding of a 90kHz timestamp would otherwise move a frame by a tick */
+        /* the fields are timed by counting, a timestamp is only taken when it disagrees by a
+           frame or more, as a 90kHz timestamp is rounded, and some muxers time a picture of
+           three fields in whole frames */
         if (field_start)
             pts_shift = 0;
         if (pts>=0 && pts!=field_pts) {
             field_pts = pts;
             if (field_sts<0 || field_start)
                 field_sts = pts;
-            else if (llabs(pts+pts_shift-field_sts)>4) {
+            else if (llabs(pts+pts_shift-field_sts)>=2*period) {
                 /* the card reports every frame late unless it is a whole number of frames
                    from the last, so the count only jumps by whole frames, and not back */
-                long long frames = llround((double)(pts+pts_shift-field_sts)/(2*period));
+                long long frames = (pts+pts_shift-field_sts)/(2*period);
                 if (frames>0)
                     field_sts += frames*2*period;
                 pts_shift = field_sts - pts;

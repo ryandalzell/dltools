@@ -365,9 +365,11 @@ parity. Each decoded picture is shown for two of them, or three when `repeat_pic
 takes its own rows from the picture shown at that time, `dldecode::weave_pulldown()`, which
 `dlffvideo` and `dlmpeg2` both call with the planes and flags of a picture. So four coded
 frames become five output frames, each timed by its first field. The fields are timed by
-counting, and a picture's timestamp is only taken when it is more than 4 ticks from the
-count, as a 90kHz PTS cannot hold the 4504.5 of three fields, and then the count only
-jumps by whole frames, and not back. In `dlffvideo` the picture stays in `frame`, with
+counting, and a picture's timestamp is only taken when it is a frame or more from the
+count: a 90kHz PTS cannot hold the 4504.5 of three fields, and a muxer can time a picture
+of three fields in whole frames (x264's Matroska output remuxed by ffmpeg steps 4, 2, 2, 2
+fields where the pictures are 3, 2, 3, 2). The count then only jumps by whole frames, and
+not back. In `dlffvideo` the picture stays in `frame`, with
 `got_frame` left set, while it has a field still to give to the next output frame.
 
 ffmpeg reports such a stream as progressive 29.97, and its `field_order` goes by one
