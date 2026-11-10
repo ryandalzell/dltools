@@ -45,6 +45,13 @@ public:
     /* the reader, for the metadata interface of the format layer */
     dlsource *get_source() { return source; }
 
+    /* true once the last pass through the input has been read */
+    bool finished() { return count && passes>=count; }
+
+    /* passes through the input, the input ends after count of them, or never if zero */
+    unsigned count;
+    unsigned passes;
+
 protected:
     /* index of a registered pid, or -1 if the pid is not wanted */
     int find(int pid);

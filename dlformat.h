@@ -35,6 +35,11 @@ public:
        a decoder can discard what it has buffered instead of joining the two */
     virtual bool discontinuity() { return false; }
 
+    /* the number of passes through the input before it ends, zero to loop forever */
+    virtual void set_count(unsigned c) { count = c; }
+    /* true once the last pass through the input has been read */
+    virtual bool finished() { return count && passes>=count; }
+
     /* expose source interfaces */
     //virtual const char *description() { return source->description(); }
     virtual const char *name() { return source->name(); }
@@ -50,6 +55,9 @@ public:
     virtual int get_video_format(int *width, int *height, bool *interlaced, float *framerate, pixelformat_t *pixelformat) { return -1; }
 
 protected:
+    /* go back to the start of the input for another pass, unless that was the last */
+    int loop();
+
     /* this format's own reader on the data source */
     dlsource *source;
 
@@ -57,6 +65,10 @@ protected:
     size_t size;
     unsigned char *data;
 
+public: /* yes public, we're not designing a type library here */
+    /* passes through the input, the input ends after count of them, or never if zero */
+    unsigned count;
+    unsigned passes;
 };
 
 /* elementary stream format decoder class */
@@ -133,6 +145,10 @@ public:
     virtual long long get_pts();
     virtual long long get_dts();
     virtual bool discontinuity() { return packet.discontinuity; }
+
+    /* the passes are counted by the demux, for every pid at once */
+    virtual void set_count(unsigned c) { demux->count = c; }
+    virtual bool finished() { return demux->finished(); }
 
     /* format metadata */
     virtual const char *description() { return "transport stream"; }

@@ -41,6 +41,9 @@ public:
     virtual bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize) = 0;
 
+    /* true once the last pass through the input has been read */
+    virtual bool finished() { return format->finished(); }
+
     /* verbose level */
     void set_verbose(int v) { verbose = v; }
 
@@ -91,11 +94,12 @@ public:
     void set_lumaonly(int l) { lumaonly = l; }
     void set_imagesize(const char *s) { imagesize = s; }
     void set_fourcc(const char *f) { fourcc = f; }
-    void set_frame_range(unsigned first, unsigned num) { firstframe = first; loopframes = num; }
+    void set_frame_range(unsigned first, unsigned num, unsigned c) { firstframe = first; loopframes = num; count = c; }
 
     virtual int attach(dlformat *format);
     virtual bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
+    virtual bool finished();
 
 public:
     virtual const char *description() { return "yuv"; }
@@ -107,6 +111,8 @@ private:
     unsigned firstframe;
     unsigned loopframes;
     unsigned loopframe;     /* frames played in this pass through the loop */
+    unsigned count;         /* passes through the loop before the input ends, zero to loop forever */
+    unsigned passes;
 
     /* buffer variables */
     size_t size;
@@ -235,6 +241,7 @@ protected:
     size_t size;
     const unsigned char *ptr;
     int got_frame;
+    int draining;           /* 1 at the end of the input, 2 once the decoder has been told */
 
     /* field coding, where each picture is one field and two are woven into a frame */
     bool fields;

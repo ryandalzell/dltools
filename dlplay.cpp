@@ -226,9 +226,10 @@ void usage(int exitcode)
     fprintf(stderr, "  -f, --fourcc        : specify pixel fourcc format: i420,i422,uyvy,yu15,yu20 (default: i420)\n");
     fprintf(stderr, "  -F, --framerate     : override the frame rate of the input, e.g. 25, 59.94, 30000:1001 (default: from the input)\n");
     fprintf(stderr, "  -I, --interface     : interface name or ip address of interface to listen on for multicast data (default: first network interface)\n");
-    fprintf(stderr, "  -r, --resettime     : reset timecode to zero when input yuv file wraps around (default: off)\n");
-    fprintf(stderr, "  -a, --firstframe    : index of first frame in raw yuv input to display (default: 0)\n");
-    fprintf(stderr, "  -n, --numframes     : total number of frames to display, or for raw yuv the number of frames to loop over (default: no limit)\n");
+    fprintf(stderr, "  -r, --resettime     : reset timecode to zero at the start of each loop of raw yuv input (default: off)\n");
+    fprintf(stderr, "  -a, --firstframe    : index of the first frame of the loop in raw yuv input (default: 0)\n");
+    fprintf(stderr, "  -n, --numframes     : number of frames in the loop in raw yuv input (default: to the end of the input)\n");
+    fprintf(stderr, "  -c, --count         : number of times to play the loop, then stop (default: loop forever)\n");
     fprintf(stderr, "  -2, --halfrate      : allow using half frame rate, e.g. 30fps when 60fps is not supported (default: off)\n");
     fprintf(stderr, "  -l, --luma          : display luma plane only (default: luma and chroma)\n");
     fprintf(stderr, "  -=, --videoonly     : play video only (default: video and audio if possible)\n");
@@ -304,6 +305,7 @@ int main(int argc, char *argv[])
     const char *interface = NULL;
     int firstframe = 0;
     unsigned numframes = 0;
+    unsigned count = 0;
     bool allowhalfrate = false; /* use e.g. 30fps when 60fps not supported */
     int lumaonly = 0;
     int topfieldfirst = 1;
@@ -348,6 +350,7 @@ int main(int argc, char *argv[])
             {"resettime", 0, NULL, 'r'},
             {"firstframe",1, NULL, 'a'},
             {"numframes", 1, NULL, 'n'},
+            {"count",     1, NULL, 'c'},
             {"halfrate",  0, NULL, '2'},
             {"halfframerate",  0, NULL, '2'},
             {"luma",      0, NULL, 'l'},
@@ -365,7 +368,7 @@ int main(int argc, char *argv[])
             {NULL,        0, NULL,  0 }
         };
 
-        int optchar = getopt_long(argc, argv, "s:f:F:tI:ra:n:2l=~p:o:i:qvh", long_options, NULL);
+        int optchar = getopt_long(argc, argv, "s:f:F:tI:ra:n:c:2l=~p:o:i:qvh", long_options, NULL);
         if (optchar==-1)
             break;
 
@@ -400,6 +403,10 @@ int main(int argc, char *argv[])
 
             case 'n':
                 numframes = parse_int_arg(optarg, 1, INT_MAX, "number of frames");
+                break;
+
+            case 'c':
+                count = parse_int_arg(optarg, 0, INT_MAX, "number of loops");
                 break;
 
             case '2':
@@ -577,6 +584,8 @@ int main(int argc, char *argv[])
         dlformat *vid_fmt = NULL, *aud_fmt = NULL;
         if (firstframe && filetype!=YUV)
             dlexit("error: the first frame can only be given for a raw yuv file, not %s", describe_filetype(filetype));
+        if (numframes && filetype!=YUV)
+            dlexit("error: the number of frames can only be given for a raw yuv file, not %s", describe_filetype(filetype));
         switch (filetype) {
             case TS :
             {
@@ -751,11 +760,9 @@ int main(int argc, char *argv[])
                 if (fourcc)
                     yuv->set_fourcc(fourcc);
 
-                /* raw yuv loops over numframes from firstframe, instead of stopping */
-                if (filetype==YUV) {
-                    yuv->set_frame_range(firstframe, numframes);
-                    numframes = 0;
-                }
+                /* raw yuv can loop over numframes from firstframe */
+                if (filetype==YUV)
+                    yuv->set_frame_range(firstframe, numframes, count);
 
                 /* cast down to decoder pointer */
                 video = (dldecode *)yuv;
@@ -832,6 +839,12 @@ int main(int argc, char *argv[])
 
             default: dlexit("unknown input file type: %s", describe_filetype(filetype));
         }
+
+        /* the input ends after a number of passes through it */
+        if (vid_fmt)
+            vid_fmt->set_count(count);
+        if (aud_fmt)
+            aud_fmt->set_count(count);
 
         /* initialise the video decoder */
         if (!audioonly) {
@@ -1027,6 +1040,11 @@ int main(int argc, char *argv[])
         sts_t last_vid = 0;
         sts_t last_aud = 0;
 
+        /* the end of the last loop through the input */
+        int video_ended = 0;
+        int audio_ended = 0;
+        unsigned int completed_at_start = 0;    /* frames completed before the playback started */
+
         /* video frame history buffer */
         int num_history_frames = 0;
         typedef struct {
@@ -1184,8 +1202,15 @@ int main(int argc, char *argv[])
                 queuenum++;
             }
 
-            /* end pre-roll after a certain number of frames */
-            if (preroll && queuenum>=PREROLL_FRAMES) {
+            /* nothing to play */
+            if (video_ended && queuenum==0) {
+                dlmessage("error: no video frames to play in file \"%s\"", filename);
+                exit = 1;
+                break;
+            }
+
+            /* end pre-roll after a certain number of frames, or at the end of a short input */
+            if (preroll && (queuenum>=PREROLL_FRAMES || video_ended)) {
                 /* preroll complete */
                 preroll = 0;
 
@@ -1209,6 +1234,7 @@ int main(int argc, char *argv[])
                     dlmessage("info: %.3fs of audio before the first frame is not played", (start_time-audio_start_time)/180000.0);
 
                 /* start the playback */
+                completed_at_start = completed;
                 if (output->StartScheduledPlayback(start_time, 180000, 1.0) != S_OK)
                     dlexit("error: failed to start video playback");
 
@@ -1219,7 +1245,7 @@ int main(int argc, char *argv[])
             }
 
             /* decode the next frame */
-            if (video) {
+            if (video && !video_ended) {
                 unsigned long long start = get_utime();
 
                 /* allocate a new frame object */
@@ -1241,13 +1267,21 @@ int main(int argc, char *argv[])
                 unsigned char *uyvy = (unsigned char *)voidptr;
 
                 /* read the next frame */
-                vid = video->decode(uyvy, frame->GetRowBytes()*frame->GetHeight());
-                if (vid.size==0) {
+                decode_t next = video->decode(uyvy, frame->GetRowBytes()*frame->GetHeight());
+                if (next.size==0 && video->finished()) {
+                    /* the end of the last loop, so play out the frames already scheduled */
+                    frame->Release();
+                    frame = NULL;
+                    video_ended = 1;
+                    continue;
+                }
+                if (next.size==0) {
                     dlmessage("error: failed to decode video frame %d in file \"%s\"", framenum, filename);
                     if (source->timeout())
                         restart = 1; /* wait for next sequence */
                     break;
                 }
+                vid = next;
                 decodetime += get_utime() - start;
                 video_start_time = mmin(vid.timestamp, video_start_time);
                 video_end_time = mmax(vid.timestamp, video_end_time);
@@ -1283,7 +1317,7 @@ int main(int argc, char *argv[])
             }
 
             /* maintain audio buffer level */
-            if (audio /*&& !preroll*/) {
+            if (audio && !audio_ended /*&& !preroll*/) {
 
                 /* reschedule audio that wasn't queued last time */
                 if (aud_rem>0) {
@@ -1311,8 +1345,14 @@ int main(int argc, char *argv[])
                     if (buffered >= 24000)
                         break;
 
-                    /* decode audio */
-                    aud = audio->decode(aud_data, aud_size);
+                    /* decode audio, until the end of the last loop */
+                    decode_t next = audio->decode(aud_data, aud_size);
+                    if (next.size==0) {
+                        if (audio->finished())
+                            audio_ended = 1;
+                        break;
+                    }
+                    aud = next;
                     if (blocknum==0) {
                         audio_start_time = aud.timestamp;
                         if (verbose>=1)
@@ -1343,7 +1383,7 @@ int main(int argc, char *argv[])
             }
 
             /* start the playback in audio only mode */
-            if (audio && !video) {
+            if (audio && !video && preroll) {
                 /* preroll complete */
                 preroll = 0;
 
@@ -1354,8 +1394,9 @@ int main(int argc, char *argv[])
                 }
 
                 /* start the playback */
-                if (output->StartScheduledPlayback(audio_start_time, 180000, 1.0) != S_OK)
-                    dlexit("error: failed to start audio playback");
+                HRESULT result = output->StartScheduledPlayback(audio_start_time, 180000, 1.0);
+                if (result != S_OK)
+                    dlapierror(result, "error: failed to start audio playback");
 
                 audio_start_time = aud.timestamp;
                 if (verbose>=1) {
@@ -1399,10 +1440,19 @@ int main(int argc, char *argv[])
                 last_aud = aud.timestamp;
             }
 
-            /* limit output to specific number of frames */
-            if (numframes && completed>=numframes) {
+            /* after the last loop, stop once every frame but the one being displayed has completed */
+            if (video && video_ended && !preroll && !pause_mode && (int)(completed-completed_at_start)>=queuenum-1) {
                 exit = 1;
                 break;
+            }
+
+            /* in audio only mode, stop once the audio of the last loop has played */
+            if (audio && !video && audio_ended) {
+                uint32_t buffered;
+                if (output->GetBufferedAudioSampleFrameCount(&buffered)!=S_OK || buffered==0) {
+                    exit = 1;
+                    break;
+                }
             }
         }
 

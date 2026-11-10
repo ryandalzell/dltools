@@ -68,6 +68,8 @@ dlyuv::dlyuv()
     firstframe = 0;
     loopframes = 0;
     loopframe = 0;
+    count = 0;
+    passes = 0;
 }
 
 dlyuv::~dlyuv()
@@ -132,6 +134,14 @@ bool dlyuv::atend()
     return format->pos()/size==maxframes;
 }
 
+bool dlyuv::finished()
+{
+    /* a range of frames is looped here, not by the format */
+    if (loopframes)
+        return count && passes>=count;
+    return format->finished();
+}
+
 decode_t dlyuv::decode(unsigned char *uyvy, size_t uyvysize)
 {
     decode_t results = {0, 0};
@@ -139,6 +149,9 @@ decode_t dlyuv::decode(unsigned char *uyvy, size_t uyvysize)
     /* go back to the first frame at the end of the loop */
     if (loopframes) {
         if (loopframe==loopframes) {
+            /* the end of the last pass through the loop */
+            if (count && ++passes>=count)
+                return results;
             if (format->seek((off_t)firstframe*size)<0)
                 dlerror("failed to seek to frame %u in \"%s\"", firstframe, format->name());
             loopframe = 0;
@@ -148,15 +161,21 @@ decode_t dlyuv::decode(unsigned char *uyvy, size_t uyvysize)
 
     if (pixelformat==UYVY) {
         /* read directly into frame */
-        if (format->read(uyvy, width*height*2)!=(size_t)(width*height*2))
+        if (format->read(uyvy, width*height*2)!=(size_t)(width*height*2)) {
+            if (finished())
+                return results;
             dlerror("failed to read frame from input stream");
+        }
         results.size = width*height*2;
     } else {
         /* read frame from input */
         size_t bytes = size;
         const unsigned char *data = format->read(&bytes);
-        if (data==NULL || bytes!=size)
+        if (data==NULL || bytes!=size) {
+            if (finished())
+                return results;
             dlerror("failed to read frame from input stream");
+        }
         results.size = bytes;
 
         /* convert to uyvy */
@@ -931,6 +950,7 @@ void dlffvideo::init()
     size = 0;
     ptr = NULL;
     got_frame = 0;
+    draining = 0;
     fields = false;
     first_field = -1;
     pending = false;
@@ -1115,13 +1135,17 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
 
     /* decode the next avc frame */
     do {
-        if (size==0) {
+        if (size==0 && !draining) {
             const unsigned char *buf = format->read(&size);
-            if (size==0)
-                break;
+            if (size==0) {
+                if (!format->finished())
+                    break;
+                /* the end of the last pass, the pictures still held are drained below */
+                draining = 1;
+            }
             ptr = buf;
 
-            if (format->discontinuity()) {
+            if (size && format->discontinuity()) {
                 av_parser_close(parser);
                 parser = av_parser_init(codecid);
                 if (parser==NULL)
@@ -1138,6 +1162,25 @@ decode_t dlffvideo::decode(unsigned char *uyvy, size_t uyvysize)
         /* take a picture the decoder already holds before sending it more, as a packet can give two */
         if (!got_frame && avcodec_receive_frame(codeccontext, frame)==0)
             got_frame = 1;
+
+        /* at the end of the input send the frame the parser holds, then tell the decoder to give up the rest */
+        if (!got_frame && draining) {
+            if (draining==2)
+                /* the decoder is empty */
+                break;
+            av_parser_parse2(parser, codeccontext, &packet->data, &packet->size, NULL, 0, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+            if (packet->size) {
+                packet->pts = parser->pts;
+                packet->dts = parser->dts;
+                packet->pos = parser->pos;
+                ret = avcodec_send_packet(codeccontext, packet);
+                if (ret < 0)
+                    dlmessage("failed to send the last packet for decoding: %s", av_make_error_string(errorstring, AV_ERROR_MAX_STRING_SIZE, ret));
+            }
+            avcodec_send_packet(codeccontext, NULL);
+            draining = 2;
+            continue;
+        }
 
         /* use the parser to split the data into frames */
         if (!got_frame) {

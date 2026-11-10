@@ -226,8 +226,15 @@ and re-reads when a read comes up short.
 
 Raw YUV can instead loop over a range of frames, given with `-a` and `-n`: `dlyuv` counts
 the frames it has read and seeks its format back to the first one (`dlformat::seek()`,
-which only `dlfile` and `dlmmap` implement), so for raw YUV `-n` is the length of the
-loop rather than a limit on the playout.
+which only `dlfile` and `dlmmap` implement). `-a` and `-n` are rejected for any other input.
+
+Every input loops forever unless `-c` gives the number of passes. Passes are counted where
+the input loops: `dlformat::loop()` for the formats, `dldemux::fill()` for a transport
+stream (so its pids end together), and `dlyuv` itself for a range of frames. After the last
+pass a read returns nothing and `finished()` is true, on the format and on the decoder.
+`dlffvideo` then drains the pictures its parser and decoder still hold. `dlplay` then stops
+decoding and waits for every scheduled frame but the one on screen to complete, starting the
+playback first if the input ended during the preroll.
 
 For transport streams the demux loops the input itself: at end of input it rewinds the
 one reader, discards the partly assembled packets and carries on, so every pid loops
