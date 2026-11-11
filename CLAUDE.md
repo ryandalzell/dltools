@@ -52,7 +52,7 @@ the midpoint. The stream time drifts about 46 ppm against that clock, so the mai
 publishes the tightest sample of each second to the callback rather than measuring once.
 
 The picture (bars or black) and the tone are on for `CYCLE_SECONDS` (10) s of frames (`10*fps`, so 10.01 s
-at 59.94) and off for the same, `frame_is_on()`. It was 30 s, cut to 10 s to see results sooner. The tone's gain is a pure function of the
+at 59.94) and off for the same, `frame_is_on()`. The tone's gain is a pure function of the
 sample number, `tone_gain()`: a 5 ms linear ramp centred on the exact time of the first frame
 of each run, which falls between samples at 59.94. Received audio samples are timed on the
 input's clock through the stream time of the video frame they came with. The level is the
@@ -78,11 +78,11 @@ false steady latency for several seconds on the way. So until it has settled, a 
 mode is waited for rather than fatal, nothing is measured, and the status line says what
 is being waited for. It has settled once the latency has stayed within half a frame for
 `SETTLE_SECONDS` (10). After that a mode change is fatal. The lipsync of the encoder and
-decoder tested is different after each restart (+58, +75, +77, +96 ms at 720p59.94) but
-steady within a run to 0.15 ms, while its latency returns to within 1 ms. Each stereo pair
-can be encoded with a different audio codec, so pairs can differ in lipsync by tens of ms. After a mode
+decoder tested is different after each restart but steady within a run to 0.15 ms, while
+its latency returns to within 1 ms. Each stereo pair can be encoded with a different audio
+codec, so pairs can differ in lipsync by tens of ms. After a mode
 change the first lipsync measurement is left out (`discard_first`) as a precaution, which
-delays the first result by 10 s; so far the one left out has matched the next.
+delays the first result by 10 s.
 
 Messages to the user speak of the "enc->dec chain", the "end-to-end latency" and the
 "lipsync" per channel, never of edges or the picture and tone turning on or off: each
@@ -139,8 +139,7 @@ MPEG-2 falls back to libmpeg2 when ffmpeg is off, and MPEG audio and AC-3 to `dl
 `dlliba52`, so an `FFMPEG=0` build still plays MPEG-2 with those but nothing else beyond raw
 YUV. The AAC and E-AC-3 stream types are left out of its list, so their pids are not chosen. The ffmpeg decoders pad each plane's rows, so their output
 is converted with `frame->linesize`; an SD width such as 720 is not a multiple of the
-padding, and ignoring it sheared the picture, which had looked like an ffmpeg bug in PAL. HEVC was decoded by libde265 in that
-build until ffmpeg's decoder had replaced it in every way, including field coding.
+padding, so ignoring it shears the picture.
 
 The ffmpeg code targets the current API (verified against ffmpeg 8.0): the decoders
 use `avcodec_send_packet`/`avcodec_receive_frame`, and `libavcodec/avcodec.h` must be
@@ -203,8 +202,7 @@ socket, not just a seekable file. One `dldemux` is created in the `TS` case in
 private demux for a single pid, for callers outside `dlplay`.
 
 A queue holds only the skew between the pids, which is well under a second in a sane
-mux, but at high bitrates that is still a lot of bytes: half a second of 97Mbps video
-queued 6.4MB while waiting for an audio pid in bostonvchicago. `MAX_QUEUE_BYTES` (32MB)
+mux, but at high bitrates that is still a lot of bytes. `MAX_QUEUE_BYTES` (32MB)
 caps it: past that, the oldest packets for that pid are dropped with one warning, which
 means a consumer has stopped reading or the mux is badly skewed.
 
@@ -250,8 +248,8 @@ the first PES packet of each pid in a new pass is marked, `dlformat::discontinui
 reports it for the packet just read, and a decoder throws away what it has buffered:
 `dlffvideo` re-initialises its parser and flushes the codec, `dlffaudio` drains its
 parser into the decoder and re-initialises it (the parser holds the last frame of a pass
-until told no more data follows, and throwing it away lost an AC-3 frame at every loop;
-the decoder and resampler carry on, as audio frames reference nothing), `dlmpg123` re-opens its
+until told no more data follows; the decoder and resampler carry on, as audio frames
+reference nothing), `dlmpg123` re-opens its
 feed, `dlliba52` drops the part of an AC-3 frame it holds and syncs again, and `dlpcm`
 drops a partly filled AES3 packet and starts the next one. `dlmpeg2`, which is only used when
 the ffmpeg decoders are compiled out, does not do this yet.
@@ -274,8 +272,7 @@ get sample frames of the decoders' stereo 16-bit output.
 
 With ffmpeg, MPEG audio (0x03/0x04, through the `mp3` decoder, which takes layers 1-3),
 AAC (0x0F/0x11), AC-3 (0x81) and E-AC-3 (0x87) are decoded by `dlffaudio`: parser, then
-decoder, then libswresample to 48kHz 16-bit stereo, which resamples 44.1 and 32kHz (mpg123
-played them at the wrong pitch), upmixes mono and downmixes more channels. AC-3 and E-AC-3
+decoder, then libswresample to 48kHz 16-bit stereo, which resamples 44.1 and 32kHz, upmixes mono and downmixes more channels. AC-3 and E-AC-3
 downmix in the decoder (its `downmix` option), with the levels the stream carries. The
 timestamp of a block is the frame's pts less the resampler's delay, counted on in output
 samples, so any frame length works. The pts of a PES packet goes to the parser on its first
@@ -400,8 +397,8 @@ picture, not assumed: gladiator.1080i60.ts has short interlaced sections among t
 The card reports every frame late once frames are scheduled off its frame grid, that is
 other than a whole number of frame periods from the first. A loop of a transport stream
 carries on from the highest timestamp of any pid, which for most streams is a whole number
-of frames on (rio.ts, sarnoff.ts) but need not be: the end of gladiator.1080i60.ts gives
-31.38 frames, and the whole second pass was late. So after a discontinuity the field clock
+of frames on but need not be (the end of gladiator.1080i60.ts gives 31.38 frames), and
+then the whole second pass is late. So after a discontinuity the field clock
 is moved to the nearest whole frame from the last output frame, and `pts_shift` carries
 that on the timestamps of the rest of the pass, which moves the video up to half a frame
 against the audio. This is only done where fields are woven; nothing keeps the other paths
@@ -412,8 +409,6 @@ every interlaced sequence as fields from the start, repeat or not, and reports p
 the first repeated field (`nb_fields` of 3). libmpeg2 keeps the displayed picture until it
 is parsed again, so `held` points at its planes for the field left over. The timestamp is
 the tag of the displayed picture, where the frame path still uses the current picture's.
-Its timestamps before this stepped by half frames in a stream which mixes film and video
-(brv_tdy_130611.ts), which made every frame late.
 
 An output frame starts with the field the display mode shows first, which `dlplay` sets
 with `set_field_order()` from the mode's field dominance (lower for NTSC SD) and the `s`
