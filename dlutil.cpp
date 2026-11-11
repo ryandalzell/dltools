@@ -195,14 +195,12 @@ int audio_channels(IDeckLink *card, int wanted)
     return 2;
 }
 
-/* copy stereo 16-bit sample frames into each pair of channels of the output frames */
-void duplicate_stereo(int16_t *out, const int16_t *stereo, unsigned frames, int channels)
+/* copy 16-bit sample frames into the output frames, repeating the input channels to fill them */
+void duplicate_channels(int16_t *out, const int16_t *in, unsigned frames, int in_channels, int out_channels)
 {
     for (unsigned i=0; i<frames; i++)
-        for (int c=0; c<channels; c+=2) {
-            out[i*channels + c] = stereo[2*i];
-            out[i*channels + c+1] = stereo[2*i+1];
-        }
+        for (int c=0; c<out_channels; c++)
+            out[i*out_channels + c] = in[i*in_channels + c%in_channels];
 }
 
 long parse_int_arg(const char *string, long min, long max, const char *name)

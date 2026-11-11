@@ -376,6 +376,7 @@ dldemux::dldemux()
     pts_offset = 0ll;
     pts_highest = -1ll;
     pts_rebase = false;
+    count = passes = 0;
 
     for (int i=0; i<MAX_STREAMS; i++) {
         stream[i].pid = -1;
@@ -514,8 +515,11 @@ int dldemux::fill(int index)
 
         /* read the next transport packet */
         if (next_packet(packet, source)<0) {
-            /* loop the input, for every pid at once */
-            if (++rewinds>1 || source->rewind()<0)
+            /* loop the input, for every pid at once, unless that was the last pass */
+            if (++rewinds>1)
+                return -1;
+            passes++;
+            if (finished() || source->rewind()<0)
                 return -1;
             resync();
             pts_rebase = true;

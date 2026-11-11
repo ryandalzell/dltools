@@ -226,8 +226,15 @@ and re-reads when a read comes up short.
 
 Raw YUV can instead loop over a range of frames, given with `-a` and `-n`: `dlyuv` counts
 the frames it has read and seeks its format back to the first one (`dlformat::seek()`,
-which only `dlfile` and `dlmmap` implement), so for raw YUV `-n` is the length of the
-loop rather than a limit on the playout.
+which only `dlfile` and `dlmmap` implement). `-a` and `-n` are rejected for any other input.
+
+Every input loops forever unless `-c` gives the number of passes. Passes are counted where
+the input loops: `dlformat::loop()` for the formats, `dldemux::fill()` for a transport
+stream (so its pids end together), and `dlyuv` itself for a range of frames. After the last
+pass a read returns nothing and `finished()` is true, on the format and on the decoder.
+`dlffvideo` then drains the pictures its parser and decoder still hold. `dlplay` then stops
+decoding and waits for every scheduled frame but the one on screen to complete, starting the
+playback first if the input ended during the preroll.
 
 For transport streams the demux loops the input itself: at end of input it rewinds the
 one reader, discards the partly assembled packets and carries on, so every pid loops
@@ -289,9 +296,13 @@ while.
 audio, with no option yet to change it. `audio_channels()` in `dlutil.cpp` reduces that to
 the most the card reports in `BMDDeckLinkMaximumAudioChannels`, from the counts the SDK
 accepts (2, 8, 16, 32, 64), so a card with 16 or more is ready for a larger count and a
-card with fewer falls back with a message. For now every pair carries the same audio:
-`dlplay` copies each decoded stereo frame into every pair with `duplicate_stereo()`, into a
-separate output buffer, so the scheduling offsets are in frames of `aud_channels*2` bytes;
+card with fewer falls back with a message. A decoder reports how many channels its sample
+frames have in its public `channels` (2 unless it sets it; only `dlpcm` does, with every
+channel of a 302M stream, 2, 4, 6 or 8), so a decoded frame is `2*channels` bytes.
+`dlplay` repeats those channels to fill the output with `duplicate_channels()`, so stereo
+goes into every pair and 4-channel 302M plays as 1-4 then 1-4 again, and a card with fewer
+channels than the stream takes the first ones. The output is a separate buffer, so the
+scheduling offsets are in frames of `aud_channels*2` bytes;
 `dlcard` and `dlsync` write the tone into every channel, from a block buffer allocated for
 the channel count. `dlsync` captures as many channels as it sends, measuring lipsync in
 each, with its arrays sized for `MAX_AUDIO_CHANNELS` (64). Changing the channel count on
@@ -342,26 +353,78 @@ scheduled before the start time, which keeps everything after it in sync, and `d
 reports how much audio that was at verbosity 1. A video with no timestamps of its own,
 where the audio has them, starts with the audio instead.
 
+`-~` plays the audio of a transport stream alone. The card refuses to start scheduled
+playback without a video output ("access denied"), so the video output is enabled in the
+mode given with `-s`, or else the mode the card is already sending
+(`bmdDeckLinkStatusCurrentVideoOutputMode`, as `dlsync` reads it), so that what it is
+connected to is not disturbed, or 720p59.94 as `dlcard` defaults to if the card is sending
+nothing, and one black frame is scheduled
+at the start time of the audio, which the card holds as nothing follows it. There is no
+frame completion to wait on, so the loop sleeps 250ms between top-ups of the audio buffer,
+and with `-c` it stops when the buffer has emptied after the last pass.
+
 Frame memory comes from `dlalloc`, a custom `IDeckLinkVideoBufferAllocator` (the SDK
 14.3+ interface, replacing the old memory allocator) handing out a fixed pool of 256
 `dlvideobuf` objects.
 
-3:2 pulldown (soft telecine) is not handled, see BUGS. Nothing reads `repeat_pict`
-(or libmpeg2's repeat_first_field), so each coded frame is scheduled for one frame
-period. ffmpeg reports such a stream as progressive 29.97, and it plays as 1080p29.97
-with its frames reported late. The card cannot repeat a field, because
-`ScheduleVideoFrame` works in whole frames of the display mode and an interlaced frame
-always carries both of its fields. A fix therefore has to weave the frames in software
-in `dlffvideo::decode()`:
+3:2 pulldown (soft telecine) is woven in software by the decoder, because the card cannot
+repeat a field: `ScheduleVideoFrame` works in whole frames of the display mode. The output
+is taken as a run of fields half a frame period apart (3003 at 29.97), alternating in
+parity. Each decoded picture is shown for two of them, or three when `repeat_pict` is 1
+(MPEG-2 repeat_first_field, or the top-bottom-top `pic_struct` of H.264), and each field
+takes its own rows from the picture shown at that time, `dldecode::weave_pulldown()`, which
+`dlffvideo` and `dlmpeg2` both call with the planes and flags of a picture. So four coded
+frames become five output frames, each timed by its first field. The fields are timed by
+counting, and a picture's timestamp is only taken when it is a frame or more from the
+count: a 90kHz PTS cannot hold the 4504.5 of three fields, and a muxer can time a picture
+of three fields in whole frames (x264's Matroska output remuxed by ffmpeg steps 4, 2, 2, 2
+fields where the pictures are 3, 2, 3, 2). The count then only jumps by whole frames, and
+not back. In `dlffvideo` the picture stays in `frame`, with
+`got_frame` left set, while it has a field still to give to the next output frame.
 
-- queue the decoded fields, two or three per coded frame, taken from `repeat_pict` and
-  `AV_FRAME_FLAG_TOP_FIELD_FIRST`;
-- time each field at the frame's PTS plus 3003 (180kHz) per field;
-- build each output frame from the next top and bottom field;
-- report the stream as interlaced 29.97.
+ffmpeg reports such a stream as progressive 29.97, and its `field_order` goes by one
+picture (brv_tdy_130611.ts starts with interlaced pictures and is still called
+progressive). So for MPEG-2 `attach()` reads `progressive_sequence` from the sequence
+extension itself, `find_progressive_sequence()`, and a sequence which is not progressive
+is reported as interlaced whatever its pictures are. It also looks for the cadence: if the
+first picture is progressive with no repeat it decodes a second into `probed`, as any two
+pictures of the cadence include a repeat, and `decode()` gives that one out before any
+other; this is what finds pulldown in H.264, which has no such flag to read. With
+pulldown found the stream is reported as interlaced, which picks the 1080i59.94 mode.
+Pulldown which starts later (bravo.m2v, animalplanet.m2v) is followed from its first
+repeat if the stream was already taken as interlaced, without skipping a field as the
+fields carry on from the pictures before, and only warned about if it was taken as
+progressive, as the display mode is chosen by then. The cadence is followed for each
+picture, not assumed: gladiator.1080i60.ts has short interlaced sections among the film.
 
-The simpler alternative is to ignore the flag and play the coded frames in a
-1080p23.98 mode.
+The card reports every frame late once frames are scheduled off its frame grid, that is
+other than a whole number of frame periods from the first. A loop of a transport stream
+carries on from the highest timestamp of any pid, which for most streams is a whole number
+of frames on (rio.ts, sarnoff.ts) but need not be: the end of gladiator.1080i60.ts gives
+31.38 frames, and the whole second pass was late. So after a discontinuity the field clock
+is moved to the nearest whole frame from the last output frame, and `pts_shift` carries
+that on the timestamps of the rest of the pass, which moves the video up to half a frame
+against the audio. This is only done where fields are woven; nothing keeps the other paths
+on the grid.
+
+`dlmpeg2`, the `FFMPEG=0` decoder, has the sequence header before any picture, so it weaves
+every interlaced sequence as fields from the start, repeat or not, and reports pulldown at
+the first repeated field (`nb_fields` of 3). libmpeg2 keeps the displayed picture until it
+is parsed again, so `held` points at its planes for the field left over. The timestamp is
+the tag of the displayed picture, where the frame path still uses the current picture's.
+Its timestamps before this stepped by half frames in a stream which mixes film and video
+(brv_tdy_130611.ts), which made every frame late.
+
+An output frame starts with the field the display mode shows first, which `dlplay` sets
+with `set_field_order()` from the mode's field dominance (lower for NTSC SD) and the `s`
+key swaps. The first field of the first picture, and of the first after a discontinuity,
+is skipped if it is the other one. After that fields are taken by the parity of their
+place in the output, not by `AV_FRAME_FLAG_TOP_FIELD_FIRST`, which is right for a
+progressive picture anywhere and for an interlaced one in a stream whose field parity
+alternates as it must. In 4:2:0 the chroma of a progressive picture is shared by both
+fields, exactly as the whole frame conversion does, but an interlaced picture has chroma
+rows for each field. Frame doubling and tripling in a progressive sequence (`repeat_pict`
+of 2 or 4) is not handled, nor is pulldown in `dlffmpeg`.
 
 ### Interactive keys in dlplay
 

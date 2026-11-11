@@ -41,6 +41,9 @@ public:
     virtual bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize) = 0;
 
+    /* true once the last pass through the input has been read */
+    virtual bool finished() { return format->finished(); }
+
     /* verbose level */
     void set_verbose(int v) { verbose = v; }
 
@@ -56,6 +59,16 @@ protected:
     /* verbose level */
     int verbose;
 
+    /* 3:2 pulldown, where each picture is shown for two or three fields of the output */
+    bool weave_pulldown(const unsigned char *const data[3], const int linesize[3], long long pts, bool repeat, bool top_first, bool progressive, unsigned char *buffer, int *slot, sts_t *sts);
+    bool pulldown;
+    int fields_left;        /* fields the picture last decoded has still to give */
+    sts_t field_sts;        /* time of the next field of the output, -1 until known */
+    long long field_pts;    /* the last timestamp a picture came with */
+    sts_t frame_sts;        /* time of the last frame of the output, -1 before the first */
+    sts_t pts_shift;        /* added to the timestamps to keep the frames a whole number of frames apart */
+    bool field_start;       /* the next picture is the first, or the first after a discontinuity */
+
 public: /* yes public, we're not designing a type library here */
     /* video parameters */
     int width;
@@ -63,6 +76,9 @@ public: /* yes public, we're not designing a type library here */
     bool interlaced;
     float framerate;
     pixelformat_t pixelformat;
+
+    /* audio parameters, the decoded sample frames are this many channels of 16-bit samples */
+    int channels;
 
     /* decoder debug */
 public:
@@ -88,11 +104,12 @@ public:
     void set_lumaonly(int l) { lumaonly = l; }
     void set_imagesize(const char *s) { imagesize = s; }
     void set_fourcc(const char *f) { fourcc = f; }
-    void set_frame_range(unsigned first, unsigned num) { firstframe = first; loopframes = num; }
+    void set_frame_range(unsigned first, unsigned num, unsigned c) { firstframe = first; loopframes = num; count = c; }
 
     virtual int attach(dlformat *format);
     virtual bool atend();
     virtual decode_t decode(unsigned char *buffer, size_t bufsize);
+    virtual bool finished();
 
 public:
     virtual const char *description() { return "yuv"; }
@@ -104,6 +121,8 @@ private:
     unsigned firstframe;
     unsigned loopframes;
     unsigned loopframe;     /* frames played in this pass through the loop */
+    unsigned count;         /* passes through the loop before the input ends, zero to loop forever */
+    unsigned passes;
 
     /* buffer variables */
     size_t size;
@@ -132,6 +151,11 @@ protected:
     /* libmpeg2 variables */
     mpeg2dec_t *mpeg2dec;
     const mpeg2_info_t *info;
+
+    /* the picture last decoded, which libmpeg2 keeps until it is parsed again */
+    const unsigned char *held[3];
+    bool held_progressive;
+    bool repeat_seen;       /* a picture with a repeated field has been reported */
 };
 
 /* pcm class */
@@ -232,12 +256,17 @@ protected:
     size_t size;
     const unsigned char *ptr;
     int got_frame;
+    int draining;           /* 1 at the end of the input, 2 once the decoder has been told */
 
     /* field coding, where each picture is one field and two are woven into a frame */
     bool fields;
     int first_field;        /* parity of the first field of each frame, 1 for top, -1 until known */
     bool pending;           /* the first field of the frame has been written */
     long long pending_pts;  /* timestamp of the first field */
+
+    /* looking for 3:2 pulldown */
+    bool pulldown_warned;   /* the stream started pulldown after it was taken as progressive */
+    AVFrame *probed;        /* the second picture decoded when looking for pulldown */
 
     /* error string */
     char *errorstring;

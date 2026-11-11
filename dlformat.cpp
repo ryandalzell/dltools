@@ -17,6 +17,7 @@ dlformat::dlformat()
     source = NULL;
     data = NULL;
     size = 0;
+    count = passes = 0;
 }
 
 dlformat::~dlformat()
@@ -37,12 +38,22 @@ int dlformat::attach(dlsource* s)
     return 0;
 }
 
+/* go back to the start of the input for another pass, unless that was the last */
+int dlformat::loop()
+{
+    passes++;
+    if (finished())
+        return -1;
+    return rewind();
+}
+
 size_t dlformat::read(unsigned char *buf, size_t bytes)
 {
     size_t size = source->read(buf, bytes);
     if (size!=bytes) {
         /* no timestamp so simply loop input */
-        source->rewind();
+        if (loop()<0)
+            return size;
         size = source->read(buf, bytes);
     }
     return size;
@@ -56,7 +67,10 @@ const unsigned char *dlformat::read(size_t *bytes)
        returning nothing is the end of the input, not one of a different size */
     if (data==NULL || (size? *bytes!=size : *bytes==0)) {
         /* no timestamp so simply loop input */
-        source->rewind();
+        if (loop()<0) {
+            *bytes = 0;
+            return NULL;
+        }
         *bytes = size; /* discard previous read */
         data = source->read(bytes);
     }
@@ -254,14 +268,14 @@ size_t dly4m::read(unsigned char *buf, size_t bytes)
     /* the frame data is preceded by a frame header */
     if (read_frame_header()<0) {
         /* loop the input */
-        if (rewind()<0 || read_frame_header()<0)
+        if (loop()<0 || read_frame_header()<0)
             return 0;
     }
 
     size_t read = source->read(buf, bytes);
     if (read!=bytes) {
         /* a truncated frame at the end of the input, so loop */
-        if (rewind()<0 || read_frame_header()<0)
+        if (loop()<0 || read_frame_header()<0)
             return 0;
         read = source->read(buf, bytes);
     }
@@ -277,7 +291,7 @@ const unsigned char *dly4m::read(size_t *bytes)
 
     if (read_frame_header()<0) {
         /* loop the input */
-        if (rewind()<0 || read_frame_header()<0) {
+        if (loop()<0 || read_frame_header()<0) {
             *bytes = 0;
             return NULL;
         }
@@ -287,7 +301,7 @@ const unsigned char *dly4m::read(size_t *bytes)
     const unsigned char *data = source->read(bytes);
     if (data==NULL || *bytes!=size) {
         /* a truncated frame at the end of the input, so loop */
-        if (rewind()<0 || read_frame_header()<0) {
+        if (loop()<0 || read_frame_header()<0) {
             *bytes = 0;
             return NULL;
         }
@@ -422,7 +436,9 @@ dlavformat::~dlavformat()
 int read_packet(void *opaque, uint8_t *buf, int buf_size)
 {
     class dlavformat *p = (class dlavformat *)opaque;
-    return (int) p->read(buf, (size_t)buf_size);
+    int size = (int) p->read(buf, (size_t)buf_size);
+    /* nothing read is the end of the last pass through the input */
+    return size>0? size : AVERROR_EOF;
 }
 
 int dlavformat::attach(dlsource *s)
@@ -465,7 +481,8 @@ size_t dlavformat::read(unsigned char *buf, size_t bytes)
     size_t size = source->read(buf, bytes);
     if (size==0) {
         /* no timestamp so simply loop input */
-        source->rewind();
+        if (loop()<0)
+            return 0;
         size = source->read(buf, bytes);
     }
     return size;
